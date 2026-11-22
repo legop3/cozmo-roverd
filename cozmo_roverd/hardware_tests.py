@@ -138,7 +138,7 @@ def _worker(config_path, case, duration, output_dir):
         cfg = load(config_path)
         write("connecting_wifi", interface=cfg.interface)
         Wifi(cfg).wait()
-        animations = case.startswith("audio")
+        animations = case.startswith("audio") or "animation" in case
         cli = pycozmo.Client(
             enable_animations=animations, enable_procedural_face=False)
         cli.start()
