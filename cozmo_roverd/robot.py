@@ -33,21 +33,27 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_audio_backpressure_ticks = 0
 
     def run_frame(self):
-        # Each OutputAudio frame is a 744-byte reliable packet, sent at
-        # 30 Hz. Do not outpace reliable acknowledgements and fill the
-        # PyCozmo send window, blocking motor/head commands.
+        # Cozmo's Wi-Fi replies are still arriving when TTS freezes
+        # controls, but its reliable-send ACK stops advancing. The previous
+        # four-packet allowance was too generous: 20 frames were queued,
+        # four reached the sender, then the window grew to 24 unacknowledged
+        # packets. Use strict stop-and-wait for each 744-byte audio frame;
+        # other controls retain their normal sending semantics.
         sender = getattr(getattr(self.cli, "conn", None), "send_thread", None)
         q = self.queue
         audio_waiting = False
         if hasattr(q, "audio_queue") and hasattr(q, "lock"):
             with q.lock:
                 audio_waiting = bool(q.audio_queue)
-        if audio_waiting and sender is not None:
+        # Wait for the final audio packet's acknowledgement before
+        # queuing OutputSilence. Do not let a trailing silence overtake
+        # speech and take another slot in a congested send window.
+        if (audio_waiting or self.playing_audio) and sender is not None:
             with sender.lock:
                 pending = ((sender.window.next_seq - sender.window.expected_seq)
                            % sender.window.max_seq)
             backlog = sender.queue.qsize()
-            if pending >= 4 or backlog >= 3:
+            if pending >= 1 or backlog >= 1:
                 now = time.monotonic()
                 self._cozmo_audio_backpressure_ticks += 1
                 if self._cozmo_audio_blocked_at is None:
@@ -62,7 +68,7 @@ def _limit_animation_idle_traffic(cli):
                 self._cozmo_audio_aborted = True
                 self._cozmo_audio_blocked_at = None
                 LOG.warning(
-                    "Aborted Cozmo TTS after 2s without audio capacity "
+                    "Aborted Cozmo TTS after 2s without ACK for speech "
                     "(%d unacked, %d queued commands, %d audio frames discarded)",
                     pending, backlog, discarded)
                 return
