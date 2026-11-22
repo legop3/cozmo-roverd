@@ -9,7 +9,7 @@ import threading
 import time
 from PIL import Image, ImageDraw
 from .face import status_image, compact_status_image
-from .status_lights import light_states, light_signature
+from .status_lights import light_states, light_signature, charger_lights, charger_signature
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
@@ -172,6 +172,11 @@ class Robot:
         self.face_decoded_columns = None
         self._status_light_signature = None
         self._status_light_override_until = 0.0
+        self._charger_factory_id = None
+        self._charger_object_id = None
+        self._charger_connect_at = 0.0
+        self._charger_last_signature = None
+        self._charger_last_attempt = 0.0
 
     def connect(self):
         import pycozmo
@@ -209,6 +214,11 @@ class Robot:
                 self._face_sent_at = 0.0
                 self._status_light_signature = None
                 self._status_light_override_until = 0.0
+                self._charger_factory_id = None
+                self._charger_object_id = None
+                self._charger_connect_at = 0.0
+                self._charger_last_signature = None
+                self._charger_last_attempt = 0.0
             self.on_state()
             LOG.info("Cozmo connected")
         except Exception:
@@ -473,6 +483,87 @@ class Robot:
             self._status_light_signature = signature
             return True
 
+    def refresh_charger_lights(self):
+        """Connect to the real charger and update its lights when status changes.
+
+        Uses the official pycozmo ObjectConnect -> ObjectConnectionState ->
+        CubeId -> CubeLights protocol. Never block on wait_for() and never
+        mistake an ordinary cube for the charger. Missing/unpowered docks are
+        optional: just retry discovery later.
+        """
+        with self.lock:
+            cli = self.client
+            if cli is None or not self.ready:
+                return False
+            import pycozmo
+            p = pycozmo.protocol_encoder
+            now = time.monotonic()
+            available = getattr(cli, "available_objects", {})
+            connected = getattr(cli, "connected_objects", {})
+            # Discovery can arrive after the robot connects. Restrict every
+            # lookup to Charger_Basic so cubes never inherit dock effects.
+            charger_ids = {
+                factory_id for factory_id, obj in list(available.items())
+                if getattr(obj, "object_type", None) == p.ObjectType.Charger_Basic
+            }
+            candidates = [
+                (object_id, data.get("factory_id"))
+                for object_id, data in list(connected.items())
+                if data.get("object_type") == p.ObjectType.Charger_Basic
+            ]
+            if candidates:
+                object_id, factory_id = candidates[0]
+                if object_id != self._charger_object_id:
+                    self._charger_last_signature = None
+                self._charger_object_id = object_id
+                self._charger_factory_id = factory_id
+            else:
+                self._charger_object_id = None
+                self._charger_last_signature = None
+                if self._charger_factory_id not in charger_ids:
+                    self._charger_factory_id = None
+                    self._charger_connect_at = 0.0
+                # Existing pending requests get a chance to complete before
+                # another attempt; missing chargers are retried sparingly.
+                if not charger_ids or now - self._charger_last_attempt < 15.0:
+                    return False
+                factory_id = (self._charger_factory_id
+                              if self._charger_factory_id in charger_ids
+                              else next(iter(charger_ids)))
+                self._charger_factory_id = factory_id
+                if not self._lights_transport_ready(cli):
+                    return False
+                cli.conn.send(p.ObjectConnect(factory_id=factory_id, connect=True))
+                self._charger_connect_at = now
+                self._charger_last_attempt = now
+                return True
+
+            signature = charger_signature(
+                docked=self.battery.docked, charging=self.battery.charging,
+                docking=bool(self.dock_assist or self.undock_active))
+            if signature == self._charger_last_signature:
+                return False
+            if not self._lights_transport_ready(cli):
+                return False
+            # CubeId selects the charger, CubeLights changes that object's LEDs.
+            cli.conn.send(p.CubeId(object_id=self._charger_object_id))
+            cli.conn.send(p.CubeLights(states=charger_lights(
+                docked=self.battery.docked, charging=self.battery.charging,
+                docking=bool(self.dock_assist or self.undock_active))))
+            self._charger_last_signature = signature
+            return True
+
+    @staticmethod
+    def _lights_transport_ready(cli):
+        """Avoid adding reliable packets during ACK or send-queue congestion."""
+        sender = getattr(getattr(cli, "conn", None), "send_thread", None)
+        if sender is None:
+            return True
+        with sender.lock:
+            pending = ((sender.window.next_seq - sender.window.expected_seq)
+                       % sender.window.max_seq)
+        return pending < 6 and sender.queue.qsize() < 6
+
     def transport_diagnostics(self):
         """Read PyCozmo's reliable packet window without changing it."""
         cli = self.client
@@ -679,6 +770,11 @@ class Robot:
             self.dock_assist = False
             self._status_light_signature = None
             self._status_light_override_until = 0.0
+            self._charger_factory_id = None
+            self._charger_object_id = None
+            self._charger_connect_at = 0.0
+            self._charger_last_signature = None
+            self._charger_last_attempt = 0.0
             self.latest = {}
             self.voltage = self.battery.voltage
             self.on_charger = self.battery.docked
