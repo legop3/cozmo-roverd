@@ -133,3 +133,39 @@ def test_bridge_state_sender_resends_snapshot_and_never_needs_sensor_queue():
     assert sensor_msgs[0]["sensors"]["voltageMv"] == 3900
     assert sensor_msgs[0]["sensors"]["cliffFrontLeft"] is True
     assert sensor_msgs[0]["sensors"]["cliffFrontLeftSignal"] == 135
+
+
+def test_docked_state_survives_paused_robotstate_packets():
+    import time
+    from cozmo_roverd.main import Bridge
+    from cozmo_roverd.robot_packet import BatteryTracker
+    tracker = BatteryTracker()
+    tracker.observe(3.94, 0x3000)
+    # Simulate a charging robot temporarily not sending state packets.
+    tracker._last_sample = time.monotonic() - 12
+    robot = NS(ready=True, headlight=False, battery=tracker,
+               dock_assist=False, docking_phase=None)
+    bridge = object.__new__(Bridge)
+    bridge.robot = robot
+    output = bridge.current_state()["state"]
+    assert output["docked"] is True
+    assert output["battery"]["charging"] is True
+    assert output["battery"]["percent"] is not None
+    assert tracker.stale()
+    assert tracker.age_seconds() >= 11
+
+
+def test_docked_robot_not_disconnected_just_for_silent_telemetry():
+    import time
+    from cozmo_roverd.robot_packet import BatteryTracker
+    robot = Robot(max_speed=200, on_state=lambda: None,
+                  on_sensor=lambda: None, on_frame=lambda image: None)
+    robot.ready = True
+    robot.battery.observe(3.9, 0x1000)
+    robot.last_sensor = time.monotonic() - 30
+    assert robot.is_healthy()
+    robot.battery.observe(3.9, 0, now=time.monotonic())
+    # Two more samples make charger-contact debounce clear.
+    robot.battery.observe(3.9, 0, now=time.monotonic() + 1)
+    assert robot.battery.docked is False
+    assert not robot.is_healthy()
