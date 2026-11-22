@@ -36,6 +36,7 @@ class Robot:
         self.charging = None
         self.on_charger = None
         self._dock_contact_handled = False
+        self._departure_posture_set = False
         self.cliff = None
         self.picked_up = False
         self.latest = {}
@@ -111,6 +112,7 @@ class Robot:
                 self._face_clock_at = 0.0
                 self._status_light_signature = None
                 self._dock_contact_handled = False
+                self._departure_posture_set = False
                 self._dock_light_owned = False
                 self._auto_gain = 1.0
                 self._auto_exposure_ms = 16
@@ -162,6 +164,7 @@ class Robot:
             # but MRR already receives bounded voltage sensor telemetry.
             old = (self.on_charger, self.charging, self.cliff,
                    self.picked_up, self.dock_assist)
+            was_docked = self.on_charger
             self.voltage = battery.voltage
             self.on_charger = battery.docked
             self.charging = battery.charging
@@ -172,6 +175,7 @@ class Robot:
             if (contact and not self._dock_contact_handled
                     and self.ready and self.client is not None):
                 self._dock_contact_handled = True
+                self._departure_posture_set = False
                 self.stop_drive()
                 self.lift(100)
                 # Contact completes any active docking approach exactly once.
@@ -179,6 +183,12 @@ class Robot:
                 self.head(0)
             elif not contact and battery.docked is False:
                 self._dock_contact_handled = False
+            if (was_docked is True and self.on_charger is False
+                    and not self._departure_posture_set and not self.undock_active
+                    and self.client is not None):
+                # Physical departure (including manually lifting Cozmo) is
+                # distinct from the MRR undock command. Reset its posture once.
+                self._set_departure_posture()
             self.cliff = data["cliff_detected"]
             self.picked_up = data["picked_up"]
             # Rich PyCozmo-derived values are best effort and must never
@@ -220,9 +230,23 @@ class Robot:
             self.moving = False
             self.commanded_wheels = (0, 0)
 
+    def _set_departure_posture(self):
+        """Apply the off-dock posture once per dock departure."""
+        if self._departure_posture_set:
+            return
+        self.head(0)
+        self.lift(0)
+        self._departure_posture_set = True
+
     def drive(self, left, right):
         with self.lock:
             if self.client is None: raise RuntimeError("Cozmo disconnected")
+            # Manual drive from the charger bypasses start_undock().
+            # A zero-speed heartbeat must not trigger a posture change.
+            if ((left or right) and self.on_charger is True
+                    and not self.undock_active):
+                self._end_dock_assist(lower_lift=False)
+                self._set_departure_posture()
             # Request a rapid hardware transition, not a software ramp.
             # High acceleration is explicit; no command timeout is introduced.
             self.client.drive_wheels(left, right, lwheel_acc=10000.0, rwheel_acc=10000.0)
@@ -393,8 +417,7 @@ class Robot:
             self.stop_drive()
             # The undocking posture applies even if the contact has already
             # cleared, including a no-backoff undock request.
-            self.head(0)
-            self.lift(0)
+            self._set_departure_posture()
             if self.on_charger is not True:
                 self.docking_phase = None
                 self.on_state()
@@ -852,6 +875,7 @@ class Robot:
             self._dock_light_owned = False
             self.headlight = False
             self._dock_contact_handled = False
+            self._departure_posture_set = False
             self._status_light_signature = None
             self._charger_factory_id = None
             self._charger_object_id = None
