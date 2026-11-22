@@ -275,6 +275,13 @@ class Bridge:
                 await asyncio.to_thread(self.robot.refresh_auto_camera_exposure)
             except Exception as exc:
                 LOG.warning("Automatic camera exposure update failed: %s", exc)
+            # Reconcile the actual lift position when docked/assisting.
+            # A single SetLiftHeight can be ignored at charger contact;
+            # retry only if fresh lift telemetry still shows it below target.
+            try:
+                await asyncio.to_thread(self.robot.refresh_dock_lift)
+            except Exception as exc:
+                LOG.warning("Dock lift position correction failed: %s", exc)
             # One-time steady backpack colors; charger changes only on
             # dock-contact / dock-assist transitions. Deduped in Robot.
             # A congested send window defers updates until it clears.
