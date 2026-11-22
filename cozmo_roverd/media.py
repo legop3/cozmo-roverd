@@ -7,12 +7,14 @@ import queue
 import time
 import subprocess
 import threading
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 LOG = logging.getLogger(__name__)
 
 class Publisher:
-    def __init__(self, url: str, fps: int = 15):
+    def __init__(self, url: str, fps: int = 15, hud: bool = True):
         self.url, self.fps = url, fps
+        self.hud = hud
+        self.state_provider = None
         self.frames: queue.Queue[Image.Image] = queue.Queue(maxsize=1)
         self.running = threading.Event()
         self.worker: threading.Thread | None = None
@@ -99,7 +101,56 @@ class Publisher:
             "last_frame_age_sec": round(time.monotonic() - self.last_frame_time, 2) if self.last_frame_time else None,
             "publisher_running": self.process is not None and self.process.poll() is None,
             "last_error": self.last_error,
+            "hud_enabled": self.hud,
         }
+    @staticmethod
+    def _format(value, precision=0, suffix=""):
+        if value is None:
+            return "--"
+        if isinstance(value, bool):
+            return "Y" if value else "N"
+        try:
+            return f"{float(value):.{precision}f}{suffix}"
+        except (ValueError, TypeError):
+            return "--"
+
+    def render_frame(self, image, data=None):
+        """Composite directly in the encoding worker; never buffer extra frames."""
+        if image.size != (320, 240):
+            output = image.convert("RGB").resize((320, 240))
+        else:
+            output = image.convert("RGB")
+        if not self.hud:
+            return output
+        st = data or {}
+        draw = ImageDraw.Draw(output, "RGBA")
+        # Small, high contrast strips preserve as much of the full 4:3
+        # camera view as possible, without cropping or scaling the image.
+        draw.rectangle((0, 0, 319, 28), fill=(0, 0, 0, 165))
+        draw.rectangle((0, 209, 319, 239), fill=(0, 0, 0, 165))
+        connected = st.get("connected", False)
+        status = "COZMO ONLINE" if connected else "COZMO RECONNECTING"
+        draw.text((5, 3), status, fill=(100, 255, 160, 255) if connected
+                  else (255, 190, 95, 255))
+        battery = self._format(st.get("battery_pct"), 0, "%")
+        voltage = self._format(st.get("voltage"), 2, "V")
+        charging = " CHG" if st.get("charging") else " DOCK" if st.get("docked") else ""
+        draw.text((5, 16), f"BAT {battery}  {voltage}{charging}", fill=(255, 255, 255, 255))
+        wheels = f"L{self._format(st.get('left'))} R{self._format(st.get('right'))}"
+        head = self._format(st.get("head"), 0, "d")
+        lift = self._format(st.get("lift"), 0, "mm")
+        draw.text((5, 212), f"WHEELS {wheels} mm/s", fill=(255, 255, 255, 255))
+        draw.text((5, 226), f"HEAD {head} LIFT {lift} CLIFF {self._format(st.get('cliff'))}",
+                  fill=(255, 255, 255, 255))
+        return output
+
+    def _offline_frame(self):
+        image = Image.new("RGB", (320, 240), (12, 17, 23))
+        draw = ImageDraw.Draw(image)
+        draw.text((83, 103), "COZMO DISCONNECTED", fill=(255, 255, 255))
+        draw.text((94, 121), "Reconnecting...", fill=(160, 174, 190))
+        return image
+
     def _run(self):
         while self.running.is_set():
             command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin"]
@@ -123,10 +174,23 @@ class Publisher:
                 self.process = subprocess.Popen(command, stdin=subprocess.PIPE,
                                                 stdout=subprocess.DEVNULL, env=env)
                 while self.running.is_set() and self.process.poll() is None:
-                    try: image = self.frames.get(timeout=0.5)
-                    except queue.Empty: continue
                     try:
-                        frame = image.convert("RGB").resize((320, 240)).tobytes()
+                        image = self.frames.get(timeout=0.5)
+                        is_offline = False
+                    except queue.Empty:
+                        # Keep RTSP published during a physical robot outage.
+                        # One fresh status slate per second, not a buffered
+                        # sequence of old camera frames.
+                        if self.last_frame_time is not None and time.monotonic() - self.last_frame_time < 1.0:
+                            continue
+                        image = self._offline_frame()
+                        is_offline = True
+                        time.sleep(0.5)
+                    try:
+                        data = self.state_provider() if self.state_provider is not None else {}
+                        if is_offline:
+                            data["connected"] = False
+                        frame = self.render_frame(image, data).tobytes()
                         self.process.stdin.write(frame)
                     except (BrokenPipeError, OSError, ValueError) as exc:
                         self.last_error = str(exc)[:180]
