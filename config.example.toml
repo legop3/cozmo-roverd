@@ -5,7 +5,7 @@ description = "Cozmo"
 color = "#3ba8ff"
 private = false
 server_url = "ws://YOUR-MRR-SERVER:8080/rover"
-max_speed = 100
+max_speed = 200
 
 [wifi]
 # DEDICATED adapter; never select the adapter used for Internet/MRR.
@@ -16,5 +16,6 @@ password = "PASSWORD_SHOWN_ON_COZMO"
 [media]
 enabled = true
 fps = 15
+camera_mode = "bright"
 # Optional override, otherwise rtsp://SERVER-HOST:8554/<rover.name>
 # rtsp_url = "rtsp://YOUR-MRR-SERVER:8554/cozmo"
