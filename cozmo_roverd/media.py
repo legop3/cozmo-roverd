@@ -149,7 +149,7 @@ class Publisher:
         # thread after dequeue. No additional frame queue or encoding pass.
         draw = ImageDraw.Draw(output, "RGBA")
         cx, cy, radius = 160, 37, 26
-        draw.rounded_rectangle((107, 2, 213, 100), radius=9,
+        draw.rounded_rectangle((65, 2, 255, 100), radius=9,
                                fill=(9, 17, 23, 165),
                                outline=(210, 228, 233, 120), width=1)
         draw.ellipse((cx-radius, cy-radius, cx+radius, cy+radius),
@@ -181,11 +181,31 @@ class Publisher:
             hx = int(round(cx + 21 * math.sin(theta)))
             hy = int(round(cy - 21 * math.cos(theta)))
             draw.ellipse((hx-2, hy-2, hx+2, hy+2), fill=(255, 193, 83, 255))
+        # Peripheral stats stay in the same top-center module, flanking
+        # the compass instead of occupying full-width top/bottom strips.
+        pct = self._format(st.get("battery_pct"), 0, "%")
+        draw.text((70, 13), f"BAT {pct}", fill=(173, 239, 222, 255))
+        draw.text((70, 26), self._format(st.get("voltage"), 2, "V"),
+                  fill=(226, 237, 240, 255))
+        dock = "CHARGING" if st.get("charging") else "DOCKED" if st.get("docked") else ""
+        if dock:
+            draw.text((70, 39), dock, fill=(105, 240, 179, 255))
+        draw.text((70, 56), "L " + self._format(st.get("left"), 0),
+                  fill=(226, 237, 240, 255))
+        draw.text((70, 69), "R " + self._format(st.get("right"), 0),
+                  fill=(226, 237, 240, 255))
+        draw.text((192, 13), "HEAD " + self._format(st.get("head"), 0),
+                  fill=(226, 237, 240, 255))
+        draw.text((192, 26), "LIFT " + self._format(st.get("lift"), 0),
+                  fill=(226, 237, 240, 255))
+        draw.text((192, 39), "CLIFF " + self._format(st.get("cliff")),
+                  fill=(226, 237, 240, 255))
+        gyro = st.get("gyro") or {}
+        draw.text((192, 56), "GZ " + self._format(gyro.get("z"), 1),
+                  fill=(226, 237, 240, 255))
         draw.text((cx-45, 69), f"R {self._format(roll, 0)} P {self._format(pitch, 0)}",
                   fill=(223, 241, 244, 255))
-        pct = self._format(st.get("battery_pct"), 0, "%")
-        charging = "+" if st.get("charging") else "D" if st.get("docked") else ""
-        draw.text((cx-45, 84), f"{pct}{charging}  HDG {self._format(heading, 0)}",
+        draw.text((cx-45, 84), f"HDG {self._format(heading, 0)}",
                   fill=(156, 235, 218, 255))
         if not st.get("connected", False):
             draw.rounded_rectangle((108, 44, 212, 58), radius=3,
