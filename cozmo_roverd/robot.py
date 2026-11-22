@@ -764,6 +764,8 @@ class Robot:
             battery = self.battery
             image = status_image(
                 voltage=battery.voltage,
+                percent=battery.percent,
+                charging=battery.charging,
                 last_tts=self.last_tts,
                 scroll=self._face_scroll,
             )
@@ -780,17 +782,20 @@ class Robot:
             encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 image = compact_status_image(
-                    voltage=battery.voltage, last_tts=self.last_tts,
+                    voltage=battery.voltage, percent=battery.percent,
+                    charging=battery.charging, last_tts=self.last_tts,
                     scroll=self._face_scroll)
                 encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 image = compact_status_image(
-                    voltage=battery.voltage, last_tts=self.last_tts,
+                    voltage=battery.voltage, percent=battery.percent,
+                    charging=battery.charging, last_tts=self.last_tts,
                     scroll=self._face_scroll, message_limit=8)
                 encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 image = compact_status_image(
-                    voltage=battery.voltage, battery_only=True)
+                    voltage=battery.voltage, percent=battery.percent,
+                    charging=battery.charging, battery_only=True)
                 encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 self.face_last_error = (
