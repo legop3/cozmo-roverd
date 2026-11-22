@@ -118,3 +118,39 @@ def test_live_camera_suppresses_robotstate_silence_reconnect():
     assert not bridge._camera_link_active(102.0)
     bridge.publisher = None
     assert not bridge._camera_link_active(102.0)
+
+
+def test_mrr_grace_period_and_recovery_reset():
+    from cozmo_roverd.main import Bridge
+    bridge = disconnected_bridge()
+    bridge._hardware_offline_since = 100.0
+    assert bridge._mrr_offline_remaining(now=100.0) == 600
+    assert bridge._mrr_offline_remaining(now=699.1) == 1
+    assert bridge._mrr_offline_remaining(now=700.0) == 0
+    assert bridge._mrr_offline_remaining(now=710.0) == 0
+    # A real reconnection cancels the outage timer immediately.
+    bridge.hardware_ready.set()
+    bridge._hardware_offline_since = None
+    assert bridge._mrr_offline_remaining(now=710.0) is None
+    # A subsequent failure starts a fresh 10-minute window.
+    bridge.hardware_ready.clear()
+    bridge._hardware_offline_since = 720.0
+    assert bridge._mrr_offline_remaining(now=720.0) == 600
+
+
+def test_mrr_availability_watcher_expires_only_after_grace():
+    async def run():
+        bridge = disconnected_bridge()
+        bridge._hardware_offline_since = 100.0
+        # Initially under grace, cancellation must not expire registration.
+        watching = asyncio.create_task(bridge._watch_mrr_hardware())
+        await asyncio.sleep(0.01)
+        assert not watching.done()
+        watching.cancel()
+        await asyncio.gather(watching, return_exceptions=True)
+        # When grace is exhausted, registration should end immediately.
+        bridge._hardware_offline_since = 0.0
+        # Force a sufficiently long elapsed period without changing clocks.
+        assert bridge._mrr_offline_remaining() == 0
+        await asyncio.wait_for(bridge._watch_mrr_hardware(), timeout=0.2)
+    asyncio.run(run())
