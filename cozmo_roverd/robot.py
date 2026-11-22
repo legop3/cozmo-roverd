@@ -231,6 +231,16 @@ class Robot:
             target=worker, name="cozmo-undock", daemon=True)
         self._undock_thread.start()
 
+    def interrupt_undock(self):
+        """A new drive command overrides a scripted undock immediately."""
+        self._undock_cancel.set()
+        thread = self._undock_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+            if thread.is_alive():
+                raise RuntimeError("Unable to interrupt undock operation")
+        self.undock_active = False
+
     def assist_docking(self):
         with self.lock:
             if self.client is None:
