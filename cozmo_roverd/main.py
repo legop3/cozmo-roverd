@@ -210,14 +210,21 @@ class Bridge:
     async def _telemetry_file(self):
         """Export Cozmo-only fields the MRR sensor protocol cannot represent."""
         target = Path("/run/cozmo-roverd/telemetry.json")
+        last_face_at = -1.0
+        last_telemetry_at = -1.0
         while not self.stop_event.is_set():
-            try:
-                # The face is a local status display, independent of MRR
-                # messages and the video pipeline.
+            now = time.monotonic()
+            if last_face_at < 0 or now - last_face_at >= 0.25:
                 try:
                     await asyncio.to_thread(self.robot.refresh_face)
                 except Exception as exc:
                     LOG.warning("Face status refresh failed: %s", exc)
+                last_face_at = now
+            if last_telemetry_at >= 0 and now - last_telemetry_at < 1.0:
+                await asyncio.sleep(0.05)
+                continue
+            last_telemetry_at = now
+            try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 snap = dict(self.robot.latest)
                 if snap:
@@ -250,7 +257,7 @@ class Bridge:
                 os.replace(tmp, target)
             except (OSError, TypeError, ValueError) as exc:
                 LOG.warning("Cannot export local telemetry: %s", exc)
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.05)
 
     async def _receive(self, ws):
         async for raw in ws:
