@@ -192,7 +192,7 @@ class Robot:
             data["battery_tracking"] = battery.diagnostic()
             data["packet_count"] = self.packets_received
             self.latest = data
-             changed = old != (self.on_charger, self.charging, self.cliff,
+            changed = old != (self.on_charger, self.charging, self.cliff,
                              self.picked_up, self.dock_assist)
             if changed:
                 self.on_state()
@@ -849,6 +849,8 @@ class Robot:
             self.undock_active = False
             self.docking_phase = None
             self.dock_assist = False
+            self._dock_light_owned = False
+            self.headlight = False
             self._dock_contact_handled = False
             self._status_light_signature = None
             self._charger_factory_id = None
