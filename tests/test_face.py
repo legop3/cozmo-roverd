@@ -417,3 +417,45 @@ def test_idle_face_clock_is_low_rate_and_only_runs_when_connected():
     assert isinstance(sent[0], OutputSilence)
     controller._run_frame()
     assert len(sent) == 1
+
+
+
+def test_tts_limits_firmware_playback_buffer_even_when_network_ack_is_fast():
+    from collections import deque
+    from threading import Lock
+    from queue import Queue
+    from types import SimpleNamespace as NS
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+
+    sent = []
+    window = NS(next_seq=0, expected_seq=0, max_seq=65534)
+    sender = NS(lock=Lock(), window=window, queue=Queue())
+    class AudioQueue:
+        def __init__(self):
+            self.lock = Lock()
+            self.audio_queue = deque(["a", "b", "c", "d"])
+        def get(self):
+            with self.lock:
+                return (self.audio_queue.popleft() if self.audio_queue else None,
+                        None, None)
+    controller = NS(queue=AudioQueue(), animations_enabled=True,
+                    playing_audio=False, procedural_face_enabled=False,
+                    playing_animation=False, image_displayed=False,
+                    num_audio_frames_played=100)
+    def send(packet):
+        sent.append(packet)
+        window.next_seq += 1
+    cli = NS(anim_controller=controller,
+             conn=NS(send=send, send_thread=sender, post_event=lambda *args: None))
+    _limit_animation_idle_traffic(cli)
+    controller._cozmo_audio_played_baseline = 100
+    controller._run_frame()  # a
+    window.expected_seq = 1
+    controller._run_frame()  # b
+    window.expected_seq = 2
+    controller._run_frame()  # blocked by two audio frames not yet played
+    assert sent == ["a", "b"]
+    assert list(controller.queue.audio_queue) == ["c", "d"]
+    controller.num_audio_frames_played = 101
+    controller._run_frame()  # c after firmware reports progress
+    assert sent == ["a", "b", "c"]
