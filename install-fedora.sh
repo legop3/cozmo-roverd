@@ -22,6 +22,8 @@ install -d /opt/cozmo-roverd
 python3 -m venv /opt/cozmo-roverd/.venv
 /opt/cozmo-roverd/.venv/bin/pip install --upgrade pip setuptools wheel
 /opt/cozmo-roverd/.venv/bin/pip install "$ROOT"
+# Replace upstream dependency with the pinned, source-patched build.
+bash "$ROOT/scripts/install-patched-pycozmo.sh" /opt/cozmo-roverd/.venv/bin/python
 if [[ ! -e /etc/cozmo-roverd.toml ]]; then
   install -m 0600 "$ROOT/config.example.toml" /etc/cozmo-roverd.toml
   echo "Created /etc/cozmo-roverd.toml; complete setup using http://FEDORA-HOST-IP:8765"
