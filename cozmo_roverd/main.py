@@ -165,6 +165,8 @@ class Bridge:
         last_sensor = 0.0
         last_state = 0.0
         while self.hardware_ready.is_set() and not self.stop_event.is_set():
+            while not self.results.empty():
+                await ws.send(json.dumps(self.results.get_nowait()))
             now = time.monotonic()
             if self.state_dirty.is_set() or now - last_state >= 1.0:
                 self.state_dirty.clear()
@@ -239,6 +241,8 @@ class Bridge:
                     await ws.send(json.dumps(self.current_state()))
                     self.mrr_connected = True
                     self.state_dirty.clear()
+                    while not self.results.empty():
+                        self.results.get_nowait()
                     LOG.info("Registered rover %s with %s", self.cfg.name, self.cfg.server_url)
                     sender = asyncio.create_task(self._send(ws))
                     receiver = asyncio.create_task(self._receive(ws))
