@@ -16,7 +16,7 @@ cd cozmo-roverd
 sudo bash install-fedora.sh
 ```
 
-**Open http://127.0.0.1:8765 on the Fedora computer.** The setup website runs as its own `cozmo-roverd-setup.service`, independently of the rover daemon, and works before Cozmo is connected. On a headless Fedora host, forward it securely over SSH: `ssh -L 8765:127.0.0.1:8765 user@fedora-host`, then open http://127.0.0.1:8765 on your own computer. It is intentionally not exposed publicly or to the local network, since it can change network and service settings.
+**From another computer on the network, open `http://FEDORA-HOST-IP:8765`.** The web interface is designed for headless servers: it listens on all interfaces and runs separately from the bridge, even when Cozmo is offline. No SSH tunnel, login, or HTTPS setup required. The installer opens TCP 8765 through active firewalld installations.
 
 The four steps are:
 1. **Adapter:** choose your dedicated Wi-Fi device from a dropdown; adapters carrying the host's default route are disabled.
@@ -28,7 +28,7 @@ The setup UI validates data, keeps existing passwords when appropriate, writes `
 
 To upgrade an existing installation, `git pull` then rerun `sudo bash install-fedora.sh`. Existing configuration is preserved. You do **not** have to manually edit the TOML. The web UI uses the same configuration file as the daemon.
 
-The setup site binds to `127.0.0.1:8765` and never changes MRR itself. It requires root locally to operate NetworkManager and systemd. You should not reverse-proxy or port-forward this privileged interface to untrusted networks.
+The setup page listens on `0.0.0.0:8765` and does not change MRR itself. **There is no authentication or encryption**: anyone who can reach this port can change robot networking and restart the service. Keep port 8765 on a trusted LAN and do not forward it onto the internet.
 
 ## Controls
 
