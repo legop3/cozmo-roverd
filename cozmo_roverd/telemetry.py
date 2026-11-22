@@ -43,8 +43,43 @@ def snapshot(client):
     flags = int(client.robot_status)
     bits = {name: bool(flags & bit) for name, bit in FLAGS.items()}
     p = client.pose
+    available = list(getattr(client, "available_objects", {}).values())[:20]
+    connected = list(getattr(client, "connected_objects", {}).items())[:20]
+    camera = getattr(client, "camera_config", None)
     return {
         "timestamp_ms": int(time.time() * 1000),
+        "hardware": {
+            "serial_number": getattr(client, "serial_number", None),
+            "head_serial_number": getattr(client, "serial_number_head", None),
+            "body_hardware_version": getattr(client, "body_hw_version", None),
+            "body_color": getattr(getattr(client, "body_color", None), "name", None),
+        },
+        "camera": {
+            "last_robot_image_timestamp": getattr(client, "last_image_timestamp", None),
+            "fov_x_deg": number(camera.fov_x.degrees) if camera else None,
+            "fov_y_deg": number(camera.fov_y.degrees) if camera else None,
+        },
+        "animations": {
+            "bytes_played": getattr(client, "num_anim_bytes_played", None),
+            "audio_frames_played": getattr(client, "num_audio_frames_played", None),
+            "enabled_tracks": getattr(client, "enabled_anim_tracks", None),
+            "client_drop_count": getattr(client, "client_drop_count", None),
+        },
+        "cubes": {
+            "available": len(getattr(client, "available_objects", {})),
+            "connected": len(getattr(client, "connected_objects", {})),
+            "objects": [
+                {"factory_id": getattr(item, "factory_id", None),
+                 "type": str(getattr(item, "object_type", "unknown"))}
+                for item in available
+            ],
+            "connections": [
+                {"object_id": int(index),
+                 "factory_id": item.get("factory_id"),
+                 "type": str(item.get("object_type", "unknown"))}
+                for index, item in connected if isinstance(item, dict)
+            ],
+        },
         "battery_voltage_v": number(client.battery_voltage) if client.battery_voltage > 0 else None,
         "on_charger": bits["on_charger"],
         "charging": bits["charging"],
