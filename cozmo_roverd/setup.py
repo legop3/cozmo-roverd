@@ -175,7 +175,7 @@ def public_config(path: str) -> dict:
         "ssid": wifi.get("ssid", ""),
         "has_password": bool(wifi.get("password")),
         "max_speed": rover.get("max_speed", 250),
-        "camera_mode": media.get("camera_mode", "bright"),
+        "camera_mode": media.get("camera_mode", "auto"),
         "hud": media.get("hud", True),
         "video": media.get("enabled", True),
         "fps": media.get("fps", 15),
@@ -233,7 +233,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
         raise ValueError("Choose a speed from the dropdown")
     if type(fps) is not int or fps not in FPS:
         raise ValueError("Choose an FPS value from the dropdown")
-    camera_mode = payload.get("camera_mode", "bright")
+    camera_mode = payload.get("camera_mode", "auto")
     if camera_mode not in ("auto", "bright", "lowlight"):
         raise ValueError("Select a camera exposure preset")
     hud = payload.get("hud", True)
