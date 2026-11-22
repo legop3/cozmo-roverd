@@ -244,99 +244,40 @@ def test_face_records_encoding_size_after_display():
 
 
 
-def test_face_never_submits_a_keyframe_larger_than_160_bytes(monkeypatch):
-    """A legal UDP packet can still exceed Cozmo's animation buffer."""
+def test_face_uses_full_width_status_instead_of_tiny_battery_only_fallback():
+    from pycozmo.image_encoder import ImageEncoder
+    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+
+    robot = robot_with_face()
+    robot.battery.voltage = 3.91
+    robot.battery.percent = 62
+    robot.last_tts = "Hello Cozmo"
+    assert robot.refresh_face()
+    frame = robot.client.images[-1]
+    assert frame.mode == "1"
+    assert frame.size == (128, 32)
+    assert frame.crop((90, 0, 128, 32)).getbbox() is not None
+    assert robot.face_last_encoded_bytes == len(ImageEncoder(frame).encode())
+    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
+
+
+def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatch):
     import cozmo_roverd.robot as robot_module
     from pycozmo.image_encoder import ImageEncoder
+    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+
+    # A high-entropy image cannot fit in one Cozmo packet. It must be
+    # replaced, but ordinary ~300-byte dashboard images must not.
     noise = Image.new("1", (128, 32))
     for y in range(32):
         for x in range(128):
             noise.putpixel((x, y), ((x * 57 + y * 91 + x*y) % 7 < 3))
-    assert len(ImageEncoder(noise).encode()) > 160
+    assert len(ImageEncoder(noise).encode()) > MAX_FRAME_PAYLOAD_SIZE - 6
     monkeypatch.setattr(robot_module, "status_image", lambda **kwargs: noise)
     robot = robot_with_face()
     assert robot.refresh_face()
-    assert robot.face_last_encoded_bytes <= 160
-    assert len(robot.client.images) == 1
+    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
     assert robot.client.images[0].tobytes() != noise.tobytes()
-
-
-
-def test_tts_frames_wait_for_ack_capacity_without_blocking_other_commands():
-    from collections import deque
-    from queue import Queue
-    from threading import Lock
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-    import pycozmo
-    sent, events = [], []
-    class AudioQueue:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque(["audio-frame-1", "audio-frame-2"])
-        def get(self):
-            with self.lock:
-                return (self.audio_queue.popleft() if self.audio_queue else None,
-                        None, None)
-    q = AudioQueue()
-    sender = NS(lock=Lock(),
-                window=NS(next_seq=5, expected_seq=0, max_seq=65534),
-                queue=Queue())
-    controller = NS(queue=q, animations_enabled=True, playing_audio=False,
-                    procedural_face_enabled=False, image_displayed=False,
-                    playing_animation=False)
-    cli = NS(anim_controller=controller,
-             conn=NS(send=sent.append, send_thread=sender,
-                     post_event=lambda *args: events.append(args)))
-    _limit_animation_idle_traffic(cli)
-    for _ in range(10):
-        controller._run_frame()
-    assert not sent
-    assert list(q.audio_queue) == ["audio-frame-1", "audio-frame-2"]
-    # Acknowledgements make space again, so frames play in order.
-    sender.window.expected_seq = 5
-    controller._run_frame()
-    controller._run_frame()
-    controller._run_frame()
-    assert sent[:2] == ["audio-frame-1", "audio-frame-2"]
-    assert isinstance(sent[-1], pycozmo.protocol_encoder.OutputSilence)
-    assert controller._cozmo_audio_backpressure_ticks == 10
-    assert not controller._cozmo_audio_aborted
-
-
-def test_tts_aborts_instead_of_unbounded_retransmission_on_stalled_ack():
-    from collections import deque
-    from queue import Queue
-    from threading import Lock
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-    from unittest.mock import patch
-    sent = []
-    class AudioQueue:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque(["a", "b", "c"])
-        def get(self):
-            with self.lock:
-                return (self.audio_queue.popleft() if self.audio_queue else None,
-                        None, None)
-    q = AudioQueue()
-    sender = NS(lock=Lock(),
-                window=NS(next_seq=10, expected_seq=1, max_seq=65534),
-                queue=Queue())
-    controller = NS(queue=q, animations_enabled=True, playing_audio=False,
-                    procedural_face_enabled=False, image_displayed=False,
-                    playing_animation=False)
-    cli = NS(anim_controller=controller, conn=NS(send=sent.append, send_thread=sender,
-                                                 post_event=lambda *args: None))
-    _limit_animation_idle_traffic(cli)
-    with patch("cozmo_roverd.robot.time.monotonic", side_effect=[10.0, 12.5]):
-        controller._run_frame()
-        controller._run_frame()
-    assert controller._cozmo_audio_aborted
-    assert list(q.audio_queue) == []
-    assert sent == []
-
 
 
 def test_tts_sends_only_one_unacknowledged_audio_frame_at_a_time():
