@@ -154,9 +154,12 @@ def test_recovery_slate_depends_on_supervisor_and_ignores_hud_toggle():
     assert connecting.mode == "RGB"
     assert connecting.tobytes() != retrying.tobytes()
     assert retrying.tobytes() != waiting.tobytes()
-    assert connecting.getpixel((160, 100)) != baseline.getpixel((160, 100))
+    assert connecting.tobytes() != baseline.tobytes()
     assert connecting.getpixel((10, 10)) == (12, 17, 23)
     assert waiting.getpixel((10, 10)) == (12, 17, 23)
+    # No redundant MRR status or error diagnostics on the RTSP slate.
+    assert connecting.getpixel((25, 218)) == (12, 17, 23)
+    assert connecting.getpixel((25, 190)) == (12, 17, 23)
 
 
 def test_recovery_slate_handles_unknown_errors_and_counter_types():
