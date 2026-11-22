@@ -174,7 +174,8 @@ def public_config(path: str) -> dict:
         "interface": wifi.get("interface", ""),
         "ssid": wifi.get("ssid", ""),
         "has_password": bool(wifi.get("password")),
-        "max_speed": rover.get("max_speed", 100),
+        "max_speed": rover.get("max_speed", 200),
+        "camera_mode": media.get("camera_mode", "bright"),
         "video": media.get("enabled", True),
         "fps": media.get("fps", 15),
         "rtsp_url": media.get("rtsp_url", ""),
@@ -187,7 +188,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Invalid configuration")
     allowed = {"name", "description", "color", "private", "server_url", "interface", "ssid", "password",
-               "max_speed", "video", "fps", "rtsp_url", "watchdog_seconds"}
+               "max_speed", "video", "fps", "rtsp_url", "camera_mode", "watchdog_seconds"}
     if set(payload) - allowed:
         raise ValueError("Unknown configuration field")
     name = str(payload.get("name", "")).strip()
@@ -231,6 +232,9 @@ def validate_payload(payload: dict, current: dict) -> dict:
         raise ValueError("Choose a speed from the dropdown")
     if type(fps) is not int or fps not in FPS:
         raise ValueError("Choose an FPS value from the dropdown")
+    camera_mode = payload.get("camera_mode", "bright")
+    if camera_mode not in ("auto", "bright", "lowlight"):
+        raise ValueError("Select a camera exposure preset")
     video = payload.get("video")
     if type(video) is not bool:
         raise ValueError("Video setting is invalid")
@@ -243,7 +247,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
                       "server_url": url, "max_speed": max_speed,
                       },
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
-            "media": {"enabled": video, "fps": fps, "rtsp_url": rtsp}}
+            "media": {"enabled": video, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode}}
 
 
 def render_toml(data: dict) -> str:
