@@ -56,8 +56,11 @@ def default_route_devices() -> set[str]:
 def radio_status() -> dict:
     radio = run("nmcli", "radio", "wifi")
     text = radio.stdout.strip().lower()
-    rf = run("rfkill", "list", "wifi")
-    lines = rf.stdout.lower()
+    try:
+        rf = run("rfkill", "list", "wifi")
+        lines = rf.stdout.lower()
+    except FileNotFoundError:
+        lines = ""
     return {
         "enabled": text == "enabled",
         "state": text or "unknown",
