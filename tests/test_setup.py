@@ -162,3 +162,23 @@ def test_250_mmps_speed_and_top_center_hud_config_round_trip(tmp_path):
         assert final.max_speed == 250
         assert final.hud is True
         assert rendered["media"]["hud"] is True
+
+
+def test_description_optional_and_blank_stays_blank(tmp_path):
+    data = {
+        "name": "cozmo", "color": "#3ba8ff",
+        "server_url": "ws://localhost:8080/rover",
+        "interface": "wlan1", "ssid": "Cozmo_ABC",
+        "password": "password123", "max_speed": 250,
+        "video": True, "fps": 15, "rtsp_url": "",
+    }
+    with patch.object(setup, "interfaces", return_value=[
+            {"name": "wlan1", "selectable": True}]):
+        result = setup.validate_payload(data, {})
+        assert result["rover"]["description"] == ""
+        result2 = setup.validate_payload({**data, "description": ""}, {})
+        assert result2["rover"]["description"] == ""
+        target = tmp_path / "blank-description.toml"
+        setup.write_config(str(target), result)
+        from cozmo_roverd.config import load
+        assert load(str(target)).description == ""
