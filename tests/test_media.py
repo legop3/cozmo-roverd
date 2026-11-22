@@ -114,3 +114,57 @@ def test_lift_gauge_handles_missing_and_out_of_range_telemetry():
     result = publisher.render_frame(frame, {"lift": None})
     assert result.size == (320, 240)
     assert result.getpixel((188, 17)) != frame.getpixel((188, 17))
+
+
+def test_recovery_titles_reflect_actual_robot_supervisor_stage():
+    publisher = Publisher("rtsp://localhost:8554/cozmo", hud=False)
+    for stage, expected in (
+        ("connecting_wifi", "CONNECTING TO COZMO"),
+        ("connecting_robot", "CONNECTING TO COZMO"),
+        ("cleaning_up", "COZMO RECONNECTING"),
+        ("retrying", "COZMO RECONNECTING"),
+        ("online", "WAITING FOR CAMERA"),
+    ):
+        title, _ = publisher._recovery_status(
+            {"connected": stage == "online", "hardware_stage": stage},
+            had_video=False)
+        assert title == expected
+    title, detail = publisher._recovery_status(
+        {"connected": True, "hardware_stage": "online"}, had_video=True)
+    assert title == "CAMERA RECONNECTING"
+    assert "waiting for live frames" in detail
+
+
+def test_recovery_slate_depends_on_supervisor_and_ignores_hud_toggle():
+    publisher = Publisher("rtsp://localhost:8554/cozmo", hud=False)
+    publisher.frame_count = 20
+    baseline = Image.new("RGB", (320, 240), (12, 17, 23))
+    connecting = publisher._offline_frame({
+        "connected": False, "hardware_stage": "connecting_robot",
+        "mrr_connected": True, "hardware_reconnect_attempts": 2,
+        "last_hardware_error": "Reliable ACKs stalled"})
+    retrying = publisher._offline_frame({
+        "connected": False, "hardware_stage": "retrying",
+        "mrr_connected": True, "hardware_reconnect_attempts": 3,
+        "last_hardware_error": "Reliable ACKs stalled"})
+    waiting = publisher._offline_frame({
+        "connected": True, "hardware_stage": "online",
+        "mrr_connected": True, "hardware_reconnect_attempts": 3})
+    assert connecting.size == retrying.size == waiting.size == (320, 240)
+    assert connecting.mode == "RGB"
+    assert connecting.tobytes() != retrying.tobytes()
+    assert retrying.tobytes() != waiting.tobytes()
+    assert connecting.getpixel((160, 100)) != baseline.getpixel((160, 100))
+    assert connecting.getpixel((10, 10)) == (12, 17, 23)
+    assert waiting.getpixel((10, 10)) == (12, 17, 23)
+
+
+def test_recovery_slate_handles_unknown_errors_and_counter_types():
+    publisher = Publisher("rtsp://localhost:8554/cozmo")
+    image = publisher._offline_frame({
+        "hardware_stage": "retrying", "connected": False,
+        "last_hardware_error": "very long error " * 100,
+        "hardware_reconnect_attempts": None,
+        "mrr_connected": False})
+    assert image.size == (320, 240)
+    assert image.mode == "RGB"
