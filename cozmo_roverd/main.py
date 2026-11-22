@@ -279,7 +279,14 @@ class Bridge:
                     await asyncio.to_thread(self.execute, msg)
                 except Exception as exc:
                     error = str(exc)
-                    LOG.warning("Command %s rejected: %s", msg.get("type"), error)
+                    # MRR periodically probes optional stream/audio-level
+                    # controls this robot does not implement. Keep the error
+                    # ACK, but don't obscure actual hardware failures.
+                    if msg.get("type") in ("audioLevels", "sensorStream"):
+                        LOG.debug("Optional MRR command %s unsupported: %s",
+                                  msg.get("type"), error)
+                    else:
+                        LOG.warning("Command %s rejected: %s", msg.get("type"), error)
                 await ws.send(json.dumps(ack(msg, error)))
             except (ValueError, TypeError) as exc:
                 LOG.warning("Ignoring invalid server message: %s", exc)
