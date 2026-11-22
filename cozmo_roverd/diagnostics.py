@@ -138,7 +138,13 @@ class Recorder:
         self._write(row)
 
     def command(self, msg):
-        self.event("mrr_command", **_safe_command(msg))
+        # High-rate drive commands live in the bounded incident ring.
+        # They are persisted together when a failure occurs, rather than
+        # synchronously writing to disk for every motor command.
+        row = {"utc": _utc(), "monotonic": round(time.monotonic(), 3),
+               "event": "mrr_command", **_safe_command(msg)}
+        with self.lock:
+            self.events.append(row)
 
     def sample(self, *, stage, transport=None, packet_count=None,
                last_sensor_age=None, camera_age=None, battery_voltage=None):
@@ -166,6 +172,7 @@ class Recorder:
         self.event("recorder_stopped")
         self._protocol_logger.removeHandler(self._trace_handler)
         self._protocol_logger.setLevel(self._original_level)
+        self._protocol_logger.propagate = self._original_propagate
         self._listener.stop()
         self._trace_output.close()
         self._incident_logger.removeHandler(self._incident_output)
