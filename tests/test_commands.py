@@ -3,6 +3,7 @@ from cozmo_roverd.main import Bridge
 
 class FakeRobot:
     headlight = False
+    undock_active = False
     def __init__(self):
         self.calls = []
     def drive(self, left, right): self.calls.append(("drive", left, right))
@@ -12,6 +13,13 @@ class FakeRobot:
         self.headlight = state
         self.calls.append(("light", state))
     def face(self, text): self.calls.append(("face", text))
+    def lift_motor(self, pwm): self.calls.append(("lift_motor", pwm))
+    def start_undock(self, command_id, backoff, done):
+        self.calls.append(("undock", command_id, backoff))
+        done(command_id, None)
+    def assist_docking(self): self.calls.append(("assist_docking",))
+    def cancel_docking(self): self.calls.append(("cancel_docking",))
+    def speak(self, text, speed=1.0): self.calls.append(("tts", text, speed))
 
 @pytest.fixture
 def bridge():
@@ -19,6 +27,7 @@ def bridge():
     b.cfg = type("Config", (), {"max_speed": 100})()
     b.robot = FakeRobot()
     b.head_degrees = 10
+    b.report_result = lambda command_id, error=None: b.robot.calls.append(("result", command_id, error))
     return b
 
 def test_drive_limit(bridge):
@@ -47,3 +56,26 @@ def test_headlight_toggle(bridge):
     bridge.execute({"type": "headlight", "headlight": {"action": "toggle"}})
     bridge.execute({"type": "headlight", "headlight": {"action": "toggle"}})
     assert bridge.robot.calls == [("light", True), ("light", False)]
+
+
+def test_brush_drives_lift_and_not_wheels(bridge):
+    bridge.execute({"type": "motors", "motorPwm": {"main": 127, "side": 0, "vacuum": 0}})
+    bridge.execute({"type": "motors", "motorPwm": {"main": -127, "side": 0, "vacuum": 0}})
+    bridge.execute({"type": "motors", "motorPwm": {"main": 0, "side": 0, "vacuum": 0}})
+    assert bridge.robot.calls[-3:] == [("lift_motor", 127), ("lift_motor", -127), ("lift_motor", 0)]
+
+
+def test_undock_ack_and_completion(bridge):
+    bridge.execute({"type": "undock", "id": "u1", "backoff": True})
+    assert bridge.robot.calls[-2:] == [("undock", "u1", True), ("result", "u1", None)]
+
+
+def test_dock_assist_and_cancel(bridge):
+    bridge.execute({"type": "dockAssist"})
+    bridge.execute({"type": "cancelDocking"})
+    assert bridge.robot.calls[-2:] == [("assist_docking",), ("cancel_docking",)]
+
+
+def test_tts_to_speaker(bridge):
+    bridge.execute({"type": "tts", "tts": {"speak": True, "text": "Hi", "speed": 1.1}})
+    assert bridge.robot.calls[-1] == ("tts", "Hi", 1.1)
