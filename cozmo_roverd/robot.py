@@ -398,6 +398,14 @@ class Robot:
             raise RuntimeError(f"Cozmo TTS failed: {exc}") from exc
 
     def close(self):
+        """Release the robot promptly without network writes on a dead link.
+
+        Never hold the command lock while joining PyCozmo worker threads:
+        callbacks may need the same lock to finish, causing recovery to hang.
+        When the robot has disappeared, sending motor commands and a protocol
+        disconnect is both ineffective and unnecessary. Closing the local
+        socket and threads is sufficient before a fresh connection attempt.
+        """
         with self.lock:
             cli, self.client = self.client, None
             self.ready = False
@@ -413,12 +421,10 @@ class Robot:
             self.on_charger = None
             self.charging = None
             self.cliff = None
-            if cli is None: return
-            try:
-                cli.drive_wheels(0, 0)
-                cli.stop_all_motors()
-            except Exception: LOG.warning("Could not stop motors on disconnect", exc_info=True)
-            try: cli.disconnect()
-            except Exception: LOG.warning("Disconnect failed", exc_info=True)
-            try: cli.stop()
-            except Exception: LOG.warning("Client stop failed", exc_info=True)
+        if cli is None:
+            return
+        LOG.info("Closing local PyCozmo client for reconnection")
+        try:
+            cli.stop()
+        except Exception:
+            LOG.exception("Could not close PyCozmo client")
