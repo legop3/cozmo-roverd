@@ -206,3 +206,39 @@ def test_short_charger_pause_keeps_credit_but_does_not_earn_more():
     for t in range(790, 790 + 305):
         b.observe(3.80, ON_CHARGER | CHARGING, now=float(t))
     assert b.needs_charge is False
+
+
+def test_persisted_low_battery_lock_unlocks_with_only_charger_flags(monkeypatch):
+    import time
+    original = _low_battery_tracker()
+    saved = original.gauge.export()
+    saved.update(original.charge_state_snapshot())
+    fresh = BatteryTracker()
+    assert fresh.restore_charge_state(saved)
+    assert fresh.needs_charge is True
+    assert fresh.battery_state()["needsCharge"] is True
+    # Simulate Cozmo returning no valid voltage after a daemon restart.
+    for t in range(RECOVERY_NO_VOLTAGE_SECONDS + 2):
+        fresh.observe(0.0, ON_CHARGER | CHARGING, now=float(t))
+    assert fresh.percent is None
+    assert fresh.battery_state()["needsCharge"] is False
+
+
+def test_charge_lock_is_not_cleared_by_a_stale_saved_snapshot():
+    original = _low_battery_tracker()
+    saved = original.gauge.export()
+    saved.update(original.charge_state_snapshot())
+    saved["saved_at"] -= 4000
+    fresh = BatteryTracker()
+    assert not fresh.restore_charge_state(saved)
+    assert fresh.battery_state()["needsCharge"] is None
+
+
+def test_no_charge_credit_during_no_telemetry_across_reconnect():
+    b = _low_battery_tracker()
+    for t in range(160, 560):
+        b.observe(3.83, ON_CHARGER | CHARGING, now=float(t))
+    assert b.diagnostic()["recovery_charge_seconds"] > 300
+    b.observe(3.83, ON_CHARGER | CHARGING, now=3600.0)
+    assert b.diagnostic()["recovery_charge_seconds"] == 0
+    assert b.needs_charge is True
