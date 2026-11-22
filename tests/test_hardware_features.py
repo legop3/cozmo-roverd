@@ -87,3 +87,14 @@ def test_no_orientation_based_drive_lock():
     robot.latest = {"orientation": "ON_BACK"}
     robot.drive(90, -90)
     assert robot.client.drives[-1] == (90, -90)
+
+
+def test_cliff_alert_does_not_stop_motors_or_block_drive():
+    robot, _ = fake_robot()
+    robot.drive(120, 120)
+    robot._cliff(True)
+    assert robot.cliff is True
+    assert robot.client.drives == [(120, 120)]
+    robot.drive(140, -140)
+    assert robot.client.drives[-1] == (140, -140)
+    assert robot.moving is True
