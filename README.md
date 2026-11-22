@@ -51,6 +51,12 @@ Camera images are published via FFmpeg to the server's existing MediaMTX RTSP en
 
 **Note:** Fedora's `ffmpeg-free` build may not contain `libx264`. The bridge automatically uses `libopenh264` when available instead. Enable the official `fedora-cisco-openh264` repository and install `openh264` if necessary, or install a full FFmpeg build. Check `ffmpeg -encoders | grep -E 'libx264|libopenh264'`. The installer does not silently enable third-party repositories.
 
+## Recovering an interrupted Cozmo connection
+
+The bridge retains its MRR registration while reconnecting Cozmo. It now reuses an active NetworkManager association, waits through brief RobotState pauses, and retries fresh PyCozmo handshakes without transmitting a protocol Disconnect to an absent robot. A stalled PyCozmo start/stop triggers a supervised service restart rather than blocking recovery indefinitely. In the setup dashboard, **Cozmo recovery stage**, **Last Cozmo failure**, and **Robot reconnect attempts** explain what the bridge is doing.
+
+FFmpeg's RTSP/encoding errors are written to `/run/cozmo-roverd/ffmpeg.log`, not endlessly printed in the bridge's journal. Use `journalctl -u cozmo-roverd -n 100 --no-pager` for connection messages and `cat /run/cozmo-roverd/ffmpeg.log` only when debugging video. This does not prove the physical cause of a Wi-Fi/robot disconnect; it makes recovery and failures observable.
+
 ## In-video HUD, camera field of view, and temporary disconnects
 
 The optional **In-video telemetry HUD** now consists of a **single 30-pixel top-center IMU ball** on the existing 320×240 camera frame. Its dot responds to gravity-derived roll/pitch from Cozmo's accelerometer. There is no background panel, stats text, second video stream, extra frame queue, or additional encoding pass. Only the small ball is burned into the video. Turn it off in the Fedora setup UI.
