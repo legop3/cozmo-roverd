@@ -7,6 +7,9 @@ class FakeRobot:
     def __init__(self):
         self.calls = []
     def drive(self, left, right): self.calls.append(("drive", left, right))
+    def interrupt_undock(self):
+        self.calls.append(("interrupt_undock",))
+        self.undock_active = False
     def head(self, angle): self.calls.append(("head", angle))
     def lift(self, height): self.calls.append(("lift", height))
     def light(self, state):
@@ -79,3 +82,9 @@ def test_dock_assist_and_cancel(bridge):
 def test_tts_to_speaker(bridge):
     bridge.execute({"type": "tts", "tts": {"speak": True, "text": "Hi", "speed": 1.1}})
     assert bridge.robot.calls[-1] == ("tts", "Hi", 1.1)
+
+
+def test_new_drive_interrupts_undock_instead_of_being_ignored(bridge):
+    bridge.robot.undock_active = True
+    bridge.execute({"type": "drive", "driveDirect": {"left": 100, "right": -100}})
+    assert bridge.robot.calls == [("interrupt_undock",), ("drive", 100, -100)]
