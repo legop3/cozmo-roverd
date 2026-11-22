@@ -82,8 +82,13 @@ class Robot:
             self.on_state()
             LOG.info("Cozmo connected")
         except Exception:
-            try: cli.disconnect()
-            finally: cli.stop()
+            # On a failed handshake the robot may already be absent. Do not
+            # enqueue a protocol Disconnect into an unacknowledged socket.
+            # Reclaim local PyCozmo threads and let the supervisor retry.
+            try:
+                cli.stop()
+            except Exception:
+                LOG.exception("Could not close failed PyCozmo connection")
             raise
 
     def _charging(self, value):
