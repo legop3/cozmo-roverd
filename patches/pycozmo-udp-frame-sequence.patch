@@ -10,7 +10,7 @@ diff --git a/pycozmo/conn.py b/pycozmo/conn.py
          for seq, pkt in pkts:
  
              # First packet in a frame?
-@@ -140,14 +140,18 @@ class SendThread(Thread):
+@@ -140,12 +140,16 @@ class SendThread(Thread):
                  to_frame.append(pkt)
              else:
                  # Send current frame.
