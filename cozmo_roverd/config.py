@@ -32,7 +32,8 @@ def load(path: str) -> Config:
         description=str(rover.get("description", "Anki Cozmo")),
         color=str(rover.get("color", "#3ba8ff")),
         max_speed=int(rover.get("max_speed", 250)),
-        camera_mode=str(media.get("camera_mode", "auto")),
+        # Legacy bright/lowlight settings now use fully adaptive auto.
+        camera_mode="auto",
         video=bool(media.get("enabled", True)),
         private=rover.get("private", False),
         rtsp_url=str(media.get("rtsp_url", "")),
@@ -52,8 +53,6 @@ def load(path: str) -> Config:
         raise ValueError("wifi.interface must be a dedicated Wi-Fi device name")
     if not 1 <= c.max_speed <= 250 or not 1 <= c.fps <= 15:
         raise ValueError("Invalid speed or fps")
-    if c.camera_mode not in ("auto", "bright", "lowlight"):
-        raise ValueError("Invalid camera mode")
     if c.video and c.rtsp_url and urlsplit(c.rtsp_url).scheme != "rtsp":
         raise ValueError("media.rtsp_url must be an RTSP URL")
     return c
