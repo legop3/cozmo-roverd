@@ -368,6 +368,13 @@ class Handler(BaseHTTPRequestHandler):
                                      "options": {"speeds": SPEEDS, "fps": FPS, "watchdog": WATCHDOG, "colors": COLORS}})
             elif self.path == "/api/interfaces":
                 self.send_json(200, {"interfaces": interfaces(), "radio": radio_status()})
+            elif self.path == "/api/telemetry":
+                try:
+                    item = json.loads(Path("/run/cozmo-roverd/telemetry.json").read_text())
+                except (FileNotFoundError, ValueError, OSError):
+                    item = {"hardware_connected": False, "mrr_connected": False,
+                            "cozmo": {}, "rover_state": {}, "video": {}}
+                self.send_json(200, item)
             elif self.path == "/api/status":
                 d = public_config(self.config_path)
                 self.send_json(200, {"service": service_status(),
