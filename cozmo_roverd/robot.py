@@ -26,6 +26,7 @@ class Robot:
         self._auto_measured_brightness = None
         self.docking_phase = None
         self.dock_assist = False
+        self._dock_light_owned = False
         self.undock_active = False
         self._undock_cancel = threading.Event()
         self._undock_thread = None
@@ -110,6 +111,7 @@ class Robot:
                 self._face_clock_at = 0.0
                 self._status_light_signature = None
                 self._dock_contact_handled = False
+                self._dock_light_owned = False
                 self._auto_gain = 1.0
                 self._auto_exposure_ms = 16
                 self._auto_last_measure_at = 0.0
@@ -172,6 +174,9 @@ class Robot:
                 self._dock_contact_handled = True
                 self.stop_drive()
                 self.lift(100)
+                # Contact completes any active docking approach exactly once.
+                self._end_dock_assist(lower_lift=False)
+                self.head(0)
             elif not contact and battery.docked is False:
                 self._dock_contact_handled = False
             self.cliff = data["cliff_detected"]
@@ -187,12 +192,7 @@ class Robot:
             data["battery_tracking"] = battery.diagnostic()
             data["packet_count"] = self.packets_received
             self.latest = data
-            if self.dock_assist and self.on_charger:
-                # The charger flag is an observation, not permission to
-                # override a driver command. End the assist status only.
-                self.dock_assist = False
-                self.docking_phase = None
-            changed = old != (self.on_charger, self.charging, self.cliff,
+             changed = old != (self.on_charger, self.charging, self.cliff,
                              self.picked_up, self.dock_assist)
             if changed:
                 self.on_state()
@@ -366,28 +366,61 @@ class Robot:
             self.camera_mode = "manual"
             self.configure_camera()
 
+    def _end_dock_assist(self, *, lower_lift):
+        """Clear the complete temporary docking posture and owned headlight.
+
+        Caller holds self.lock (RLock). Leave a manually-on headlight alone.
+        """
+        was_assisting = self.dock_assist
+        self.dock_assist = False
+        if self.docking_phase == "assisting":
+            self.docking_phase = None
+        if self._dock_light_owned:
+            self._dock_light_owned = False
+            self.light(False)
+        if was_assisting and lower_lift:
+            self.head(0)
+            self.lift(0)
+
     def start_undock(self, command_id, backoff, completed):
-        """Drive forward off Cozmo charging contacts, then report completion."""
+        """Reset docking posture, then drive forward off charging contacts."""
         with self.lock:
             if self.undock_active:
                 raise ValueError("undock already in progress")
             if self.client is None or not self.ready:
                 raise RuntimeError("Cozmo disconnected")
+            self._end_dock_assist(lower_lift=False)
+            self.stop_drive()
+            # The undocking posture applies even if the contact has already
+            # cleared, including a no-backoff undock request.
+            self.head(0)
+            self.lift(0)
             if self.on_charger is not True:
+                self.docking_phase = None
+                self.on_state()
                 completed(command_id, None)
                 return
             self.undock_active = True
             self.docking_phase = "undocking"
-            self.dock_assist = False
             self._undock_cancel.clear()
-            self.head(0)
-            self.lift(0)
         self.on_state()
 
         def worker():
             error = None
             try:
                 if backoff:
+                    # Cozmo's lift positioning is asynchronous. Give it a
+                    # bounded moment to lower before moving off the dock.
+                    deadline = time.monotonic() + 2.0
+                    while time.monotonic() < deadline:
+                        if self._undock_cancel.is_set():
+                            raise RuntimeError("undock interrupted")
+                        height = self.latest.get("lift_height_mm")
+                        if height is not None and height <= 38:
+                            break
+                        time.sleep(0.05)
+                    if self._undock_cancel.is_set():
+                        raise RuntimeError("undock interrupted")
                     self.drive(self.max_speed, self.max_speed)
                     deadline = time.monotonic() + 3.0
                     while time.monotonic() < deadline:
@@ -413,7 +446,7 @@ class Robot:
         self._undock_thread.start()
 
     def interrupt_undock(self):
-        """A new drive command overrides a scripted undock immediately."""
+        """A new driver command overrides a scripted undock."""
         self._undock_cancel.set()
         thread = self._undock_thread
         if thread is not None and thread.is_alive():
@@ -424,25 +457,30 @@ class Robot:
 
     def assist_docking(self):
         with self.lock:
-            if self.client is None:
+            if self.client is None or not self.ready:
                 raise RuntimeError("Cozmo disconnected")
             if self.on_charger:
+                return
+            if self.dock_assist:
                 return
             self.dock_assist = True
             self.docking_phase = "assisting"
             self.stop_drive()
             self.head(-25)
             self.lift(100)
+            if not self.headlight:
+                self.light(True)
+                self._dock_light_owned = True
         self.on_state()
 
     def cancel_docking(self):
         with self.lock:
             if self.undock_active:
                 return
-            self.dock_assist = False
-            self.docking_phase = None
+            if not self.dock_assist:
+                return
             self.stop_drive()
-            self.head(10)
+            self._end_dock_assist(lower_lift=True)
         self.on_state()
 
     def head(self, degrees):
@@ -462,6 +500,8 @@ class Robot:
             if self.client is None: raise RuntimeError("Cozmo disconnected")
             self.client.set_head_light(enabled)
             self.headlight = enabled
+            if not enabled:
+                self._dock_light_owned = False
         self.on_state()
 
     def refresh_status_lights(self, mrr_connected=False):
