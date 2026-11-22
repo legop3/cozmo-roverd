@@ -22,6 +22,7 @@ class Robot:
         self.last_drive = 0.0
         self.moving = False
         self.ready = False
+        self._last_battery_state = None
 
     def connect(self):
         import pycozmo
@@ -67,9 +68,16 @@ class Robot:
         self.on_sensor()
 
     def _sample(self, cli):
+        from .protocol import battery_percent
         self.voltage = cli.battery_voltage if cli.battery_voltage > 0 else None
         self.last_sensor = time.monotonic()
         self.on_sensor()
+        percent = battery_percent(self.voltage)
+        # Emit battery state changes when the displayed percentage changes;
+        # raw voltage continues to stream independently as sensor telemetry.
+        if percent != self._last_battery_state:
+            self._last_battery_state = percent
+            self.on_state()
 
     def is_healthy(self):
         return self.ready and time.monotonic() - self.last_sensor < 5.0
