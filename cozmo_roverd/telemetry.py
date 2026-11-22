@@ -38,7 +38,7 @@ def number(value):
 def vector(value):
     return {axis: number(getattr(value, axis, None)) for axis in ("x", "y", "z")}
 
-def snapshot(client):
+def snapshot(client, packet=None):
     """Called on the robot's state-event thread; no I/O, no server sends."""
     flags = int(client.robot_status)
     bits = {name: bool(flags & bit) for name, bit in FLAGS.items()}
@@ -46,7 +46,7 @@ def snapshot(client):
     available = list(getattr(client, "available_objects", {}).values())[:20]
     connected = list(getattr(client, "connected_objects", {}).items())[:20]
     camera = getattr(client, "camera_config", None)
-    return {
+    result = {
         "timestamp_ms": int(time.time() * 1000),
         "hardware": {
             "serial_number": getattr(client, "serial_number", None),
@@ -108,3 +108,15 @@ def snapshot(client):
         "flags": bits,
         "status_raw": flags,
     }
+    if packet is not None:
+        # RobotState includes information that PyCozmo's high-level Client
+        # discards. Preserve it, but do not guess its physical meaning.
+        result["raw_robot_state"] = {
+            "robot_timestamp": getattr(packet, "timestamp", None),
+            "battery_voltage_v": number(getattr(packet, "battery_voltage", None)),
+            "status": int(packet.status),
+            "cliff_channels": [int(x) for x in getattr(packet, "cliff_data_raw", ())],
+            "backpack_touch_raw": getattr(packet, "backpack_touch_sensor_raw", None),
+            "current_path_segment": getattr(packet, "curr_path_segment", None),
+        }
+    return result
