@@ -33,6 +33,20 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_audio_frames_submitted = 0
     controller._cozmo_audio_played_baseline = None
     controller._cozmo_last_idle_silence_at = 0.0
+    controller._cozmo_keyframes_received = 0
+    controller._cozmo_last_keyframe_at = 0.0
+    controller._cozmo_keyframe_consumed = 0
+    controller._cozmo_keyframe_gating = callable(getattr(cli, "add_handler", None))
+    controller._cozmo_tts_requested_at = 0.0
+
+    if controller._cozmo_keyframe_gating:
+        # Keyframe is distinct from transport ACK. It is Cozmo's signal
+        # that its animation player is ready for another audio/display tick.
+        # Network ACK alone does not establish playback readiness.
+        def on_keyframe(_client, _packet):
+            controller._cozmo_keyframes_received += 1
+            controller._cozmo_last_keyframe_at = time.monotonic()
+        cli.add_handler(protocol_encoder.Keyframe, on_keyframe)
 
     def run_frame(self):
         # Cozmo's Wi-Fi replies are still arriving when TTS freezes
@@ -66,12 +80,28 @@ def _limit_animation_idle_traffic(cli):
                 playback_backlog = max(
                     0, self._cozmo_audio_frames_submitted
                     - max(0, reported_played - played_baseline))
-            if pending >= 1 or backlog >= 1 or playback_backlog >= 2:
+            # OutputAudio must be synchronized with firmware KEYFRAME,
+            # not just the outer UDP reliable ACK. There was previously no
+            # Keyframe handling, so the first audio packet could enter a
+            # starved animation buffer and stall all following commands.
+            keyframe_ready = True
+            if self._cozmo_keyframe_gating and audio_waiting:
+                keyframe_ready = (
+                    self._cozmo_keyframes_received > self._cozmo_keyframe_consumed
+                    and time.monotonic() - self._cozmo_last_keyframe_at <= 1.0)
+            if pending >= 1 or backlog >= 1 or playback_backlog >= 2 or not keyframe_ready:
                 now = time.monotonic()
                 self._cozmo_audio_backpressure_ticks += 1
                 if self._cozmo_audio_blocked_at is None:
                     self._cozmo_audio_blocked_at = now
                 if now - self._cozmo_audio_blocked_at < 2.0:
+                    # While waiting for the *first* firmware keyframe,
+                    # keep the animation clock ticking sparsely. Otherwise
+                    # an idle/stopped clock would never produce a new frame.
+                    if (not self.playing_audio and pending == 0 and backlog == 0
+                            and now - self._cozmo_last_idle_silence_at >= 0.2):
+                        self.cli.conn.send(protocol_encoder.OutputSilence())
+                        self._cozmo_last_idle_silence_at = now
                     return
                 # Audio is optional. Abort a stalled utterance instead of
                 # letting its backlog block motor commands indefinitely.
@@ -85,10 +115,11 @@ def _limit_animation_idle_traffic(cli):
                 # animation timer doesn't repeat the same abort forever.
                 self.playing_audio = False
                 LOG.warning(
-                    "Aborted Cozmo TTS after 2s without ACK for speech "
-                    "(%d unacked, %d queued commands, %d audio frames discarded, "
-                    "%d speech frames submitted)",
-                    pending, backlog, discarded, self._cozmo_audio_frames_submitted)
+                    "Aborted Cozmo TTS waiting for reliable ACK or firmware KEYFRAME "
+                    "(%d unacked, %d queued commands, %d audio discarded, "
+                    "%d speech sent, %d keyframes received)",
+                    pending, backlog, discarded, self._cozmo_audio_frames_submitted,
+                    self._cozmo_keyframes_received)
                 return
             self._cozmo_audio_blocked_at = None
         audio_pkt, image_pkt, pkts = self.queue.get()
@@ -96,6 +127,8 @@ def _limit_animation_idle_traffic(cli):
             return
         if audio_pkt is not None:
             self.cli.conn.send(audio_pkt)
+            if self._cozmo_keyframe_gating:
+                self._cozmo_keyframe_consumed = self._cozmo_keyframes_received
             self._cozmo_audio_frames_submitted += 1
             self.playing_audio = True
         elif self.playing_audio:
@@ -495,6 +528,8 @@ class Robot:
                 "backpressure_ticks": getattr(cli.anim_controller, "_cozmo_audio_backpressure_ticks", 0) if cli else None,
                 "frames_submitted_to_transport": getattr(cli.anim_controller, "_cozmo_audio_frames_submitted", 0) if cli else None,
                 "playback_counter_at_speech_start": getattr(cli.anim_controller, "_cozmo_audio_played_baseline", None) if cli else None,
+                "firmware_keyframes_received": getattr(cli.anim_controller, "_cozmo_keyframes_received", None) if cli else None,
+                "keyframe_gating_enabled": getattr(cli.anim_controller, "_cozmo_keyframe_gating", None) if cli else None,
             }
 
     def note_tts(self, text):
@@ -628,6 +663,8 @@ class Robot:
                 controller._cozmo_audio_backpressure_ticks = 0
                 controller._cozmo_audio_played_baseline = getattr(
                     controller, "num_audio_frames_played", None)
+                controller._cozmo_keyframe_consumed = controller._cozmo_keyframes_received
+                controller._cozmo_tts_requested_at = time.monotonic()
                 # Explicitly use the same 30-FPS output-audio queue that the
                 # built-in PyCozmo playback uses, with a verified nonempty WAV.
                 controller.play_audio(frames)
