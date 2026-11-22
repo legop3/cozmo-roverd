@@ -177,3 +177,36 @@ def test_lean_animation_sender_does_not_flood_idle_robot(monkeypatch):
     assert sent[1:3] == ["audio-1", "audio-2"]
     assert sum(isinstance(pkt, pycozmo.protocol_encoder.OutputSilence) for pkt in sent) == 1
     assert len(events) == 1
+
+
+
+def test_face_does_not_enqueue_frames_when_reliable_channel_is_congested():
+    from types import SimpleNamespace as NS
+    from threading import Lock
+    from queue import Queue
+
+    robot = robot_with_face()
+    sent = robot.client
+    sender = NS(lock=Lock(), window=NS(next_seq=14, expected_seq=2, max_seq=65536,
+                                     size=62), queue=Queue(),
+                outgoing_packets=50, sent_packets=1500)
+    robot.client.conn = NS(send_thread=sender, recv_thread=NS(received_frames=50))
+    robot.client.anim_controller = NS(playing_audio=False)
+    status = robot.transport_diagnostics()
+    assert status["pending_reliable_packets"] == 12
+    assert status["transmitted_packets_including_retries"] == 1500
+    assert not robot.refresh_face()
+    assert sent.images == []
+    # After pending ACKs clear, face output resumes normally.
+    sender.window.expected_seq = 14
+    assert robot.refresh_face()
+    assert len(sent.images) == 1
+
+
+def test_face_does_not_interfere_with_active_speech_audio():
+    from types import SimpleNamespace as NS
+    robot = robot_with_face()
+    robot.client.anim_controller = NS(playing_audio=True)
+    assert not robot.refresh_face()
+    robot.client.anim_controller.playing_audio = False
+    assert robot.refresh_face()
