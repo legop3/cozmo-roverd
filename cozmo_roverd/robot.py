@@ -9,6 +9,7 @@ import threading
 import time
 from PIL import Image, ImageDraw
 from .face import status_image, compact_status_image
+from .status_lights import light_states, light_signature
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
@@ -169,6 +170,8 @@ class Robot:
         self.face_last_error = None
         self.face_encoded_on_pixels = None
         self.face_decoded_columns = None
+        self._status_light_signature = None
+        self._status_light_override_until = 0.0
 
     def connect(self):
         import pycozmo
@@ -204,6 +207,8 @@ class Robot:
                 # The new robot display has no cached image from the old link.
                 self._face_last_content = None
                 self._face_sent_at = 0.0
+                self._status_light_signature = None
+                self._status_light_override_until = 0.0
             self.on_state()
             LOG.info("Cozmo connected")
         except Exception:
@@ -422,12 +427,51 @@ class Robot:
         self.on_state()
 
     def backpack(self, enabled):
-        """Backpack LEDs are independent of the front-facing head light."""
+        """MRR manual LED command temporarily overrides automated status lights.
+
+        Keep the existing peripheral behavior, restoring status after 30s.
+        The front headlight remains independent.
+        """
         with self.lock:
-            if self.client is None: raise RuntimeError("Cozmo disconnected")
+            if self.client is None:
+                raise RuntimeError("Cozmo disconnected")
             import pycozmo
             self.client.set_all_backpack_lights(
                 pycozmo.lights.white_light if enabled else pycozmo.lights.off_light)
+            self._status_light_override_until = time.monotonic() + 30.0
+            self._status_light_signature = None
+
+    def refresh_status_lights(self, mrr_connected=False):
+        """Apply one event-driven hardware pattern, never software-blink.
+
+        Do not congest PyCozmo's reliable command channel during recovery.
+        Connection state is measured separately from dock/contact telemetry.
+        """
+        with self.lock:
+            if self.client is None or not self.ready:
+                return False
+            if time.monotonic() < self._status_light_override_until:
+                return False
+            signature = light_signature(
+                robot_online=True, mrr_online=mrr_connected,
+                docked=self.battery.docked, charging=self.battery.charging,
+                docking=bool(self.dock_assist or self.undock_active))
+            if signature == self._status_light_signature:
+                return False
+            sender = getattr(getattr(self.client, "conn", None), "send_thread", None)
+            if sender is not None:
+                with sender.lock:
+                    pending = ((sender.window.next_seq - sender.window.expected_seq)
+                               % sender.window.max_seq)
+                if pending >= 8 or sender.queue.qsize() >= 8:
+                    return False
+            states = light_states(
+                robot_online=True, mrr_online=mrr_connected,
+                docked=self.battery.docked, charging=self.battery.charging,
+                docking=bool(self.dock_assist or self.undock_active))
+            self.client.set_backpack_lights(*states)
+            self._status_light_signature = signature
+            return True
 
     def transport_diagnostics(self):
         """Read PyCozmo's reliable packet window without changing it."""
@@ -633,6 +677,8 @@ class Robot:
             self.undock_active = False
             self.docking_phase = None
             self.dock_assist = False
+            self._status_light_signature = None
+            self._status_light_override_until = 0.0
             self.latest = {}
             self.voltage = self.battery.voltage
             self.on_charger = self.battery.docked
