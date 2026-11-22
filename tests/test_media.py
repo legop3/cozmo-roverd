@@ -239,3 +239,24 @@ def test_disconnected_slate_shows_mrr_grace_countdown():
         "connected": False, "hardware_stage": "retrying"})
     assert no_timer.crop((80, 150, 240, 170)).tobytes() != (
         early.crop((80, 150, 240, 170)).tobytes())
+
+
+def test_video_reports_distinct_camera_arrivals_separately_from_output():
+    import time
+    publisher = Publisher("rtsp://localhost:8554/cozmo", fps=15)
+    publisher.running.set()
+    image = Image.new("RGB", (320, 240))
+    publisher.submit(image)
+    publisher.submit(image)
+    publisher.output_frames.append(time.monotonic())
+    publisher.output_new_frames = 1
+    publisher.output_repeated_frames = 6
+    publisher.ffmpeg_write_last_ms = 18.123
+    publisher.ffmpeg_write_max_ms = 24.678
+    stats = publisher.diagnostics()
+    assert stats["camera_input_fps_2s"] == 1.0
+    assert stats["rtsp_output_fps_2s"] == 0.5
+    assert stats["rtsp_unique_camera_frames"] == 1
+    assert stats["rtsp_repeated_camera_frames"] == 6
+    assert stats["ffmpeg_write_last_ms"] == 18.1
+    assert stats["ffmpeg_write_max_ms"] == 24.7
