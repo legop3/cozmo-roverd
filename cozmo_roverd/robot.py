@@ -284,8 +284,8 @@ class Robot:
             if ((left or right) and self.on_charger is True
                     and not self.undock_active):
                 self._end_dock_assist(lower_lift=False)
-                self.head(0)
-                self.set_dock_lift(False)
+                if self.set_dock_lift(False):
+                    self.head(0)
             self.client.drive_wheels(
                 left, right, lwheel_acc=10000.0, rwheel_acc=10000.0)
             self.moving = left != 0 or right != 0
