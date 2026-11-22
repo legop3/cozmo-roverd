@@ -34,6 +34,7 @@ class Robot:
         self.lock = threading.RLock()
         self.charging = None
         self.on_charger = None
+        self._dock_contact_handled = False
         self.cliff = None
         self.picked_up = False
         self.latest = {}
@@ -108,6 +109,7 @@ class Robot:
                 self._face_sent_at = 0.0
                 self._face_clock_at = 0.0
                 self._status_light_signature = None
+                self._dock_contact_handled = False
                 self._auto_gain = 1.0
                 self._auto_exposure_ms = 16
                 self._auto_last_measure_at = 0.0
@@ -157,6 +159,15 @@ class Robot:
             self.voltage = battery.voltage
             self.on_charger = battery.docked
             self.charging = battery.charging
+            # One motor-stop command on initial charger contact. Use the
+            # immediate hardware contact flag; do not wait for dock debounce.
+            # Rearm only after dock contact is definitively lost.
+            contact = battery.raw_docked or battery.raw_charging
+            if contact and not self._dock_contact_handled:
+                self._dock_contact_handled = True
+                self.stop_drive()
+            elif not contact and battery.docked is False:
+                self._dock_contact_handled = False
             self.cliff = data["cliff_detected"]
             self.picked_up = data["picked_up"]
             # Rich PyCozmo-derived values are best effort and must never
@@ -776,6 +787,7 @@ class Robot:
             self.undock_active = False
             self.docking_phase = None
             self.dock_assist = False
+            self._dock_contact_handled = False
             self._status_light_signature = None
             self._charger_factory_id = None
             self._charger_object_id = None
