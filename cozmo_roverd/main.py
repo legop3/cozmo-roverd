@@ -234,7 +234,8 @@ class Bridge:
 
     def _mrr_offline_remaining(self, now=None):
         """Seconds left before hardware outage removes this rover from MRR."""
-        if self.hardware_ready.is_set():
+        ready = getattr(self, "hardware_ready", None)
+        if ready is not None and ready.is_set():
             return None
         since = getattr(self, "_hardware_offline_since", None)
         if since is None:
