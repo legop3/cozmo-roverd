@@ -234,6 +234,7 @@ async function refreshTelemetry() {
         ["Last TTS", displayMetric(audio.last_message || "—")],
         ["TTS error", displayMetric(audio.last_error)],
         ["Audio frames queued for last TTS", displayMetric(audio.last_queued_frames)],
+        ["Audio frames submitted to robot", displayMetric(audio.frames_submitted_to_transport)],
         ["Speaker audio frames reported", displayMetric(audio.robot_reported_audio_frames)],
         ["Queued audio frames remaining", displayMetric(audio.queued_frames_remaining)],
         ["Speech aborted due to congestion", displayMetric(audio.aborted_due_to_congestion)],
