@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cozmo-roverd"
+version = "0.1.0"
+description = "Standalone PyCozmo bridge to MultiRoombaRover"
+requires-python = ">=3.11"
+dependencies = [
+  "pycozmo @ git+https://github.com/zayfod/pycozmo.git",
+  "websockets>=13,<17",
+  "Pillow>=10",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+cozmo-roverd = "cozmo_roverd.main:main"
+
+[tool.setuptools.packages.find]
+include = ["cozmo_roverd*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
