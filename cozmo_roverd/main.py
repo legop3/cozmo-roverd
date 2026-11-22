@@ -212,6 +212,9 @@ class Bridge:
         target = Path("/run/cozmo-roverd/telemetry.json")
         while not self.stop_event.is_set():
             try:
+                # The face is a local status display, independent of MRR
+                # messages and the video pipeline.
+                await asyncio.to_thread(self.robot.refresh_face)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 snap = dict(self.robot.latest)
                 if snap:
@@ -223,6 +226,11 @@ class Bridge:
                     "rover_state": self.current_state()["state"],
                     "video": self.publisher.diagnostics() if self.publisher else {"enabled": False},
                     "packets_received": self.robot.packets_received,
+                    "last_tts": self.robot.last_tts,
+                    "last_tts_error": self.robot.last_tts_error,
+                    "last_tts_frames": self.robot.last_tts_frames,
+                    "last_tts_played_at": self.robot.last_tts_played_at,
+                    "face_frames_sent": self.robot.face_frames_sent,
                     "last_packet_error": self.robot.last_packet_error,
                     "battery_tracker": self.robot.battery.diagnostic(),
                     "max_speed_config_mmps": self.cfg.max_speed,
