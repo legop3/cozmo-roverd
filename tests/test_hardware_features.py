@@ -215,8 +215,22 @@ def test_undock_without_backoff_levels_head_and_lowers_lift():
     assert outcomes == [("u2", None)]
 
 
+def _charger_packet(flags=0x3000):
+    return NS(
+        status=flags, battery_voltage=3.9, timestamp=123,
+        lwheel_speed_mmps=0, rwheel_speed_mmps=0,
+        head_angle_rad=0, lift_height_mm=0,
+        pose_x=0, pose_y=0, pose_z=0,
+        pose_angle_rad=0, pose_pitch_rad=0,
+        pose_origin_id=1, pose_frame_id=1,
+        accel_x=0, accel_y=0, accel_z=9.8,
+        gyro_x=0, gyro_y=0, gyro_z=0,
+        cliff_data_raw=(1, 1, 1, 1),
+        backpack_touch_sensor_raw=0, curr_path_segment=0,
+    )
+
+
 def test_dock_assist_complete_lifecycle_and_temporary_headlight():
-    from tests.test_telemetry import fake_client, fake_packet
     robot, _ = fake_robot()
     robot.on_charger = False
     robot.assist_docking()
@@ -228,7 +242,7 @@ def test_dock_assist_complete_lifecycle_and_temporary_headlight():
     # Repeating the command does not resend expensive hardware changes.
     robot.assist_docking()
     assert robot.client.headlights == [True]
-    robot._packet(fake_client(flags=0x3000), fake_packet(flags=0x3000))
+    robot._packet(NS(robot_status=0x3000), _charger_packet())
     assert not robot.dock_assist
     assert robot.docking_phase is None
     assert robot.client.headlights == [True, False]
@@ -236,7 +250,7 @@ def test_dock_assist_complete_lifecycle_and_temporary_headlight():
     assert robot.client.lifts[-1] == 92.0
     # Sustained contact doesn't repeat completion work.
     count = len(robot.client.heads)
-    robot._packet(fake_client(flags=0x3000), fake_packet(flags=0x3000))
+    robot._packet(NS(robot_status=0x3000), _charger_packet())
     assert len(robot.client.heads) == count
 
 
