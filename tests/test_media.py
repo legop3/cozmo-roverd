@@ -39,13 +39,15 @@ def test_hud_renders_telemetry_without_changing_frame_size():
         "connected": True, "battery_pct": 67, "voltage": 3.94,
         "charging": False, "docked": False, "head": 20,
         "lift": 48, "cliff": True, "left": 100, "right": -100,
+        "heading": 45, "accel": {"x": 0, "y": 0, "z": 9.81},
     })
     assert result.size == (320, 240)
     assert result.mode == "RGB"
-    assert result.getpixel((20, 8)) != frame.getpixel((20, 8))
+    assert result.getpixel((160, 37)) != frame.getpixel((160, 37))
     # The original camera picture stays unchanged between the HUD strips.
     assert result.getpixel((160, 120)) == (30, 50, 80)
-    assert frame.getpixel((20, 8)) == (30, 50, 80)
+    assert result.getpixel((20, 8)) == (30, 50, 80)
+    assert frame.getpixel((160, 37)) == (30, 50, 80)
 
 
 def test_hud_can_be_disabled_without_crop():
@@ -59,3 +61,19 @@ def test_offline_slate_is_full_frame():
     frame = publisher._offline_frame()
     assert frame.size == (320, 240)
     assert frame.mode == "RGB"
+
+
+def test_imu_tilt_compass_uses_acceleration():
+    publisher = Publisher("rtsp://localhost:8554/cozmo")
+    neutral = publisher.imu_tilt({"x": 0, "y": 0, "z": 9.81})
+    tipped = publisher.imu_tilt({"x": 0, "y": 9.81, "z": 0})
+    assert neutral == (0.0, -0.0)
+    assert round(tipped[0]) == 90
+    assert publisher.imu_tilt({"x": 0, "y": 0, "z": 0}) is None
+    frame = Image.new("RGB", (320, 240), (30, 50, 80))
+    a = publisher.render_frame(frame, {"connected": True,
+            "accel": {"x": 0, "y": 0, "z": 9.81}})
+    b = publisher.render_frame(frame, {"connected": True,
+            "accel": {"x": 0, "y": 9.81, "z": 0}})
+    assert a.tobytes() != b.tobytes()
+    assert a.getpixel((20, 220)) == (30, 50, 80)
