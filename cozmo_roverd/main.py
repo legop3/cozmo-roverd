@@ -405,6 +405,15 @@ class Bridge:
                         elif stalled_ack_since is None:
                             stalled_ack_since = now
                         elif now - stalled_ack_since >= 12.0:
+                            # If a single TTS frame broke firmware ACKs,
+                            # don't let the next TTS request repeat the
+                            # robot crash immediately after reconnection.
+                            tts_at = getattr(self.robot, "_tts_last_stream_at", 0.0)
+                            if (tts_at and now - tts_at <= 30.0
+                                    and hasattr(self.robot, "mark_speech_unstable")):
+                                self.robot.mark_speech_unstable(
+                                    f"Reliable Cozmo ACK channel stalled "
+                                    f"after TTS ({pending} pending)")
                             raise RuntimeError(
                                 f"Cozmo reliable command channel stalled: "
                                 f"{pending} packets pending without ACK progress")
