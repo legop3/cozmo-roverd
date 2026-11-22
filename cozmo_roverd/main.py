@@ -28,11 +28,13 @@ class Bridge:
         self.last_state_sent = 0.0
         self.loop = asyncio.get_running_loop()
         self.wifi = Wifi(config)
-        self.publisher = Publisher(rtsp_target(config), config.fps) if config.video else None
+        self.publisher = Publisher(rtsp_target(config), config.fps, hud=config.hud) if config.video else None
         self.robot = Robot(max_speed=config.max_speed, on_state=self.publish_state,
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
                            camera_mode=config.camera_mode)
         self.head_degrees = 10.0
+        if self.publisher:
+            self.publisher.state_provider = self.hud_state
 
     def publish_state(self):
         # Status callbacks originate in PyCozmo's receive thread. Coalesce
@@ -169,7 +171,7 @@ class Bridge:
     async def _send(self, ws):
         last_sensor = 0.0
         last_state = 0.0
-        while self.hardware_ready.is_set() and not self.stop_event.is_set():
+        while not self.stop_event.is_set():
             while not self.results.empty():
                 await ws.send(json.dumps(self.results.get_nowait()))
             now = time.monotonic()
@@ -177,12 +179,33 @@ class Bridge:
                 self.state_dirty.clear()
                 await ws.send(json.dumps(self.current_state()))
                 last_state = now
-            if now - last_sensor >= 0.2:
+            if self.hardware_ready.is_set() and now - last_sensor >= 0.2:
                 reading = self.current_sensor()
                 if reading:
                     await ws.send(json.dumps(reading))
                 last_sensor = now
             await asyncio.sleep(0.05)
+
+    def hud_state(self):
+        latest = self.robot.latest
+        battery = self.robot.battery
+        pose = latest.get("pose") or {}
+        wheels = latest.get("wheel_speeds_mmps") or {}
+        return {
+            "connected": self.robot.ready,
+            "mrr_connected": self.mrr_connected,
+            "battery_pct": battery.percent,
+            "voltage": battery.voltage,
+            "docked": battery.docked,
+            "charging": battery.charging,
+            "cliff": latest.get("cliff_detected"),
+            "picked_up": latest.get("picked_up"),
+            "head": latest.get("head_angle_deg"),
+            "lift": latest.get("lift_height_mm"),
+            "heading": pose.get("heading_deg"),
+            "left": wheels.get("left"), "right": wheels.get("right"),
+            "sample_age": battery.age_seconds(),
+        }
 
     async def _telemetry_file(self):
         """Export Cozmo-only fields the MRR sensor protocol cannot represent."""
@@ -202,6 +225,8 @@ class Bridge:
                     "packets_received": self.robot.packets_received,
                     "last_packet_error": self.robot.last_packet_error,
                     "battery_tracker": self.robot.battery.diagnostic(),
+                    "camera_fov": {"horizontal_deg": self.robot.latest.get("camera", {}).get("fov_x_deg"),
+                                   "vertical_deg": self.robot.latest.get("camera", {}).get("fov_y_deg")},
                     "telemetry_stale": self.robot.battery.stale(),
                     "telemetry_age_seconds": self.robot.battery.age_seconds(),
                 }
@@ -214,8 +239,6 @@ class Bridge:
 
     async def _receive(self, ws):
         async for raw in ws:
-            if not self.hardware_ready.is_set():
-                return
             try:
                 msg = json.loads(raw)
                 if not isinstance(msg, dict) or not isinstance(msg.get("id"), str):
@@ -223,6 +246,8 @@ class Bridge:
                 # Prevent duplicate, unsolicited commands from changing hardware state.
                 error = None
                 try:
+                    if not self.hardware_ready.is_set():
+                        raise RuntimeError("Cozmo temporarily disconnected; reconnecting")
                     await asyncio.to_thread(self.execute, msg)
                 except Exception as exc:
                     error = str(exc)
@@ -231,14 +256,8 @@ class Bridge:
             except (ValueError, TypeError) as exc:
                 LOG.warning("Ignoring invalid server message: %s", exc)
 
-    async def _wait_hardware_lost(self):
-        while self.hardware_ready.is_set() and not self.stop_event.is_set():
-            await asyncio.sleep(0.2)
-
     async def _mrr(self):
         while not self.stop_event.is_set():
-            await self.hardware_ready.wait()
-            if self.stop_event.is_set(): break
             try:
                 async with websockets.connect(self.cfg.server_url, ping_interval=15,
                                               ping_timeout=8, max_size=1048576) as ws:
@@ -253,8 +272,7 @@ class Bridge:
                     LOG.info("Registered rover %s with %s", self.cfg.name, self.cfg.server_url)
                     sender = asyncio.create_task(self._send(ws))
                     receiver = asyncio.create_task(self._receive(ws))
-                    health = asyncio.create_task(self._wait_hardware_lost())
-                    done, pending = await asyncio.wait([sender, receiver, health], return_when=asyncio.FIRST_COMPLETED)
+                    done, pending = await asyncio.wait([sender, receiver], return_when=asyncio.FIRST_COMPLETED)
                     for task in pending: task.cancel()
                     for task in done: task.result()
             except asyncio.CancelledError:
