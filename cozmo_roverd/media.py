@@ -13,12 +13,16 @@ LOG = logging.getLogger(__name__)
 class Publisher:
     def __init__(self, url: str, fps: int = 15):
         self.url, self.fps = url, fps
-        self.frames: queue.Queue[bytes] = queue.Queue(maxsize=2)
+        self.frames: queue.Queue[Image.Image] = queue.Queue(maxsize=1)
         self.running = threading.Event()
         self.worker: threading.Thread | None = None
         self.process: subprocess.Popen | None = None
-        self.last_frame = None
         self.encoder = None
+        self.frame_count = 0
+        self.dropped_frames = 0
+        self.last_frame_time = None
+        self.last_error = None
+        self.device = None
 
     def _test_encoder(self, encoder, *, device=None):
         # A listed FFmpeg encoder is not necessarily usable. Test a single
@@ -72,27 +76,45 @@ class Publisher:
         self.worker.start()
 
     def submit(self, image: Image.Image):
-        if not self.running.is_set():
-            return
-        frame = image.convert("RGB").resize((320, 240)).tobytes()
+        # Keep only the newest frame; conversion belongs to the publisher
+        # worker, never the Cozmo packet processing thread.
+        if not self.running.is_set(): return
+        self.last_frame_time = time.monotonic()
+        self.frame_count += 1
         if self.frames.full():
-            try: self.frames.get_nowait()
+            try:
+                self.frames.get_nowait()
+                self.dropped_frames += 1
             except queue.Empty: pass
-        try: self.frames.put_nowait(frame)
-        except queue.Full: pass
+        try: self.frames.put_nowait(image)
+        except queue.Full: self.dropped_frames += 1
 
+    def diagnostics(self):
+        return {
+            "enabled": self.running.is_set(),
+            "encoder": self.encoder,
+            "hardware_device": self.device,
+            "frames_received": self.frame_count,
+            "frames_dropped": self.dropped_frames,
+            "last_frame_age_sec": round(time.monotonic() - self.last_frame_time, 2) if self.last_frame_time else None,
+            "publisher_running": self.process is not None and self.process.poll() is None,
+            "last_error": self.last_error,
+        }
     def _run(self):
         while self.running.is_set():
             command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin"]
             if self.device:
                 command += ["-vaapi_device", self.device]
-            command += ["-fflags", "nobuffer", "-f", "rawvideo", "-pixel_format", "rgb24",
+            command += ["-fflags", "nobuffer", "-use_wallclock_as_timestamps", "1", "-f", "rawvideo", "-pixel_format", "rgb24",
                         "-video_size", "320x240", "-framerate", str(self.fps), "-i", "pipe:0",
                         "-an"]
             if self.device:
                 command += ["-vf", "format=nv12,hwupload"]
+            if self.encoder == "libx264":
+                command += ["-preset", "ultrafast", "-tune", "zerolatency", "-threads", "2"]
             command += ["-c:v", self.encoder, "-pix_fmt", "yuv420p"] if not self.device else ["-c:v", self.encoder]
-            command += ["-g", str(self.fps), "-bf", "0",
+            command += ["-g", str(self.fps), "-bf", "0", "-fps_mode", "passthrough",
+                        "-flush_packets", "1", "-muxdelay", "0", "-muxpreload", "0",
                         "-f", "rtsp", "-rtsp_transport", "tcp", self.url]
             try:
                 env = os.environ.copy()
@@ -101,12 +123,13 @@ class Publisher:
                 self.process = subprocess.Popen(command, stdin=subprocess.PIPE,
                                                 stdout=subprocess.DEVNULL, env=env)
                 while self.running.is_set() and self.process.poll() is None:
-                    try: frame = self.frames.get(timeout=0.5)
+                    try: image = self.frames.get(timeout=0.5)
                     except queue.Empty: continue
                     try:
+                        frame = image.convert("RGB").resize((320, 240)).tobytes()
                         self.process.stdin.write(frame)
-                        self.process.stdin.flush()
-                    except (BrokenPipeError, OSError):
+                    except (BrokenPipeError, OSError, ValueError) as exc:
+                        self.last_error = str(exc)[:180]
                         break
             except (OSError, ValueError) as exc:
                 LOG.warning("Cannot start video publisher: %s", exc)
