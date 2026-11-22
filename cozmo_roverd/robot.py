@@ -143,6 +143,101 @@ class Robot:
             self.client.drive_wheels(left, right)
             self.moving = left != 0 or right != 0
 
+    def lift_motor(self, main):
+        """Use MRR main-brush signed PWM to control the lift continuously."""
+        if type(main) is not int or not -127 <= main <= 127:
+            raise ValueError("main brush PWM must be -127..127")
+        with self.lock:
+            if self.client is None:
+                raise RuntimeError("Cozmo disconnected")
+            self.client.move_lift(2.0 * main / 127.0)
+
+    def configure_camera(self, cli=None):
+        import pycozmo
+        with self.lock:
+            client = cli or self.client
+            if client is None:
+                raise RuntimeError("Cozmo disconnected")
+            presets = {"auto": (1.0, 0, True),
+                       "bright": (4.0, 40, False),
+                       "lowlight": (6.0, 60, False)}
+            gain, exposure, automatic = presets[self.camera_mode]
+            if not automatic and client.camera_config is not None:
+                c = client.camera_config
+                gain = max(c.min_gain, min(c.max_gain, gain))
+                exposure = max(c.min_exposure_time_ms,
+                               min(c.max_exposure_time_ms, exposure))
+            client.conn.send(pycozmo.protocol_encoder.SetCameraParams(
+                gain=float(gain), exposure_ms=int(exposure),
+                auto_exposure_enabled=automatic))
+            LOG.info("Camera mode %s: gain %.2f, exposure %dms, auto=%s",
+                     self.camera_mode, gain, exposure, automatic)
+
+    def start_undock(self, command_id, backoff, completed):
+        """Perform timed reverse until dock contact clears and report result."""
+        with self.lock:
+            if self.undock_active:
+                raise ValueError("undock already in progress")
+            if self.client is None or not self.ready:
+                raise RuntimeError("Cozmo disconnected")
+            if self.on_charger is not True:
+                completed(command_id, None)
+                return
+            self.undock_active = True
+            self.docking_phase = "undocking"
+            self.dock_assist = False
+            self._undock_cancel.clear()
+        self.on_state()
+
+        def worker():
+            error = None
+            try:
+                if backoff:
+                    self.drive(-self.max_speed, -self.max_speed)
+                    deadline = time.monotonic() + 3.0
+                    while time.monotonic() < deadline:
+                        if self._undock_cancel.is_set():
+                            raise RuntimeError("undock interrupted")
+                        if self.on_charger is False:
+                            break
+                        time.sleep(0.05)
+                    if self.on_charger is not False:
+                        raise RuntimeError("Charger contact did not clear")
+            except Exception as exc:
+                error = str(exc)
+            finally:
+                self.stop_drive()
+                with self.lock:
+                    self.undock_active = False
+                    self.docking_phase = None
+                self.on_state()
+                completed(command_id, error)
+
+        self._undock_thread = threading.Thread(
+            target=worker, name="cozmo-undock", daemon=True)
+        self._undock_thread.start()
+
+    def assist_docking(self):
+        with self.lock:
+            if self.client is None:
+                raise RuntimeError("Cozmo disconnected")
+            if self.on_charger:
+                return
+            self.dock_assist = True
+            self.docking_phase = "assisting"
+            self.stop_drive()
+            self.head(-25)
+        self.on_state()
+
+    def cancel_docking(self):
+        with self.lock:
+            if self.undock_active:
+                return
+            self.dock_assist = False
+            self.docking_phase = None
+            self.stop_drive()
+        self.on_state()
+
     def head(self, degrees):
         with self.lock:
             if self.client is None: raise RuntimeError("Cozmo disconnected")
