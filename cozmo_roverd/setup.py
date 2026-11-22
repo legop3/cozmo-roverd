@@ -195,9 +195,9 @@ def validate_payload(payload: dict, current: dict) -> dict:
     name = str(payload.get("name", "")).strip()
     if not NAME_RE.fullmatch(name):
         raise ValueError("Rover name must use 1–48 letters, digits, '-' or '_'")
-    desc = str(payload.get("description", "")).strip()
-    if not desc or len(desc) > 100:
-        raise ValueError("Description must be 1–100 characters")
+    desc = str(payload.get("description") or "").strip()
+    if len(desc) > 100:
+        raise ValueError("Description must be at most 100 characters")
     color = payload.get("color")
     if color not in COLORS:
         raise ValueError("Choose a color from the palette")
