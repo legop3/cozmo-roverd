@@ -52,52 +52,6 @@ def test_face_updates_only_on_change_but_last_message_is_persistent():
 
 
 
-def test_tts_generates_wav_and_queues_verified_audio_frames(monkeypatch):
-    from pathlib import Path
-    from subprocess import CompletedProcess
-    import pycozmo
-    import cozmo_roverd.robot as robot_module
-
-    robot = robot_with_face()
-    enabled, playback = [], []
-
-    class Controller:
-        def enable_animations(self, enabled_now):
-            enabled.append(enabled_now)
-        def play_audio(self, frames):
-            playback.append(frames)
-
-    robot.client.anim_controller = Controller()
-    def fake_subprocess(args, **kwargs):
-        if "-w" in args:
-            Path(args[args.index("-w") + 1]).write_bytes(b"RIFF" + bytes(100))
-        else:
-            Path(args[-1]).write_bytes(b"RIFF" + bytes(100))
-        return CompletedProcess(args, 0, "", "")
-    monkeypatch.setattr(robot_module.subprocess, "run", fake_subprocess)
-    monkeypatch.setattr(pycozmo.audio, "load_wav", lambda path: ["audio-1", "audio-2"])
-
-    robot.note_tts("Hello Cozmo")
-    robot.speak("Hello Cozmo")
-    assert enabled == [True]
-    assert playback == [["audio-1", "audio-2"]]
-    assert robot.last_tts_frames == 2
-    assert robot.last_tts_error is None
-    assert robot.last_tts == "Hello Cozmo"
-
-
-def test_tts_failure_is_visible_in_face_diagnostics(monkeypatch):
-    import cozmo_roverd.robot as robot_module
-    robot = robot_with_face()
-    def broken(*args, **kwargs):
-        raise FileNotFoundError("espeak-ng missing")
-    monkeypatch.setattr(robot_module.subprocess, "run", broken)
-    import pytest
-    with pytest.raises(RuntimeError, match="TTS failed"):
-        robot.speak("test")
-    assert "espeak-ng" in robot.last_tts_error
-
-
 def test_face_changes_only_with_voltage_or_last_tts():
     baseline = status_image(voltage=3.8, last_tts="Hello")
     visible_robot_status_changed = status_image(
@@ -141,47 +95,6 @@ def test_image_encoding_matches_generated_128x32_face():
                 assert bool(decoded[y * 128 + x]) == bool(frame.getpixel((x, y)))
 
 
-def test_lean_animation_sender_does_not_flood_idle_robot(monkeypatch):
-    import time
-    from types import SimpleNamespace as NS
-    from collections import deque
-    import pycozmo
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-
-    sent = []
-    events = []
-    audio = deque()
-    images = deque()
-    class Queue:
-        def get(self):
-            return (audio.popleft() if audio else None,
-                    images.popleft() if images else None, None)
-    controller = NS(queue=Queue(), animations_enabled=True,
-                    playing_audio=False, procedural_face_enabled=False,
-                    playing_animation=False, image_displayed=True,
-                    last_image_pkt="last-image")
-    client = NS(anim_controller=controller,
-                conn=NS(send=sent.append, post_event=lambda *a: events.append(a)))
-    _limit_animation_idle_traffic(client)
-    # 100 animation ticks should not send 100 images or 100 silence packets.
-    controller._cozmo_image_refresh_at = time.monotonic()
-    for _ in range(100):
-        controller._run_frame()
-    assert sent == []
-    images.append("new-image")
-    controller._run_frame()
-    assert sent == ["new-image"]
-    audio.extend(["audio-1", "audio-2"])
-    controller._run_frame()
-    controller._run_frame()
-    controller._run_frame()
-    controller._run_frame()
-    assert sent[1:3] == ["audio-1", "audio-2"]
-    assert sum(isinstance(pkt, pycozmo.protocol_encoder.OutputSilence) for pkt in sent) == 1
-    assert len(events) == 1
-
-
-
 def test_face_does_not_enqueue_frames_when_reliable_channel_is_congested():
     from types import SimpleNamespace as NS
     from threading import Lock
@@ -203,16 +116,6 @@ def test_face_does_not_enqueue_frames_when_reliable_channel_is_congested():
     sender.window.expected_seq = 14
     assert robot.refresh_face()
     assert len(sent.images) == 1
-
-
-def test_face_does_not_interfere_with_active_speech_audio():
-    from types import SimpleNamespace as NS
-    robot = robot_with_face()
-    robot.client.anim_controller = NS(playing_audio=True)
-    assert not robot.refresh_face()
-    robot.client.anim_controller.playing_audio = False
-    assert robot.refresh_face()
-
 
 
 def test_face_packet_always_fits_single_cozmo_transport_frame():
@@ -282,66 +185,6 @@ def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatc
     assert robot.client.images[0].tobytes() != noise.tobytes()
 
 
-def test_idle_face_clock_is_low_rate_and_only_runs_when_connected():
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-    from pycozmo.protocol_encoder import OutputSilence
-    import time
-
-    sent = []
-    controller = NS(
-        queue=NS(get=lambda: (None, None, None)),
-        animations_enabled=True, playing_audio=False,
-        procedural_face_enabled=False, playing_animation=False,
-        image_displayed=True)
-    cli = NS(anim_controller=controller,
-             conn=NS(send=sent.append, CONNECTED=3, state=3,
-                     post_event=lambda *a: None))
-    _limit_animation_idle_traffic(cli)
-    controller._cozmo_last_idle_silence_at = time.monotonic()
-    for _ in range(30):
-        controller._run_frame()
-    assert not sent
-    controller._cozmo_last_idle_silence_at -= 2
-    controller._run_frame()
-    assert len(sent) == 1
-    assert isinstance(sent[0], OutputSilence)
-    controller._run_frame()
-    assert len(sent) == 1
-
-
-
-def test_tts_defers_screen_keyframe_instead_of_transmitting_both_together():
-    from collections import deque
-    from threading import Lock
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-
-    sent = []
-    class Q:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque(["audio-frame"])
-            self.image_queue = deque(["face-keyframe"])
-        def get(self):
-            with self.lock:
-                audio = self.audio_queue.popleft() if self.audio_queue else None
-                image = self.image_queue.popleft() if self.image_queue else None
-                return audio, image, None
-    q = Q()
-    controller = NS(queue=q, animations_enabled=True, playing_audio=False,
-                    procedural_face_enabled=False, playing_animation=False,
-                    image_displayed=True, last_image_pkt=None)
-    cli = NS(anim_controller=controller,
-             conn=NS(send=sent.append, post_event=lambda *a: None))
-    _limit_animation_idle_traffic(cli)
-    controller._run_frame()
-    assert sent == ["audio-frame"]
-    assert list(q.image_queue) == ["face-keyframe"]
-    controller._run_frame()
-    assert sent[-1] == "face-keyframe"
-
-
 def test_tts_played_counter_is_read_from_animation_controller():
     from types import SimpleNamespace as NS
     robot = robot_with_face()
@@ -373,201 +216,6 @@ def test_operator_face_gives_latest_tts_a_full_width_readable_row():
 
 
 
-def test_tts_streams_native_rate_audio_without_requiring_keyframe_or_per_packet_ack():
-    from collections import deque
-    from threading import Lock
-    from queue import Queue
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-    from pycozmo.protocol_encoder import OutputSilence
-
-    sent = []
-    window = NS(next_seq=0, expected_seq=0, max_seq=65534)
-    sender = NS(lock=Lock(), window=window, queue=Queue())
-    class AudioQueue:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque(["a", "b", "c", "d"])
-        def get(self):
-            with self.lock:
-                return (self.audio_queue.popleft() if self.audio_queue else None,
-                        None, None)
-    controller = NS(queue=AudioQueue(), animations_enabled=True,
-                    playing_audio=False, procedural_face_enabled=False,
-                    playing_animation=False, image_displayed=False)
-    def send(pkt):
-        sent.append(pkt)
-        window.next_seq += 1
-    cli = NS(anim_controller=controller,
-             conn=NS(send=send, send_thread=sender, post_event=lambda *a: None),
-             add_handler=lambda *args: None)
-    _limit_animation_idle_traffic(cli)
-    # No KEYFRAME is ever emitted. Audio must still stream.
-    for _ in range(4):
-        controller._run_frame()
-    assert sent == ["a", "b", "c", "d"]
-    assert controller._cozmo_audio_frames_submitted == 4
-    assert list(controller.queue.audio_queue) == []
-    controller._run_frame()
-    assert isinstance(sent[-1], OutputSilence)
-    assert not controller.playing_audio
-
-
-def test_tts_stops_before_reliable_channel_saturates_and_does_not_send_more_audio():
-    from collections import deque
-    from threading import Lock
-    from queue import Queue
-    from types import SimpleNamespace as NS
-    from unittest.mock import patch
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-
-    sent = []
-    window = NS(next_seq=6, expected_seq=0, max_seq=65534)
-    sender = NS(lock=Lock(), window=window, queue=Queue())
-    class AudioQueue:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque(["a", "b", "c"])
-        def get(self):
-            with self.lock:
-                return self.audio_queue.popleft() if self.audio_queue else None, None, None
-    controller = NS(queue=AudioQueue(), animations_enabled=True,
-                    playing_audio=False, procedural_face_enabled=False,
-                    playing_animation=False, image_displayed=False)
-    cli = NS(anim_controller=controller,
-             conn=NS(send=sent.append, send_thread=sender,
-                     post_event=lambda *a: None),
-             add_handler=lambda *a: None)
-    _limit_animation_idle_traffic(cli)
-    with patch("cozmo_roverd.robot.time.monotonic", side_effect=[10.0, 11.8]):
-        controller._run_frame()
-        controller._run_frame()
-    assert sent == []
-    assert controller._cozmo_audio_aborted
-    assert list(controller.queue.audio_queue) == []
-    assert "transport congested" in controller._cozmo_audio_abort_reason
-
-
-def test_tts_stops_temporarily_when_send_queue_has_three_commands():
-    from collections import deque
-    from threading import Lock
-    from queue import Queue
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-
-    sent = []
-    sender_queue = Queue()
-    for item in ("wheel1", "wheel2", "head"):
-        sender_queue.put(item)
-    sender = NS(lock=Lock(),
-                window=NS(next_seq=0, expected_seq=0, max_seq=65534),
-                queue=sender_queue)
-    class Q:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque(["audio"])
-        def get(self):
-            with self.lock:
-                return self.audio_queue.popleft() if self.audio_queue else None, None, None
-    controller = NS(queue=Q(), animations_enabled=True,
-                    playing_audio=False, procedural_face_enabled=False,
-                    playing_animation=False, image_displayed=False)
-    cli = NS(anim_controller=controller, conn=NS(
-        send=sent.append, send_thread=sender, post_event=lambda *a: None))
-    _limit_animation_idle_traffic(cli)
-    controller._run_frame()
-    assert not sent
-    assert list(controller.queue.audio_queue) == ["audio"]
-    sender_queue.get_nowait()
-    controller._run_frame()
-    assert sent == ["audio"]
-
-
-
-def test_camera_stream_pauses_during_tts_and_restores_when_audio_finishes(monkeypatch):
-    from pathlib import Path
-    from subprocess import CompletedProcess
-    from collections import deque
-    from threading import Lock
-    from types import SimpleNamespace as NS
-    import pycozmo
-    import cozmo_roverd.robot as robot_module
-
-    robot = robot_with_face()
-    camera_events = []
-    packets = []
-    class AudioQueue:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque()
-            self.image_queue = deque()
-        def put_audio(self, audio):
-            with self.lock:
-                self.audio_queue.extend(audio)
-        def get(self):
-            with self.lock:
-                return (self.audio_queue.popleft() if self.audio_queue else None,
-                        self.image_queue.popleft() if self.image_queue else None,
-                        None)
-    queue = AudioQueue()
-    ctl = NS(queue=queue, enable_animations=lambda yes: None,
-             animations_enabled=True, playing_audio=False,
-             image_displayed=False, playing_animation=False,
-             procedural_face_enabled=False)
-    client = NS(anim_controller=ctl,
-                conn=NS(send=packets.append,
-                        post_event=lambda *a: None),
-                enable_camera=lambda **kw: camera_events.append(kw))
-    robot.client = client
-    robot.ready = True
-    robot_module._limit_animation_idle_traffic(client)
-    ctl.play_audio = queue.put_audio
-    def fake_subprocess(args, **kwargs):
-        p = args[args.index("-w")+1] if "-w" in args else args[-1]
-        Path(p).write_bytes(b"RIFF" + bytes(100))
-        return CompletedProcess(args, 0)
-    monkeypatch.setattr(robot_module.subprocess, "run", fake_subprocess)
-    monkeypatch.setattr(pycozmo.audio, "load_wav", lambda path: ["audio1", "audio2"])
-
-    robot.speak("Hello", speed=1.0)
-    assert camera_events == [{"enable": False, "color": True}]
-    assert ctl._cozmo_camera_paused_for_speech
-    for _ in range(3):
-        ctl._run_frame()
-    assert packets[:2] == ["audio1", "audio2"]
-    assert isinstance(packets[2], pycozmo.protocol_encoder.OutputSilence)
-    assert camera_events[-1] == {"enable": True, "color": True}
-    assert not ctl._cozmo_camera_paused_for_speech
-    assert ctl._cozmo_tts_camera_restores == 1
-
-
-def test_camera_recovers_when_speech_aborts_due_to_transport_congestion():
-    from collections import deque
-    from threading import Lock
-    from queue import Queue
-    from types import SimpleNamespace as NS
-    from unittest.mock import patch
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-
-    camera_events = []
-    queue = NS(lock=Lock(), audio_queue=deque(["audio"]))
-    ctl = NS(queue=queue, animations_enabled=True,
-             playing_audio=False, image_displayed=False)
-    sender = NS(lock=Lock(), window=NS(next_seq=8, expected_seq=0,
-                                      max_seq=65534), queue=Queue())
-    cli = NS(anim_controller=ctl, conn=NS(send=lambda pkt: None,
-              send_thread=sender, post_event=lambda *a: None))
-    _limit_animation_idle_traffic(cli)
-    ctl._cozmo_resume_camera = lambda: camera_events.append("restored")
-    ctl._cozmo_camera_paused_for_speech = True
-    with patch("cozmo_roverd.robot.time.monotonic", side_effect=[10., 12.]):
-        ctl._run_frame()
-        ctl._run_frame()
-    assert camera_events == ["restored"]
-    assert ctl._cozmo_audio_aborted
-    assert not ctl._cozmo_camera_paused_for_speech
-
-
 def test_wire_encoded_face_is_not_a_single_pixel():
     from pycozmo.image_encoder import ImageEncoder, ImageDecoder
     for voltage, speech in ((3.75, "NO TTS YET"), (4.05, "Hello Cozmo"),
@@ -580,35 +228,6 @@ def test_wire_encoded_face_is_not_a_single_pixel():
         assert count >= 30
         assert width >= 8
 
-
-
-def test_face_animation_clock_warms_up_after_a_new_image_despite_small_drive_backlog():
-    import time
-    from queue import Queue
-    from threading import Lock
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-    from pycozmo.protocol_encoder import OutputSilence
-
-    sent = []
-    window = NS(next_seq=4, expected_seq=2, max_seq=65534)
-    sender = NS(lock=Lock(), window=window, queue=Queue())
-    ctl = NS(queue=NS(get=lambda: (None, None, None)),
-             animations_enabled=True, playing_audio=False,
-             image_displayed=True, playing_animation=False,
-             procedural_face_enabled=False, last_image_pkt="image")
-    cli = NS(anim_controller=ctl,
-             conn=NS(send=sent.append, send_thread=sender,
-                     CONNECTED=3, state=3, post_event=lambda *a: None))
-    _limit_animation_idle_traffic(cli)
-    ctl._cozmo_last_image_at = time.monotonic()
-    ctl._cozmo_last_idle_silence_at = time.monotonic() - .2
-    ctl._cozmo_image_refresh_at = time.monotonic()
-    ctl._run_frame()
-    assert len(sent) == 1
-    assert isinstance(sent[0], OutputSilence)
-    ctl._run_frame()
-    assert len(sent) == 1  # still bounded at 10 Hz
 
 
 def test_wire_decoded_face_diagnostics_show_more_than_a_dot():
@@ -628,51 +247,77 @@ def test_tts_transport_stall_disables_further_speaker_attempts_but_keeps_last_me
     robot.note_tts("I still want this text visible")
     assert robot.last_tts == "I still want this text visible"
     assert robot._tts_transport_faulted
-    with pytest.raises(RuntimeError, match="speaker disabled"):
+    with pytest.raises(RuntimeError, match="speech disabled"):
         robot.speak("No repeat attempt")
     assert len(robot.client.images) >= 1
 
 
-def test_camera_pause_must_be_acknowledged_before_sending_audio(monkeypatch):
-    from pathlib import Path
-    from subprocess import CompletedProcess
-    from threading import Lock
-    from queue import Queue
-    from types import SimpleNamespace as NS
-    from unittest.mock import patch
-    import pycozmo
-    import cozmo_roverd.robot as robot_module
 
+
+
+def test_hardware_tts_disabled_without_touching_camera_or_speaker():
+    import pytest
     robot = robot_with_face()
-    camera_events = []
-    played = []
-    sender = NS(lock=Lock(),
-                window=NS(next_seq=12, expected_seq=2, max_seq=65534),
-                queue=Queue())
-    controller = NS(
-        playing_audio=False,
-        queue=NS(audio_queue=[]),
-        enable_animations=lambda x: None,
-        play_audio=lambda frames: played.extend(frames))
-    robot.client = NS(
-        anim_controller=controller,
-        conn=NS(send_thread=sender),
-        enable_camera=lambda **kw: camera_events.append(kw))
-    def fake_subprocess(args, **kwargs):
-        p = args[args.index("-w")+1] if "-w" in args else args[-1]
-        Path(p).write_bytes(b"RIFF" + bytes(100))
-        return CompletedProcess(args, 0)
-    monkeypatch.setattr(robot_module.subprocess, "run", fake_subprocess)
-    monkeypatch.setattr(pycozmo.audio, "load_wav", lambda p: ["one audio packet"])
-    controller._cozmo_resume_video = lambda: camera_events.append(
-        {"enable": True, "color": True})
-    # Avoid a real one-second sleep: simulate a clock advancing past the
-    # congestion deadline while the ACK window remains stuck.
-    times = iter((0.0, 0.1, 1.2))
-    with patch("cozmo_roverd.robot.time.monotonic", side_effect=lambda: next(times)):
-        import pytest
-        with pytest.raises(RuntimeError, match="camera pause not acknowledged"):
-            robot.speak("hello")
-    assert played == []
-    assert camera_events[0] == {"enable": False, "color": True}
-    assert camera_events[-1] == {"enable": True, "color": True}
+    robot.note_tts("Hello from the controller")
+    with pytest.raises(RuntimeError, match="speech disabled"):
+        robot.speak("Hello from the controller")
+    assert robot.last_tts == "Hello from the controller"
+    assert robot.client.images
+    assert "speech disabled" in robot.last_tts_error.lower()
+
+
+def test_display_only_sender_clears_accidental_audio_packets_and_never_sends_them():
+    from types import SimpleNamespace as NS
+    from collections import deque
+    from threading import Lock
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+
+    sent = []
+    class Q:
+        def __init__(self):
+            self.lock = Lock()
+            self.audio_queue = deque(["DO_NOT_SEND_AUDIO"])
+            self.image_queue = deque(["test-image"])
+        def get(self):
+            with self.lock:
+                return (self.audio_queue.popleft() if self.audio_queue else None,
+                        self.image_queue.popleft() if self.image_queue else None, None)
+    q = Q()
+    ctl = NS(queue=q, animations_enabled=True, image_displayed=True,
+             last_image_pkt=None)
+    cli = NS(anim_controller=ctl,
+             conn=NS(send=sent.append))
+    _limit_animation_idle_traffic(cli)
+    ctl._run_frame()
+    assert "DO_NOT_SEND_AUDIO" not in sent
+    assert "test-image" in sent
+    assert not q.audio_queue
+
+
+def test_display_only_sender_clocks_image_without_30hz_image_flood():
+    from types import SimpleNamespace as NS
+    from collections import deque
+    from threading import Lock
+    from unittest.mock import patch
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+    import pycozmo
+
+    sent = []
+    class Q:
+        def __init__(self):
+            self.lock = Lock()
+            self.audio_queue = deque()
+            self.image_queue = deque(["img"])
+        def get(self):
+            with self.lock:
+                return None, self.image_queue.popleft() if self.image_queue else None, None
+    ctl = NS(queue=Q(), animations_enabled=True, image_displayed=True,
+             last_image_pkt="blank")
+    cli = NS(anim_controller=ctl, conn=NS(send=sent.append))
+    _limit_animation_idle_traffic(cli)
+    with patch("cozmo_roverd.robot.time.monotonic", side_effect=[1.0, 1.05, 1.30]):
+        for _ in range(3):
+            ctl._run_frame()
+    assert sent.count("img") == 1
+    assert sent.count("blank") == 0
+    assert sum(isinstance(p, pycozmo.protocol_encoder.OutputSilence) for p in sent) == 2
