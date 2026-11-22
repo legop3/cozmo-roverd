@@ -1,0 +1,23 @@
+[Unit]
+Description=Cozmo to MultiRoombaRover bridge
+Wants=NetworkManager.service network-online.target
+After=NetworkManager.service network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/cozmo-roverd
+ExecStart=/opt/cozmo-roverd/.venv/bin/cozmo-roverd --config /etc/cozmo-roverd.toml
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGTERM
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/log /run
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
