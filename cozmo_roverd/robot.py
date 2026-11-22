@@ -59,6 +59,9 @@ class Robot:
         self._tts_last_stream_at = 0.0
         self.last_tts_frames = 0
         self.last_tts_played_at = None
+        # DisplayImage/OutputSilence disabled on real hardware while investigating
+        # reliable command ACK stalls. Test fakes can explicitly opt in.
+        self._face_transport_enabled = False
         self.face_frames_sent = 0
         self._face_scroll = 0
         self._face_last_content = None
@@ -750,7 +753,9 @@ class Robot:
         preserving video, motors, IMU/lift HUD and the face renderer for later
         hardware validation. Do not send an initial frame on reconnect.
         """
-        return False
+        if not self._face_transport_enabled:
+            return False
+        return self._refresh_face_unverified()
 
     def _refresh_face_unverified(self):
         """Inactive display sender retained for isolated hardware debugging."""
@@ -858,7 +863,9 @@ class Robot:
 
     def advance_face_display(self):
         """No synthetic audio-clock packets while command ACKs are unstable."""
-        return False
+        if not self._face_transport_enabled:
+            return False
+        return self._advance_face_display_unverified()
 
     def _advance_face_display_unverified(self):
         """Inactive display clock retained for isolated hardware debugging."""
