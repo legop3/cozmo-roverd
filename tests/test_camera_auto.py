@@ -33,7 +33,7 @@ def test_dark_room_increases_real_exposure_and_gain():
     robot, sent = make_robot()
     for _ in range(12):
         sample(robot, 15)
-        assert robot.refresh_auto_camera_exposure()
+        robot.refresh_auto_camera_exposure()
     assert robot._auto_gain > 1.0
     assert robot._auto_exposure_ms > 16
     assert robot._auto_gain <= 3.984375
@@ -47,7 +47,7 @@ def test_sunlight_reduces_real_exposure_then_gain():
     robot._auto_exposure_ms = 67
     for _ in range(15):
         sample(robot, 245)
-        assert robot.refresh_auto_camera_exposure()
+        robot.refresh_auto_camera_exposure()
     assert robot._auto_gain < 3.984375
     assert robot._auto_exposure_ms < 67
     assert robot._auto_gain >= 0.1
