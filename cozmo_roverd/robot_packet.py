@@ -46,6 +46,34 @@ class BatteryTracker:
         self._contact_started = None
         self._last_charging_true = None
         self._last_sample = None
+        self._voltage_at_wall = None
+
+    def voltage_snapshot(self):
+        if self.voltage is None or self._voltage_at_wall is None:
+            return {}
+        return {"last_battery_voltage_v": self.voltage,
+                "last_battery_voltage_at": self._voltage_at_wall}
+
+    def restore_voltage(self, data):
+        """Restore a recent *measured* voltage, never synthesize a new one."""
+        if not isinstance(data, dict):
+            return False
+        voltage = finite_float(data.get("last_battery_voltage_v"))
+        saved_at = finite_float(data.get("last_battery_voltage_at"))
+        if (voltage is None or not 2.7 <= voltage <= 4.4 or saved_at is None
+                or not 0 <= time.time() - saved_at <= 3600):
+            return False
+        if self.voltage is None:
+            self.voltage = voltage
+            self._voltage_at_wall = saved_at
+            return True
+        return False
+
+    def voltage_age_seconds(self, now_wall=None):
+        if self._voltage_at_wall is None:
+            return None
+        now_wall = time.time() if now_wall is None else now_wall
+        return round(max(0.0, now_wall - self._voltage_at_wall), 2)
 
     def observe(self, voltage, flags, now=None, moving=False):
         now = time.monotonic() if now is None else now
@@ -56,6 +84,7 @@ class BatteryTracker:
         if valid_voltage:
             self.voltages.append(voltage)
             self.voltage = voltage
+            self._voltage_at_wall = time.time()
         # Interpret charging and motion before estimating charge. Never use
         # charger terminal voltage as an instantaneous percentage reading.
         charge_now = bool(flags & CHARGING)
@@ -131,6 +160,8 @@ class BatteryTracker:
     def diagnostic(self):
         return {
             "voltage_v": self.voltage,
+            "voltage_age_seconds": self.voltage_age_seconds(),
+            "voltage_sample_at": self._voltage_at_wall,
             "estimated_percent": self.percent,
             "smoothed_voltage_v": self._smoothed_voltage,
             "fuel_gauge": self.gauge.diagnostics(),
