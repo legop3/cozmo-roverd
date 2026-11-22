@@ -74,7 +74,7 @@ MRR's **Cozmo** peripheral now includes **Auto exposure** (momentary button: cli
 
 ## Real-hardware audio and lighting diagnostics
 
-The diagnostic suite runs as one command, **stops the rover service if it is running, restores it afterward**, and prints PASS/FAIL results, ACK-window progression, queue depth, received frame counts, and audio playback counters to the terminal. The tests use stock PyCozmo in isolated worker processes. The full detailed evidence remains on disk for later comparisons.
+The diagnostic suite runs as one command, **stops the rover service if it is running, restores it afterward**, and prints the actual experimental evidence directly to the terminal: a timestamped command and failure timeline, ACK-window progression, send-queue and pending-window growth, incoming frame/packet counters, audio playback counters, and the most recent transmitted packet types and lengths. PASS/FAIL is only a heading, not the report. The tests use stock PyCozmo in isolated worker processes. The full detailed evidence remains on disk for later comparisons.
 
 From your existing checkout on the Fedora host (after `git pull`), run:
 
