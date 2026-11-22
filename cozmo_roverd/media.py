@@ -147,8 +147,8 @@ class Publisher:
     def _offline_frame(self):
         image = Image.new("RGB", (320, 240), (12, 17, 23))
         draw = ImageDraw.Draw(image)
-        draw.text((83, 103), "COZMO DISCONNECTED", fill=(255, 255, 255))
-        draw.text((94, 121), "Reconnecting...", fill=(160, 174, 190))
+        draw.text((105, 103), "NO LIVE CAMERA", fill=(255, 255, 255))
+        draw.text((98, 121), "Waiting for frames", fill=(160, 174, 190))
         return image
 
     def _run(self):
@@ -188,8 +188,6 @@ class Publisher:
                         time.sleep(0.5)
                     try:
                         data = self.state_provider() if self.state_provider is not None else {}
-                        if is_offline:
-                            data["connected"] = False
                         frame = self.render_frame(image, data).tobytes()
                         self.process.stdin.write(frame)
                     except (BrokenPipeError, OSError, ValueError) as exc:
