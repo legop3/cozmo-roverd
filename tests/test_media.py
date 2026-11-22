@@ -96,13 +96,9 @@ def test_lift_gauge_tracks_height_without_claiming_measured_angle():
     assert high.getpixel((230, 17)) == (30, 50, 80)
     assert high.getpixel((160, 100)) == (30, 50, 80)
     assert base.getpixel((188, 17)) == (30, 50, 80)
-    # The marker spans a full 20 pixels, so the indicator changes clearly
-    # across the complete 32-92 mm lift travel.
-    marker = (83, 241, 204)
-    assert low.getpixel((188, 27)) == marker
-    assert high.getpixel((188, 7)) == marker
-    assert low.getpixel((188, 7)) != marker
-    assert high.getpixel((188, 27)) != marker
+    # No numerical readout outside the original 27px circular gauge.
+    assert high.crop((203, 5, 225, 29)).tobytes() == (
+        base.crop((203, 5, 225, 29)).tobytes())
 
 
 def test_lift_gauge_handles_missing_and_out_of_range_telemetry():
