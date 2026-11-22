@@ -163,7 +163,8 @@ class Robot:
             # immediate hardware contact flag; do not wait for dock debounce.
             # Rearm only after dock contact is definitively lost.
             contact = battery.raw_docked or battery.raw_charging
-            if contact and not self._dock_contact_handled:
+            if (contact and not self._dock_contact_handled
+                    and self.ready and self.client is not None):
                 self._dock_contact_handled = True
                 self.stop_drive()
             elif not contact and battery.docked is False:
