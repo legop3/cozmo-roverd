@@ -202,10 +202,13 @@ class Publisher:
                 # service journal stays readable, and local diagnostics
                 # retain the most recent encoder/RTSP failure.
                 self._ffmpeg_log_file = logpath.open("wb")
-                self.process = subprocess.Popen(command, stdin=subprocess.PIPE,
-                                                stdout=subprocess.DEVNULL,
-                                                stderr=self._ffmpeg_log_file, env=env)
-                while self.running.is_set() and self.process.poll() is None:
+                process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=self._ffmpeg_log_file, env=env)
+                self.process = process
+                # Keep this worker's own process reference: stop() may clear
+                # self.process concurrently during service shutdown.
+                while self.running.is_set() and process.poll() is None:
                     try:
                         image = self.frames.get(timeout=0.5)
                         is_offline = False
@@ -221,7 +224,7 @@ class Publisher:
                     try:
                         data = self.state_provider() if self.state_provider is not None else {}
                         frame = self.render_frame(image, data).tobytes()
-                        self.process.stdin.write(frame)
+                        process.stdin.write(frame)
                     except (BrokenPipeError, OSError, ValueError) as exc:
                         self.last_error = str(exc)[:180]
                         break
