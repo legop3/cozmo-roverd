@@ -14,121 +14,6 @@ from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
-def _fix_pycozmo_packet_batching(cli):
-    """Fix PyCozmo's wrong last sequence when a UDP frame overflows.
-
-    Its stock SendThread._send_packets() uses the *next* packet's sequence
-    for the frame being flushed. The recipient can then acknowledge a
-    sequence that was not included in that frame. Audio packets (744 bytes)
-    make the overflow branch especially common.
-    """
-    import types
-    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-
-    sender = cli.conn.send_thread
-
-    def send_packets(self, pkts, last_ack):
-        to_frame = []
-        frame_len = 0
-        first_seq = last_seq = None
-        for seq, pkt in pkts:
-            pktlen = 4 + len(pkt)
-            if pktlen >= MAX_FRAME_PAYLOAD_SIZE:
-                raise ValueError(
-                    f"PyCozmo packet {type(pkt).__name__} ({pktlen} bytes) "
-                    "exceeds single UDP frame payload")
-            if to_frame and frame_len + pktlen >= MAX_FRAME_PAYLOAD_SIZE:
-                self._send_frame(to_frame, first_seq, last_seq, last_ack)
-                to_frame = []
-                frame_len = 0
-            if not to_frame:
-                first_seq = seq
-            to_frame.append(pkt)
-            frame_len += pktlen
-            last_seq = seq
-        if to_frame:
-            self._send_frame(to_frame, first_seq, last_seq, last_ack)
-
-    sender._send_packets = types.MethodType(send_packets, sender)
-
-
-def _limit_animation_idle_traffic(cli):
-    """Stable, display-only PyCozmo animation loop.
-
-    The optional speaker path is disabled: it repeatedly froze the reliable
-    Cozmo channel. Do not patch audio pacing or touch the camera here.
-    A new bitmap is sent once, with low-rate OutputSilence frames to advance
-    Cozmo's animation/display subsystem. Keep the last bitmap alive every
-    10 seconds. No unconditional 30 Hz image or silence flooding.
-    """
-    import types
-    from pycozmo import protocol_encoder
-
-    controller = cli.anim_controller
-    controller._cozmo_image_refresh_at = 0.0
-    controller._cozmo_last_idle_silence_at = 0.0
-    controller._cozmo_audio_aborted = False
-    controller._cozmo_audio_abort_reason = "Hardware TTS disabled for stability"
-    controller._cozmo_audio_backpressure_ticks = 0
-    controller._cozmo_audio_frames_submitted = 0
-    controller._cozmo_audio_played_baseline = None
-    controller._cozmo_keyframes_received = 0
-    controller._cozmo_keyframe_gating = False
-    controller._cozmo_camera_paused_for_speech = False
-    controller._cozmo_tts_camera_restores = 0
-
-    def run_frame(self):
-        if not self.animations_enabled:
-            return
-        now = time.monotonic()
-        # TTS must not be sent, including anything accidentally queued.
-        q = self.queue
-        if hasattr(q, "lock") and hasattr(q, "audio_queue"):
-            with q.lock:
-                q.audio_queue.clear()
-        _, image_pkt, pkts = q.get()
-        sender = getattr(getattr(self.cli, "conn", None), "send_thread", None)
-        pending, waiting = 0, 0
-        if sender is not None:
-            with sender.lock:
-                pending = (
-                    (sender.window.next_seq - sender.window.expected_seq)
-                    % sender.window.max_seq)
-            waiting = sender.queue.qsize()
-
-        # Always accept a fresh operator status image unless the radio is
-        # already seriously congested; avoid losing it from the image queue.
-        if image_pkt is not None:
-            if pending >= 12 or waiting >= 8:
-                if hasattr(q, "image_queue") and hasattr(q, "lock"):
-                    with q.lock:
-                        q.image_queue.appendleft(image_pkt)
-            else:
-                self.last_image_pkt = image_pkt
-                self.cli.conn.send(image_pkt)
-                self._cozmo_image_refresh_at = now
-
-        # PyCozmo normally sends OutputSilence at 30 Hz; slow this to 4 Hz
-        # while preserving the animation clock needed to show images.
-        if (self.image_displayed and pending < 12 and waiting < 8
-                and now - self._cozmo_last_idle_silence_at >= 0.25):
-            self.cli.conn.send(protocol_encoder.OutputSilence())
-            self._cozmo_last_idle_silence_at = now
-
-        # Refresh only the last actual image, never the stock blank packet.
-        if (image_pkt is None and self.image_displayed and pending < 8
-                and waiting < 4 and
-                now - self._cozmo_image_refresh_at >= 10.0):
-            self.cli.conn.send(self.last_image_pkt)
-            self._cozmo_image_refresh_at = now
-
-        if pkts:
-            for pkt in pkts:
-                self.cli.conn.send(pkt)
-
-    controller._run_frame = types.MethodType(run_frame, controller)
-
-
 class Robot:
     def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="bright"):
         self.max_speed = max_speed
@@ -166,6 +51,7 @@ class Robot:
         self._face_scroll = 0
         self._face_last_content = None
         self._face_sent_at = 0.0
+        self._face_clock_at = 0.0
         self.face_last_encoded_bytes = None
         self.face_last_error = None
         self.face_encoded_on_pixels = None
@@ -179,8 +65,11 @@ class Robot:
 
     def connect(self):
         import pycozmo
-        cli = pycozmo.Client(enable_animations=True, enable_procedural_face=False)
-        _limit_animation_idle_traffic(cli)
+        # Keep the stock PyCozmo transport and animation internals intact.
+        # We do not use its 30Hz animation/audio loop: the bridge has no
+        # supported hardware speaker, and it publishes only a static face.
+        # Face packets are sent directly using the public connection API.
+        cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
         cli.start()
         try:
             cli.connect()
@@ -200,7 +89,7 @@ class Robot:
             cli.enable_camera(enable=True, color=True)
             # Do not enable speaker playback or alter camera streaming
             # in this stable driver. The last requested TTS remains visible.
-            cli.enable_animations(True)
+            cli.enable_animations(False)
             cli.enable_procedural_face(False)
             cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
             self.configure_camera(cli)
@@ -211,6 +100,7 @@ class Robot:
                 # The new robot display has no cached image from the old link.
                 self._face_last_content = None
                 self._face_sent_at = 0.0
+                self._face_clock_at = 0.0
                 self._status_light_signature = None
                 self._charger_factory_id = None
                 self._charger_object_id = None
@@ -580,16 +470,8 @@ class Robot:
                 "last_queued_at": self.last_tts_played_at,
                 "robot_reported_audio_frames": played,
                 "queued_frames_remaining": queue_size,
-                "aborted_due_to_congestion": getattr(cli.anim_controller, "_cozmo_audio_aborted", False) if cli else None,
-                "abort_reason": getattr(cli.anim_controller, "_cozmo_audio_abort_reason", None) if cli else None,
-                "backpressure_ticks": getattr(cli.anim_controller, "_cozmo_audio_backpressure_ticks", 0) if cli else None,
-                "frames_submitted_to_transport": getattr(cli.anim_controller, "_cozmo_audio_frames_submitted", 0) if cli else None,
-                "playback_counter_at_speech_start": getattr(cli.anim_controller, "_cozmo_audio_played_baseline", None) if cli else None,
                 "speaker_disabled_after_transport_failure": self._tts_transport_faulted,
-                "camera_paused_for_speech": getattr(cli.anim_controller, "_cozmo_camera_paused_for_speech", False) if cli else None,
-                "camera_restores_after_speech": getattr(cli.anim_controller, "_cozmo_tts_camera_restores", 0) if cli else None,
-                "firmware_keyframes_received": getattr(cli.anim_controller, "_cozmo_keyframes_received", None) if cli else None,
-                "keyframe_gating_enabled": getattr(cli.anim_controller, "_cozmo_keyframe_gating", None) if cli else None,
+                "hardware_speech_enabled": False,
             }
 
     def note_tts(self, text):
@@ -628,15 +510,6 @@ class Robot:
                     pending = (sender.window.next_seq - sender.window.expected_seq) % sender.window.max_seq
                 if pending >= 8 or sender.queue.qsize() >= 8:
                     return False
-            controller = getattr(self.client, "anim_controller", None)
-            if controller is not None:
-                if getattr(controller, "playing_audio", False):
-                    return False
-                audio_queue = getattr(getattr(controller, "queue", None), "audio_queue", None)
-                if audio_queue is not None and len(audio_queue):
-                    return False
-                if getattr(controller, "_cozmo_audio_aborted", False):
-                    self.last_tts_error = "Speech aborted to protect Cozmo command channel"
             battery = self.battery
             image = status_image(
                 voltage=battery.voltage,
@@ -695,13 +568,54 @@ class Robot:
             self.face_last_encoded_bytes = len(encoded)
             content = image.tobytes()
             self._face_scroll += 1
-            if content == self._face_last_content:
+            # The stock animation controller is disabled. Its
+            # Client.display_image() merely enqueues a frame for that
+            # controller, so send the same supported DisplayImage packet
+            # directly rather than monkey-patching the controller.
+            # Refresh the unchanged bitmap at most once every 15 seconds
+            # because Cozmo expires displayed animation images.
+            if (content == self._face_last_content
+                    and time.monotonic() - self._face_sent_at < 15.0):
                 return False
-            self.client.display_image(image)
+            conn = getattr(self.client, "conn", None)
+            if conn is not None and callable(getattr(conn, "send", None)):
+                from pycozmo.protocol_encoder import DisplayImage
+                conn.send(DisplayImage(image=encoded))
+            else:
+                # Test doubles without a transport can still inspect pixels.
+                self.client.display_image(image)
             self.face_frames_sent += 1
             self._face_sent_at = time.monotonic()
             self._face_last_content = content
             self.face_last_error = None
+            return True
+
+    def advance_face_display(self):
+        """Keep the face animation clock moving without replacing PyCozmo.
+
+        Cozmo needs occasional OutputSilence ticks to display a static
+        DisplayImage. This is isolated application traffic, not a custom
+        animation-thread implementation, and never sends hardware speech.
+        """
+        with self.lock:
+            if not self.ready or self.client is None or self._face_last_content is None:
+                return False
+            now = time.monotonic()
+            if now - self._face_clock_at < 0.25:
+                return False
+            conn = getattr(self.client, "conn", None)
+            if conn is None or not callable(getattr(conn, "send", None)):
+                return False
+            sender = getattr(conn, "send_thread", None)
+            if sender is not None:
+                with sender.lock:
+                    pending = ((sender.window.next_seq - sender.window.expected_seq)
+                               % sender.window.max_seq)
+                if pending >= 8 or sender.queue.qsize() >= 8:
+                    return False
+            from pycozmo.protocol_encoder import OutputSilence
+            conn.send(OutputSilence())
+            self._face_clock_at = now
             return True
 
     def mark_speech_unstable(self, reason):
