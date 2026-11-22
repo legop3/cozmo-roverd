@@ -291,3 +291,48 @@ def test_failed_undock_restores_lift_to_parked_height():
     assert robot.client.lifts[0] == 32.0
     assert robot.client.lifts[-1] == 92.0
     assert not robot.undock_active
+
+
+def test_manual_drive_off_dock_lowers_lift_and_levels_head_once():
+    robot, _ = fake_robot()
+    robot.on_charger = True
+    robot._dock_contact_handled = True
+    robot._departure_posture_set = False
+    robot.drive(0, 0)
+    assert robot.client.lifts == []
+    robot.drive(80, 80)
+    assert robot.client.heads == [0.0]
+    assert robot.client.lifts == [32.0]
+    robot.drive(90, 90)
+    assert robot.client.lifts == [32.0]
+    assert robot.client.drives == [(0, 0), (80, 80), (90, 90)]
+
+
+def test_physically_removing_cozmo_from_dock_lowers_lift_once():
+    robot, _ = fake_robot()
+    robot.on_charger = True
+    robot._dock_contact_handled = True
+    robot.battery.observe(3.9, 0x1000)
+    # First missing-contact sample starts the existing dock debounce.
+    robot._packet(NS(robot_status=0), _charger_packet(flags=0))
+    assert robot.client.lifts == []
+    robot.battery._contact_lost_since = time.monotonic() - 1
+    robot._packet(NS(robot_status=0), _charger_packet(flags=0))
+    assert robot.on_charger is False
+    assert robot.client.heads == [0.0]
+    assert robot.client.lifts == [32.0]
+    robot._packet(NS(robot_status=0), _charger_packet(flags=0))
+    assert robot.client.lifts == [32.0]
+
+
+def test_scripted_undock_still_lowers_lift_only_once():
+    robot, _ = fake_robot()
+    robot.on_charger = True
+    finished = Event()
+    robot.start_undock("u4", False, lambda ident, err: finished.set())
+    assert finished.wait(2)
+    assert robot.client.lifts == [32.0]
+    robot._packet(NS(robot_status=0), _charger_packet(flags=0))
+    robot.battery._contact_lost_since = time.monotonic() - 1
+    robot._packet(NS(robot_status=0), _charger_packet(flags=0))
+    assert robot.client.lifts == [32.0]
