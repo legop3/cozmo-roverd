@@ -227,7 +227,10 @@ class Robot:
                 # These gain/exposure fields are ignored when AE is enabled.
                 gain, exposure, automatic = 1.0, 0, True
             elif self.camera_mode == "manual":
-                gain, exposure, automatic = 0.1, self.manual_exposure_ms, False
+                # Do not pin sensor gain to its 0.1x minimum: that made
+                # the manual shutter slider unusably dark compared to the
+                # former low-light preset (which reached ~4x gain).
+                gain, exposure, automatic = 2.0, self.manual_exposure_ms, False
             elif self.camera_mode == "bright":
                 gain, exposure, automatic = 4.0, 40, False
             elif self.camera_mode == "lowlight":
