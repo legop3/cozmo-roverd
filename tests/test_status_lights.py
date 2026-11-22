@@ -1,0 +1,96 @@
+"""Cozmo backpack and physical charger LEDs use the real object protocol."""
+from types import SimpleNamespace as NS
+import pycozmo
+from cozmo_roverd.robot import Robot
+from cozmo_roverd.status_lights import charger_lights, charger_signature
+
+
+class FakeConn:
+    def __init__(self):
+        self.sent = []
+    def send(self, pkt):
+        self.sent.append(pkt)
+
+
+class FakeClient:
+    def __init__(self):
+        self.conn = FakeConn()
+        self.available_objects = {}
+        self.connected_objects = {}
+
+
+def make_robot():
+    robot = Robot(max_speed=250, on_state=lambda: None,
+                  on_sensor=lambda: None, on_frame=lambda f: None)
+    robot.client = FakeClient()
+    robot.ready = True
+    return robot
+
+
+def test_missing_charger_is_optional_and_silent():
+    robot = make_robot()
+    assert not robot.refresh_charger_lights()
+    assert not robot.client.conn.sent
+
+
+def test_discovers_only_charger_not_cubes():
+    robot = make_robot()
+    typ = pycozmo.protocol_encoder.ObjectType
+    robot.client.available_objects[17] = NS(object_type=typ.Block_LIGHTCUBE1)
+    assert not robot.refresh_charger_lights()
+    robot.client.available_objects[99] = NS(object_type=typ.Charger_Basic)
+    assert robot.refresh_charger_lights()
+    sent = robot.client.conn.sent
+    assert len(sent) == 1
+    assert isinstance(sent[0], pycozmo.protocol_encoder.ObjectConnect)
+    assert sent[0].factory_id == 99
+    assert sent[0].connect is True
+    # Do not select an object until the real connection ID is reported.
+    assert not robot.refresh_charger_lights()
+    assert len(robot.client.conn.sent) == 1
+
+
+def test_connected_charger_selected_by_object_type_and_factory():
+    robot = make_robot()
+    p = pycozmo.protocol_encoder
+    robot.client.connected_objects[2] = {
+        "factory_id": 17, "object_type": p.ObjectType.Block_LIGHTCUBE1}
+    robot.client.connected_objects[8] = {
+        "factory_id": 99, "object_type": p.ObjectType.Charger_Basic}
+    robot.battery.docked = True
+    robot.battery.charging = True
+    assert robot.refresh_charger_lights()
+    select, lights = robot.client.conn.sent
+    assert isinstance(select, p.CubeId)
+    assert select.object_id == 8
+    assert isinstance(lights, p.CubeLights)
+    assert len(lights.states) == 4
+    assert lights.states[0].on_color != lights.states[0].off_color
+    assert not robot.refresh_charger_lights()
+    assert len(robot.client.conn.sent) == 2
+
+
+def test_charger_docking_transition_updates_and_off_state():
+    robot = make_robot()
+    p = pycozmo.protocol_encoder
+    robot.client.connected_objects[6] = {
+        "factory_id": 42, "object_type": p.ObjectType.Charger_Basic}
+    robot.battery.docked = True
+    robot.battery.charging = False
+    assert robot.refresh_charger_lights()
+    green = robot.client.conn.sent[-1].states[0]
+    assert green.on_color == green.off_color
+    robot.battery.docked = False
+    assert robot.refresh_charger_lights()
+    off = robot.client.conn.sent[-1].states
+    assert all(led.on_color == 0 and led.off_color == 0 for led in off)
+    assert len(robot.client.conn.sent) == 4
+
+
+def test_charger_led_semantics_and_signature():
+    assert charger_signature(docked=False, charging=False, docking=False) == (
+        False, None, False)
+    assert charger_signature(docked=True, charging=None, docking=False) != (
+        charger_signature(docked=True, charging=False, docking=False))
+    assert len(charger_lights(docked=True, charging=True)) == 4
+    assert len(charger_lights(docked=False, charging=False)) == 4
