@@ -299,6 +299,25 @@ class Robot:
             self.client.set_all_backpack_lights(
                 pycozmo.lights.white_light if enabled else pycozmo.lights.off_light)
 
+    def speaker_diagnostics(self):
+        """Distinguish TTS synthesis/queueing from actual playback reports."""
+        with self.lock:
+            cli = self.client
+            played = getattr(cli, "num_audio_frames_played", None) if cli else None
+            queue_size = None
+            if cli is not None:
+                q = cli.anim_controller.queue
+                with q.lock:
+                    queue_size = len(q.audio_queue)
+            return {
+                "last_message": self.last_tts,
+                "last_error": self.last_tts_error,
+                "last_queued_frames": self.last_tts_frames,
+                "last_queued_at": self.last_tts_played_at,
+                "robot_reported_audio_frames": played,
+                "queued_frames_remaining": queue_size,
+            }
+
     def note_tts(self, text):
         """Remember a speech message even if synthesis or playback fails."""
         with self.lock:
