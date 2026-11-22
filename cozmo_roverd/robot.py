@@ -623,15 +623,20 @@ class Robot:
             self.ready = False
             self.moving = False
             self.commanded_wheels = (0, 0)
-            self.battery = BatteryTracker()
+            # Preserve the most recent *measured* battery voltage and
+            # charging history across PyCozmo reconnects. Cozmo may not
+            # send another valid voltage immediately while docked; resetting
+            # the tracker caused the OLED/MRR to show "--.-- V" even
+            # though we'd already measured the battery moments earlier.
+            # Tracker freshness remains stale until a new RobotState packet.
             self._undock_cancel.set()
             self.undock_active = False
             self.docking_phase = None
             self.dock_assist = False
             self.latest = {}
-            self.voltage = None
-            self.on_charger = None
-            self.charging = None
+            self.voltage = self.battery.voltage
+            self.on_charger = self.battery.docked
+            self.charging = self.battery.charging
             self.cliff = None
         if cli is None:
             return
