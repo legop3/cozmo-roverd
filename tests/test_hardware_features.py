@@ -18,8 +18,9 @@ class DummyClient:
             min_exposure_time_ms=1, max_exposure_time_ms=65,
         )
 
-    def drive_wheels(self, left, right):
+    def drive_wheels(self, left, right, **kwargs):
         self.drives.append((left, right))
+        self.last_acceleration = kwargs
 
     def move_lift(self, speed):
         self.lifts.append(speed)
@@ -106,3 +107,19 @@ def test_commanded_speed_is_recorded_for_anki_remote_control_rate():
     robot.drive(250, 250)
     assert robot.client.drives[-1] == (250, 250)
     assert robot.commanded_wheels == (250, 250)
+
+
+def test_pickup_and_docked_status_never_block_direct_driving():
+    robot, _ = fake_robot()
+    robot.on_charger = True
+    robot.picked_up = True
+    robot.cliff = True
+    robot.dock_assist = True
+    robot.drive(250, -250)
+    assert robot.client.drives[-1] == (250, -250)
+    assert robot.commanded_wheels == (250, -250)
+    assert robot.client.last_acceleration["lwheel_acc"] == 10000.0
+    assert robot.client.last_acceleration["rwheel_acc"] == 10000.0
+    robot._picked_up(True)
+    robot._cliff(True)
+    assert robot.client.drives[-1] == (250, -250)
