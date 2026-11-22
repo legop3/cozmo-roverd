@@ -432,6 +432,13 @@ class Bridge:
             except asyncio.TimeoutError:
                 pass
 
+    def _camera_link_active(self, now):
+        """A recent live PyCozmo frame is positive evidence of an active link."""
+        publisher = self.publisher
+        return (publisher is not None
+                and publisher.last_frame_time is not None
+                and now - publisher.last_frame_time < 5.0)
+
     async def _hardware(self):
         while not self.stop_event.is_set():
             try:
@@ -520,10 +527,7 @@ class Bridge:
                     # traffic. Some firmware/charger states pause RobotState
                     # while camera frames continue; do not disconnect a
                     # working camera/control link solely for that silence.
-                    camera_recent = (
-                        self.publisher is not None
-                        and self.publisher.last_frame_time is not None
-                        and now - self.publisher.last_frame_time < 5.0)
+                    camera_recent = self._camera_link_active(now)
                     if (self.robot.last_sensor and not self.robot.battery.docked
                             and not camera_recent
                             and now - self.robot.last_sensor > 45.0):
