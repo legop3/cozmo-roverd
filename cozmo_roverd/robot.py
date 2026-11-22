@@ -75,8 +75,9 @@ def _limit_animation_idle_traffic(cli):
                 self.playing_audio = False
                 LOG.warning(
                     "Aborted Cozmo TTS after 2s without ACK for speech "
-                    "(%d unacked, %d queued commands, %d audio frames discarded)",
-                    pending, backlog, discarded)
+                    "(%d unacked, %d queued commands, %d audio frames discarded, "
+                    "%d speech frames submitted)",
+                    pending, backlog, discarded, self._cozmo_audio_frames_submitted)
                 return
             self._cozmo_audio_blocked_at = None
         audio_pkt, image_pkt, pkts = self.queue.get()
@@ -450,7 +451,8 @@ class Robot:
         """Distinguish TTS synthesis/queueing from actual playback reports."""
         with self.lock:
             cli = self.client
-            played = getattr(cli, "num_audio_frames_played", None) if cli else None
+            played = (getattr(cli.anim_controller, "num_audio_frames_played", None)
+                      if cli else None)
             queue_size = None
             if cli is not None:
                 q = cli.anim_controller.queue
@@ -596,6 +598,7 @@ class Robot:
                 controller._cozmo_audio_aborted = False
                 controller._cozmo_audio_blocked_at = None
                 controller._cozmo_audio_frames_submitted = 0
+                controller._cozmo_audio_backpressure_ticks = 0
                 # Explicitly use the same 30-FPS output-audio queue that the
                 # built-in PyCozmo playback uses, with a verified nonempty WAV.
                 controller.play_audio(frames)
