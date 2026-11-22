@@ -6,7 +6,11 @@ def test_hello_registers_custom_rover():
     assert h["type"] == "hello"
     assert h["peripherals"][0]["id"] == "cozmo"
     control_ids = {entry["id"] for entry in h["peripherals"][0]["controls"]}
-    assert control_ids == {"lift", "light"}
+    assert control_ids == {"lift", "camera_auto_exposure", "camera_manual_exposure"}
+    controls = {entry["id"]: entry for entry in h["peripherals"][0]["controls"]}
+    assert controls["camera_auto_exposure"]["mode"] == "momentary"
+    assert controls["camera_manual_exposure"]["min"] == 1
+    assert controls["camera_manual_exposure"]["max"] == 67
     assert h["cameraServo"]["enabled"]
     assert h["private"]["enabled"] is False
     assert h["private"]["safety"]["cliffEnabled"] is False
