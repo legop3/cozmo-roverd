@@ -77,6 +77,8 @@ class Robot:
                 self.client = cli
                 self.last_sensor = time.monotonic()
                 self.ready = True
+                # The new robot display has no cached image from the old link.
+                self._face_last_content = None
             self.on_state()
             LOG.info("Cozmo connected")
         except Exception:
