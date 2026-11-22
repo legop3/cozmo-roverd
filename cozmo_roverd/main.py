@@ -90,12 +90,16 @@ class Bridge:
 
     def current_sensor(self):
         latest = self.robot.latest
-        if not latest:
+        battery = self.robot.battery
+        if not latest and battery.voltage is None:
             return None
         wheels = latest.get("wheel_speeds_mmps") or {}
-        return sensor(voltage=latest.get("battery_voltage_v"),
+        # The last measured voltage is retained independently of RobotState.
+        # Docked robots can suspend telemetry or report an invalid voltage;
+        # never overwrite a valid sensor reading with an empty snapshot.
+        return sensor(voltage=battery.voltage,
                       left=wheels.get("left"), right=wheels.get("right"),
-                      on_charger=latest.get("on_charger"),
+                      on_charger=battery.docked,
                       cliff=latest.get("cliff_detected"),
                       cliff_raw=latest.get("raw_robot_state", {}).get("cliff_channels"))
 
