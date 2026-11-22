@@ -237,6 +237,7 @@ async function refreshTelemetry() {
         ["Audio frames submitted to robot", displayMetric(audio.frames_submitted_to_transport)],
         ["Camera paused for TTS", displayMetric(audio.camera_paused_for_speech)],
         ["Camera restored after TTS", displayMetric(audio.camera_restores_after_speech)],
+        ["Speaker disabled after transport failure", displayMetric(audio.speaker_disabled_after_transport_failure)],
         ["Speaker audio frames reported", displayMetric(audio.robot_reported_audio_frames)],
         ["Queued audio frames remaining", displayMetric(audio.queued_frames_remaining)],
         ["Speech playback aborted", displayMetric(audio.aborted_due_to_congestion)],
