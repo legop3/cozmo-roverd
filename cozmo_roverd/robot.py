@@ -185,7 +185,7 @@ class Robot:
                     self.head(0)
             elif not contact and battery.docked is False:
                 self._dock_contact_handled = False
-            if (was_docked is True and self.on_charger is False
+            if (was_docked is not False and self.on_charger is False
                     and not self.undock_active and self.client is not None):
                 # Actual departure, including manually lifting Cozmo off.
                 # Assist still active means keep lift up for the approach.
