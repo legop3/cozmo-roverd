@@ -67,3 +67,45 @@ def test_probe_stock_backpack_and_side_cases_send_expected_packets(tmp_path):
     action = hardware_tests._apply_case(client, "backpack-stock", rec, tmp_path)
     assert "stock_set_all_backpack_lights" in action
     assert sent[-1][0] == "stock_backpack"
+
+
+def test_result_summary_reports_exact_failure_and_transport_counters(tmp_path):
+    import json
+    samples = [
+        {"event": "pre_command_transport", "transport": {
+            "next_ack_expected": 2, "audio_frames_reported_played": 0}},
+        {"event": "command_issued"},
+        {"event": "stalled", "transport": {
+            "next_ack_expected": 7, "pending_reliable_packets": 62,
+            "queued_app_commands": 202, "received_frames": 333,
+            "audio_frames_reported_played": 62}},
+    ]
+    (tmp_path / "measurements.jsonl").write_text(
+        "".join(json.dumps(x) + "\n" for x in samples))
+    result = hardware_tests._summarize(tmp_path, 3)
+    assert result["status"] == "FAIL"
+    assert "ACK progress" in result["reason"]
+    assert result["pending"] == 62
+    assert result["queued"] == 202
+    assert result["ack_before"] == 2
+    assert result["ack_after"] == 7
+    assert result["audio_frames"] == 62
+
+
+def test_one_command_runner_stops_and_restores_existing_service(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(hardware_tests, "_service_active", lambda: True if not calls else False)
+    monkeypatch.setattr(hardware_tests, "_service_action", lambda action: calls.append(action))
+    monkeypatch.setattr(hardware_tests, "_run_case",
+                        lambda case, args, directory: {
+                            "status": "PASS", "reason": "completed"})
+    assert hardware_tests.main([
+        "--case", "baseline-camera", "--i-understand-risk",
+        "--output-dir", str(tmp_path)]) == 0
+    assert calls == ["stop", "start"]
+
+
+def test_default_suite_contains_actual_audio_animation_and_light_controls():
+    assert hardware_tests.DEFAULT_SUITE == (
+        "baseline-camera", "baseline-animation-camera",
+        "backpack-side-camera", "audio-idle", "audio-camera")
