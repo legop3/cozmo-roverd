@@ -320,30 +320,44 @@ class Publisher:
                 self.process = process
                 # Keep this worker's own process reference: stop() may clear
                 # self.process concurrently during service shutdown.
+                # Rawvideo has no frame timestamps of its own. FFmpeg expects
+                # frames at the advertised -framerate; feeding a 2 fps offline
+                # slate and then bursts of 30+ fps camera frames creates
+                # irregular RTSP timestamps across a Cozmo reconnect.
+                # Publish at one monotonic cadence in BOTH modes. The
+                # single-frame input queue always holds the freshest frame.
+                interval = 1.0 / self.fps
+                next_frame_at = time.monotonic()
+                latest_image = None
                 while self.running.is_set() and process.poll() is None:
+                    now = time.monotonic()
+                    delay = next_frame_at - now
+                    if delay > 0:
+                        time.sleep(delay)
+                    now = time.monotonic()
+                    # Never rapidly emit late frames to "catch up" after a
+                    # blocking encoder write; recover the cadence immediately.
+                    next_frame_at = max(next_frame_at + interval, now + interval)
                     try:
-                        image = self.frames.get(timeout=0.5)
-                        # A buffered image must not masquerade as live video
-                        # after the supervisor has dropped the Cozmo link.
-                        got_frame = True
+                        image = self.frames.get_nowait()
                     except queue.Empty:
-                        got_frame = False
                         image = None
                     try:
                         data = self.state_provider() if self.state_provider is not None else {}
                         fresh = (self.last_frame_time is not None and
-                                 time.monotonic() - self.last_frame_time < 1.0)
-                        # The camera can pause independently while the robot
-                        # stays online; show that distinction explicitly.
-                        if got_frame and fresh and data.get("connected", True):
-                            frame = self.render_frame(image, data).tobytes()
-                        elif not fresh:
-                            frame = self._offline_frame(data).tobytes()
-                            time.sleep(0.5)
+                                 now - self.last_frame_time < 1.0)
+                        if fresh and data.get("connected", True):
+                            if image is not None:
+                                latest_image = image
+                            if latest_image is not None:
+                                frame = self.render_frame(latest_image, data).tobytes()
+                            else:
+                                frame = self._offline_frame(data).tobytes()
                         else:
-                            # Waiting for the next frame within the normal
-                            # one-second camera gap; avoid fake offline flashes.
-                            continue
+                            # Drop the last camera image on any interruption:
+                            # the next connection must provide its own frames.
+                            latest_image = None
+                            frame = self._offline_frame(data).tobytes()
                         process.stdin.write(frame)
                     except (BrokenPipeError, OSError, ValueError) as exc:
                         self.last_error = str(exc)[:180]
