@@ -50,6 +50,14 @@ Camera images are published via FFmpeg to the server's existing MediaMTX RTSP en
 
 **Note:** Fedora's `ffmpeg-free` build may not contain `libx264`. The bridge automatically uses `libopenh264` when available instead. Enable the official `fedora-cisco-openh264` repository and install `openh264` if necessary, or install a full FFmpeg build. Check `ffmpeg -encoders | grep -E 'libx264|libopenh264'`. The installer does not silently enable third-party repositories.
 
+## In-video HUD, camera field of view, and temporary disconnects
+
+The optional **In-video telemetry HUD** is enabled by default and can be switched off in the Fedora setup web UI. It draws a small transparent battery/status strip and wheel/head/lift/cliff readings directly onto the existing **320 × 240** camera frames in the FFmpeg publisher worker. There is no second video stream, buffering stage, or encoding pass, and the single-frame queue continues to discard old frames. The extra Pillow draw operations add some CPU time per frame, but the actual end-to-end latency depends on the system and should be measured on hardware.
+
+The bridge uses the **whole frame reported by PyCozmo** (4:3), without applying a crop or digital zoom. PyCozmo also reports camera-calibrated horizontal and vertical field of view in the live telemetry data, when the robot provides it. Those are lens properties: raising resolution or stretching an image cannot physically widen the lens.
+
+The MRR **rover WebSocket now remains connected even if Cozmo temporarily disconnects** from its dedicated Wi-Fi. The hardware task retries independently; MRR still receives periodic `roverState` updates with `drivingMode: false` until the robot reconnects, and motion commands receive an explicit temporary-unavailable acknowledgement rather than silently disappearing. When PyCozmo reconnects, the same MRR registration resumes control automatically without re-registering the rover. The RTSP publisher also substitutes a low-rate **Reconnecting** slate when fresh camera frames stop, keeping the video pipeline active. A genuine server-side WebSocket/network disconnect still requires reconnection and registration.
+
 ## Live Cozmo telemetry & latency diagnostics
 
 The setup website at `http://FEDORA-IP:8765` now includes a **Live Cozmo telemetry** panel under Status & diagnostics. It shows the actual on-charger and actively-charging flags separately, battery voltage and its approximate charge estimate, pickup/cliff/moving status, wheel speeds, head/lift positions, orientation and pose. Expand **All PyCozmo diagnostics** to see acceleration, gyroscope, all 17 robot status bits, hardware identity, camera details, animation counters, cube discovery/connection details and publisher health. These are also available from `GET /api/telemetry` on the setup web server. A one-second snapshot is written to `/run/cozmo-roverd/telemetry.json`, independently of MRR.
