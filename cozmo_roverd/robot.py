@@ -129,7 +129,15 @@ class Robot:
         # Always keep the packet receive counter available for diagnostics.
 
     def is_healthy(self):
-        return self.ready and time.monotonic() - self.last_sensor < 5.0
+        if not self.ready:
+            return False
+        # Charger status arrives in RobotState packets, but those packets
+        # need not remain frequent throughout charging. The Wi-Fi link is
+        # checked separately by the supervisor. Do not force a reconnect
+        # solely for missing telemetry while on charging contacts.
+        if self.battery.docked is True:
+            return True
+        return time.monotonic() - self.last_sensor < 5.0
 
     def stop_drive(self):
         with self.lock:
