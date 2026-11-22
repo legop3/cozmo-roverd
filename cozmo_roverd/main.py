@@ -100,7 +100,12 @@ class Bridge:
             if control == "lift" and type(value) is int and 0 <= value <= 100:
                 self.robot.lift(value)
             elif control == "light" and type(value) is bool:
-                self.robot.light(value)
+                self.robot.backpack(value)
+            elif control == "volume" and type(value) is int and 0 <= value <= 100:
+                self.robot.volume(value)
+            elif control == "clear_face" and type(value) is bool:
+                if value:
+                    self.robot.clear_face()
             elif control == "face" and isinstance(value, str) and len(value) <= 80:
                 self.robot.face(value)
             else:
