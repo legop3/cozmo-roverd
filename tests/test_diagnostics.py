@@ -61,3 +61,23 @@ def test_protocol_logger_is_restored_after_shutdown(tmp_path):
         recorder.close()
     assert logger.level == prior_level
     assert logger.propagate == prior_propagate
+
+
+def test_incident_history_is_append_only_across_restarts(tmp_path):
+    first = Recorder(tmp_path)
+    try:
+        first.incident(reason="first_failure", stage="connecting_robot")
+    finally:
+        first.close()
+    second = Recorder(tmp_path)
+    try:
+        second.incident(reason="second_failure", stage="online")
+    finally:
+        second.close()
+    failures = [
+        json.loads(line)["reason"]
+        for line in (tmp_path / "incidents.jsonl").read_text().splitlines()
+        if json.loads(line).get("event") == "disconnection_snapshot"
+    ]
+    assert failures == ["first_failure", "second_failure"]
+    assert not (tmp_path / "incidents.jsonl.1").exists()
