@@ -36,7 +36,10 @@ class Robot:
         self.charging = None
         self.on_charger = None
         self._dock_contact_handled = False
-        self._departure_posture_set = False
+        # Only the last commanded automatic lift target is remembered.
+        # Actual lift height in RobotState determines whether to retry.
+        self._dock_lift_target = None
+        self._dock_lift_sent_at = 0.0
         self.cliff = None
         self.picked_up = False
         self.latest = {}
@@ -112,7 +115,8 @@ class Robot:
                 self._face_clock_at = 0.0
                 self._status_light_signature = None
                 self._dock_contact_handled = False
-                self._departure_posture_set = False
+                self._dock_lift_target = None
+                self._dock_lift_sent_at = 0.0
                 self._dock_light_owned = False
                 self._auto_gain = 1.0
                 self._auto_exposure_ms = 16
@@ -168,27 +172,26 @@ class Robot:
             self.voltage = battery.voltage
             self.on_charger = battery.docked
             self.charging = battery.charging
-            # One motor-stop command on initial charger contact. Use the
-            # immediate hardware contact flag; do not wait for dock debounce.
-            # Rearm only after dock contact is definitively lost.
+            # Physical contact stops the wheels once. Charger and assist
+            # both demand lift UP, independent of previous commands.
             contact = battery.raw_docked or battery.raw_charging
             if (contact and not self._dock_contact_handled
                     and self.ready and self.client is not None):
                 self._dock_contact_handled = True
-                self._departure_posture_set = False
-                self.stop_drive()
-                self.lift(100)
-                # Contact completes any active docking approach exactly once.
-                self._end_dock_assist(lower_lift=False)
-                self.head(0)
+                if not self.undock_active:
+                    self.stop_drive()
+                    self.set_dock_lift(True, force=True)
+                    self._end_dock_assist(lower_lift=False)
+                    self.head(0)
             elif not contact and battery.docked is False:
                 self._dock_contact_handled = False
             if (was_docked is True and self.on_charger is False
-                    and not self._departure_posture_set and not self.undock_active
-                    and self.client is not None):
-                # Physical departure (including manually lifting Cozmo) is
-                # distinct from the MRR undock command. Reset its posture once.
-                self._set_departure_posture()
+                    and not self.undock_active and self.client is not None):
+                # Actual departure, including manually lifting Cozmo off.
+                # Assist still active means keep lift up for the approach.
+                if not self.dock_assist:
+                    self.head(0)
+                    self.set_dock_lift(False)
             self.cliff = data["cliff_detected"]
             self.picked_up = data["picked_up"]
             # Rich PyCozmo-derived values are best effort and must never
@@ -230,26 +233,61 @@ class Robot:
             self.moving = False
             self.commanded_wheels = (0, 0)
 
-    def _set_departure_posture(self):
-        """Apply the off-dock posture once per dock departure."""
-        if self._departure_posture_set:
-            return
-        self.head(0)
-        self.lift(0)
-        self._departure_posture_set = True
+    def set_dock_lift(self, up, *, force=False):
+        """One automatic lift rule: assist or dock means up, otherwise down.
+
+        The most recent automatic target only deduplicates commands.
+        Actual measured height can cause a paced retry via refresh_dock_lift.
+        """
+        with self.lock:
+            if self.client is None:
+                return False
+            target = 100 if up else 0
+            if not force and target == self._dock_lift_target:
+                return False
+            self.lift(target)
+            self._dock_lift_target = target
+            self._dock_lift_sent_at = time.monotonic()
+            return True
+
+    def refresh_dock_lift(self):
+        """Correct a missed lift-up command using measured physical height.
+
+        Only enforce UP while parked/assisting; free driving can still use
+        the lift slider. This is run outside the RobotState receive thread.
+        """
+        with self.lock:
+            if self.client is None or not self.ready or self.undock_active:
+                return False
+            if not (self.dock_assist or self.on_charger is True):
+                return False
+            if self.on_charger and self.moving:
+                return False  # manually leaving dock
+            now = time.monotonic()
+            if self._dock_lift_target != 100:
+                return self.set_dock_lift(True)
+            height = self.latest.get("lift_height_mm")
+            if (height is None or self.battery.stale(now) or height >= 85
+                    or now - self._dock_lift_sent_at < 2.0):
+                return False
+            return self.set_dock_lift(True, force=True)
 
     def drive(self, left, right):
         with self.lock:
-            if self.client is None: raise RuntimeError("Cozmo disconnected")
-            # Manual drive from the charger bypasses start_undock().
-            # A zero-speed heartbeat must not trigger a posture change.
+            if self.client is None:
+                raise RuntimeError("Cozmo disconnected")
+            if self.dock_assist:
+                left = max(-70, min(70, left))
+                right = max(-70, min(70, right))
+            # Manual movement from the dock counts as departure, even before
+            # a new packet reports the contacts clearing.
             if ((left or right) and self.on_charger is True
                     and not self.undock_active):
                 self._end_dock_assist(lower_lift=False)
-                self._set_departure_posture()
-            # Request a rapid hardware transition, not a software ramp.
-            # High acceleration is explicit; no command timeout is introduced.
-            self.client.drive_wheels(left, right, lwheel_acc=10000.0, rwheel_acc=10000.0)
+                self.head(0)
+                self.set_dock_lift(False)
+            self.client.drive_wheels(
+                left, right, lwheel_acc=10000.0, rwheel_acc=10000.0)
             self.moving = left != 0 or right != 0
             self.commanded_wheels = (left, right)
 
@@ -404,7 +442,7 @@ class Robot:
             self.light(False)
         if was_assisting and lower_lift:
             self.head(0)
-            self.lift(0)
+            self.set_dock_lift(False)
 
     def start_undock(self, command_id, backoff, completed):
         """Reset docking posture, then drive forward off charging contacts."""
@@ -417,7 +455,8 @@ class Robot:
             self.stop_drive()
             # The undocking posture applies even if the contact has already
             # cleared, including a no-backoff undock request.
-            self._set_departure_posture()
+            self.head(0)
+            self.set_dock_lift(False)
             if self.on_charger is not True:
                 self.docking_phase = None
                 self.on_state()
@@ -471,7 +510,7 @@ class Robot:
                     # down indefinitely.
                     if error and self.on_charger is True and self.client is not None:
                         try:
-                            self.lift(100)
+                            self.set_dock_lift(True)
                         except Exception:
                             LOG.exception("Could not restore lift after failed undock")
                 self.on_state()
@@ -503,7 +542,7 @@ class Robot:
             self.docking_phase = "assisting"
             self.stop_drive()
             self.head(-25)
-            self.lift(100)
+            self.set_dock_lift(True)
             if not self.headlight:
                 self.light(True)
                 self._dock_light_owned = True
@@ -875,7 +914,8 @@ class Robot:
             self._dock_light_owned = False
             self.headlight = False
             self._dock_contact_handled = False
-            self._departure_posture_set = False
+            self._dock_lift_target = None
+            self._dock_lift_sent_at = 0.0
             self._status_light_signature = None
             self._charger_factory_id = None
             self._charger_object_id = None
