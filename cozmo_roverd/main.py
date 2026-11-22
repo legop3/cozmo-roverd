@@ -228,6 +228,13 @@ class Bridge:
                 except Exception as exc:
                     LOG.warning("Face status refresh failed: %s", exc)
                 last_face_at = now
+            # LEDs use built-in hardware pulse patterns, not repeated network
+            # writes. A status change generates two packets at most.
+            try:
+                await asyncio.to_thread(self.robot.refresh_status_lights,
+                                        self.mrr_connected)
+            except Exception as exc:
+                LOG.warning("Status lights update failed: %s", exc)
             if last_telemetry_at >= 0 and now - last_telemetry_at < 1.0:
                 await asyncio.sleep(0.05)
                 continue
