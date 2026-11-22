@@ -581,3 +581,51 @@ def test_speech_never_sends_audio_when_firmware_produces_no_keyframes():
     assert controller._cozmo_audio_aborted
     assert len(controller.queue.audio_queue) == 0
     assert "one-utterance-frame" not in sent
+
+
+
+def test_pycozmo_sender_splits_large_audio_without_acknowledging_future_packets():
+    from types import SimpleNamespace as NS
+    from cozmo_roverd.robot import _fix_pycozmo_packet_batching
+    from pycozmo import protocol_encoder
+    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+
+    frames = []
+    class FakeSender:
+        def _send_frame(self, pkts, first_seq, last_seq, ack):
+            frames.append((tuple(pkts), first_seq, last_seq, ack))
+
+    sender = FakeSender()
+    _fix_pycozmo_packet_batching(NS(conn=NS(send_thread=sender)))
+    audio1 = protocol_encoder.OutputAudio(samples=[0] * 744)
+    audio2 = protocol_encoder.OutputAudio(samples=[0] * 744)
+    command = protocol_encoder.OutputSilence()
+    sender._send_packets(
+        [(41, audio1), (42, audio2), (43, command)], 17
+    )
+    assert len(frames) == 2
+    assert frames[0][0] == (audio1,)
+    assert frames[0][1:] == (41, 41, 17)
+    assert frames[1][0] == (audio2, command)
+    assert frames[1][1:] == (42, 43, 17)
+    assert all(sum(4 + len(pkt) for pkt in packets) < MAX_FRAME_PAYLOAD_SIZE
+               for packets, _, _, _ in frames)
+
+
+def test_pycozmo_sender_handles_exact_boundary_and_sequence_wrap():
+    from types import SimpleNamespace as NS
+    from cozmo_roverd.robot import _fix_pycozmo_packet_batching
+    from pycozmo import protocol_encoder
+    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+
+    frames = []
+    class FakeSender:
+        def _send_frame(self, pkts, first_seq, last_seq, ack):
+            frames.append((first_seq, last_seq, len(pkts)))
+
+    sender = FakeSender()
+    _fix_pycozmo_packet_batching(NS(conn=NS(send_thread=sender)))
+    pkt = protocol_encoder.OutputAudio(samples=[0] * 744)
+    sender._send_packets([(65533, pkt), (0, pkt)], 10)
+    assert frames == [(65533, 65533, 1), (0, 0, 1)]
+    assert 4 + len(pkt) < MAX_FRAME_PAYLOAD_SIZE
