@@ -373,7 +373,7 @@ class Bridge:
                     if transport:
                         expected = transport["next_ack_expected"]
                         pending = transport["pending_reliable_packets"]
-                        if pending < 12 or expected != previous_expected_seq:
+                        if pending == 0 or expected != previous_expected_seq:
                             stalled_ack_since = None
                         elif stalled_ack_since is None:
                             stalled_ack_since = now
