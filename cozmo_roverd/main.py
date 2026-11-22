@@ -17,6 +17,15 @@ from .wifi import Wifi
 
 LOG = logging.getLogger("cozmo-roverd")
 
+def _env_enabled(name):
+    """Only an explicit opt-in enables potentially disruptive LED packets.
+
+    Cozmo firmware 2381 has shown reliable-ACK stalls immediately after the
+    new automatic light commands. Keep core control and video independent.
+    """
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 class Bridge:
     def __init__(self, config):
         self.cfg = config
@@ -226,16 +235,18 @@ class Bridge:
                 except Exception as exc:
                     LOG.warning("Face status refresh failed: %s", exc)
                 last_face_at = now
-            # LEDs use built-in hardware pulse patterns, not repeated network
-            # writes. A status change generates two packets at most.
-            try:
-                await asyncio.to_thread(self.robot.refresh_status_lights,
-                                        self.mrr_connected)
-            except Exception as exc:
-                LOG.warning("Status lights update failed: %s", exc)
-            # The physical charging station is a separately connected Cozmo
-            # object; discover it lazily, and send LED updates only on changes.
-            if last_telemetry_at < 0 or now - last_telemetry_at >= 1.0:
+            # Isolate optional lighting from core Cozmo transport. Either
+            # feature can be tested individually after baseline stability is
+            # confirmed. Never send any LED commands unless opted in.
+            if _env_enabled("COZMO_BACKPACK_STATUS"):
+                try:
+                    await asyncio.to_thread(self.robot.refresh_status_lights,
+                                            self.mrr_connected)
+                except Exception as exc:
+                    LOG.warning("Status lights update failed: %s", exc)
+            if (_env_enabled("COZMO_CHARGER_STATUS")
+                    and (last_telemetry_at < 0
+                         or now - last_telemetry_at >= 1.0)):
                 try:
                     await asyncio.to_thread(self.robot.refresh_charger_lights)
                 except Exception as exc:
