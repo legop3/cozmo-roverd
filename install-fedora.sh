@@ -21,9 +21,12 @@ python3 -m venv /opt/cozmo-roverd/.venv
 /opt/cozmo-roverd/.venv/bin/pip install "$ROOT"
 if [[ ! -e /etc/cozmo-roverd.toml ]]; then
   install -m 0600 "$ROOT/config.example.toml" /etc/cozmo-roverd.toml
-  echo "Created /etc/cozmo-roverd.toml; edit the MRR URL, adapter, Cozmo SSID and password before starting."
+  echo "Created /etc/cozmo-roverd.toml; complete setup using http://127.0.0.1:8765"
 fi
 install -m 0644 "$ROOT/packaging/cozmo-roverd.service" /etc/systemd/system/cozmo-roverd.service
+install -m 0644 "$ROOT/packaging/cozmo-roverd-setup.service" /etc/systemd/system/cozmo-roverd-setup.service
 systemctl daemon-reload
-echo "Installed. Run: sudo /opt/cozmo-roverd/.venv/bin/cozmo-roverd --check"
-echo "Then: sudo systemctl enable --now cozmo-roverd"
+systemctl enable --now cozmo-roverd-setup.service
+echo "Installed! Open http://127.0.0.1:8765 on this Fedora computer."
+echo "For SSH-only hosts: ssh -L 8765:127.0.0.1:8765 user@fedora-host"
+echo "The web page scans Wi-Fi, saves settings, and starts the bridge."
