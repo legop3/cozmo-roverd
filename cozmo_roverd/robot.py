@@ -623,12 +623,7 @@ class Robot:
             battery = self.battery
             image = status_image(
                 voltage=battery.voltage,
-                percent=battery.percent,
-                charging=battery.charging,
-                docked=battery.docked,
-                cliff=self.cliff, picked_up=self.picked_up,
-                moving=self.moving, wheels=self.commanded_wheels,
-                last_tts=self.last_tts, audio_error=self.last_tts_error,
+                last_tts=self.last_tts,
                 scroll=self._face_scroll,
             )
             # Use the full-width dashboard whenever the encoded image fits
@@ -644,20 +639,17 @@ class Robot:
             encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 image = compact_status_image(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, last_tts=self.last_tts,
+                    voltage=battery.voltage, last_tts=self.last_tts,
                     scroll=self._face_scroll)
                 encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 image = compact_status_image(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, last_tts=self.last_tts,
+                    voltage=battery.voltage, last_tts=self.last_tts,
                     scroll=self._face_scroll, message_limit=8)
                 encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 image = compact_status_image(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, battery_only=True)
+                    voltage=battery.voltage, battery_only=True)
                 encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 self.face_last_error = (
