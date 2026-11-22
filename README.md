@@ -106,6 +106,17 @@ In addition to the existing command and playback counters, the isolated test rec
 
 MRR `tts` commands still update the **last message on Cozmo's face immediately**. If the request asks Cozmo to actually speak, the bridge returns an explicit unsupported-audio error rather than synthesizing a file, pausing video, transmitting speaker packets, or risking the robot. The `speak:false` option displays the message without an error. Camera streaming is no longer modified by TTS requests. Drive, servo and other controls are unaffected. The dashboard reports the disabled speaker status.
 
+## Temporary face transport isolation
+
+Hardware logs on November 22 showed fresh camera and RobotState packets but
+no progress on reliable outbound acknowledgments. Automatic `DisplayImage`
+and `OutputSilence` traffic is therefore disabled by default to isolate
+that suspect path and restore priority to motor commands. The face bitmap
+renderer and its explicit opt-in unit tests remain, but Cozmo's physical face
+will not receive dashboard updates in this safety build. The original
+in-video IMU and lift indicators are unchanged. This is an isolation step,
+not a proven root-cause fix.
+
 ## Face stability and diagnostics
 
 The face shows dynamically sized TTS text alongside a separated battery panel with raw measured voltage and an explicitly estimated charge bar. It renders directly at the native 128x32, 1-bit resolution. The Fedora installer supplies scalable DejaVu fonts so large text is readable even on headless systems; a built-in font is retained as a fallback. The previous 4x supersampled fallback could collapse the text into tiny dots. PyCozmo's encoded bitmap is decoded in-process to report lit pixel and occupied-column counts before the image is submitted.
