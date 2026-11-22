@@ -135,12 +135,15 @@ class VoltageFuelGauge:
                 self.soc = _approach(self.soc, target, elapsed, 100.0)
                 # Low-battery status requires sustained resting evidence, not
                 # a momentary motor-induced drop or a charging-voltage guess.
-                if target <= 15:
+                # Anki's documented Cozmo warning is below 3.5 V.
+                # Treat that as a rested-voltage warning threshold, not
+                # a universal cell cutoff or an arbitrary SOC percentage.
+                if self.rest_voltage < 3.50:
                     if self._rest_low_since is None:
                         self._rest_low_since = now
                     if now - self._rest_low_since >= 25.0:
                         self.low_confirmed = True
-                elif target >= 25:
+                elif self.rest_voltage >= 3.60:
                     self._rest_low_since = None
                     self.low_confirmed = False
         elif mode == "moving":
