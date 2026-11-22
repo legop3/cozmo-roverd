@@ -127,15 +127,30 @@ def _limit_animation_idle_traffic(cli):
         if (image_pkt is None and self.procedural_face_enabled
                 and not self.playing_animation and not self.image_displayed):
             image_pkt = self._get_face_image()
+        if audio_pkt is not None and image_pkt is not None and hasattr(q, "image_queue"):
+            # Do not combine a large TTS packet and display keyframe in the
+            # same animation tick. The screen is lower priority than speech
+            # or motion commands and may safely wait until playback finishes.
+            with q.lock:
+                q.image_queue.appendleft(image_pkt)
+            image_pkt = None
         if image_pkt is not None:
             self.last_image_pkt = image_pkt
             self.cli.conn.send(image_pkt)
             self._cozmo_image_refresh_at = time.monotonic()
-        elif (self.image_displayed
+        elif (self.image_displayed and not self.playing_audio and not audio_waiting
               and time.monotonic() - self._cozmo_image_refresh_at >= 10.0):
-            # Cozmo otherwise times out its display at around 30 seconds.
-            self.cli.conn.send(self.last_image_pkt)
-            self._cozmo_image_refresh_at = time.monotonic()
+            # A screen keepalive must not enter the reliable window during
+            # an ACK stall either: that was another backlog source.
+            can_send_image = True
+            if sender is not None:
+                with sender.lock:
+                    pending = ((sender.window.next_seq - sender.window.expected_seq)
+                               % sender.window.max_seq)
+                can_send_image = pending == 0 and sender.queue.empty()
+            if can_send_image:
+                self.cli.conn.send(self.last_image_pkt)
+                self._cozmo_image_refresh_at = time.monotonic()
         if pkts:
             for pkt in pkts:
                 self.cli.conn.send(pkt)
