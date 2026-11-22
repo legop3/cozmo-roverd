@@ -113,13 +113,10 @@ class Robot:
             data["packet_count"] = self.packets_received
             self.latest = data
             if self.dock_assist and self.on_charger:
-                self.stop_drive()
+                # The charger flag is an observation, not permission to
+                # override a driver command. End the assist status only.
                 self.dock_assist = False
                 self.docking_phase = None
-                try:
-                    self.head(10)
-                except Exception:
-                    LOG.exception("Could not reset head after dock contact")
             changed = old != (self.on_charger, self.charging, self.voltage,
                              self.cliff, self.picked_up)
             if changed:
