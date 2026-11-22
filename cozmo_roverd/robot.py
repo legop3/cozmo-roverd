@@ -124,7 +124,14 @@ def _limit_animation_idle_traffic(cli):
             # Keyframe handling, so the first audio packet could enter a
             # starved animation buffer and stall all following commands.
             keyframe_ready = True
-            if self._cozmo_keyframe_gating and audio_waiting:
+            # Cozmo sends Keyframe as acknowledgement of an animation
+            # tick, not as an unsolicited "ready" signal. The earlier
+            # implementation waited for a Keyframe *before the first*
+            # OutputAudio, deadlocking speech at startup. Permit exactly
+            # the first frame after an empty send window; require a fresh
+            # Keyframe for subsequent speech frames.
+            if (self._cozmo_keyframe_gating and audio_waiting
+                    and self._cozmo_audio_frames_submitted > 0):
                 keyframe_ready = (
                     self._cozmo_keyframes_received > self._cozmo_keyframe_consumed
                     and time.monotonic() - self._cozmo_last_keyframe_at <= 1.0)
@@ -134,13 +141,9 @@ def _limit_animation_idle_traffic(cli):
                 if self._cozmo_audio_blocked_at is None:
                     self._cozmo_audio_blocked_at = now
                 if now - self._cozmo_audio_blocked_at < 2.0:
-                    # While waiting for the *first* firmware keyframe,
-                    # keep the animation clock ticking sparsely. Otherwise
-                    # an idle/stopped clock would never produce a new frame.
-                    if (not self.playing_audio and pending == 0 and backlog == 0
-                            and now - self._cozmo_last_idle_silence_at >= 0.2):
-                        self.cli.conn.send(protocol_encoder.OutputSilence())
-                        self._cozmo_last_idle_silence_at = now
+                    # Avoid extra "startup" silence packets during a
+                    # speech stall: they also consume reliable sequence
+                    # numbers and previously froze motor commands.
                     return
                 # Audio is optional. Abort a stalled utterance instead of
                 # letting its backlog block motor commands indefinitely.
@@ -708,6 +711,8 @@ class Robot:
                 controller._cozmo_audio_blocked_at = None
                 controller._cozmo_audio_frames_submitted = 0
                 controller._cozmo_audio_backpressure_ticks = 0
+                # Preserve the last display contents, but don't enqueue
+                # another face frame merely because TTS was requested.
                 controller._cozmo_audio_played_baseline = getattr(
                     controller, "num_audio_frames_played", None)
                 controller._cozmo_keyframe_consumed = controller._cozmo_keyframes_received
