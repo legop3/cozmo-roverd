@@ -20,6 +20,7 @@ class Bridge:
     def __init__(self, config):
         self.cfg = config
         self.stop_event = asyncio.Event()
+        self.hardware_ready = asyncio.Event()
         self.outbox = asyncio.Queue(maxsize=64)
         self.loop = asyncio.get_running_loop()
         self.wifi = Wifi(config)
@@ -98,6 +99,8 @@ class Bridge:
 
     async def _receive(self, ws):
         async for raw in ws:
+            if not self.hardware_ready.is_set():
+                return
             try:
                 msg = json.loads(raw)
                 if not isinstance(msg, dict) or not isinstance(msg.get("id"), str):
@@ -113,8 +116,14 @@ class Bridge:
             except (ValueError, TypeError) as exc:
                 LOG.warning("Ignoring invalid server message: %s", exc)
 
+    async def _wait_hardware_lost(self):
+        while self.hardware_ready.is_set() and not self.stop_event.is_set():
+            await asyncio.sleep(0.2)
+
     async def _mrr(self):
         while not self.stop_event.is_set():
+            await self.hardware_ready.wait()
+            if self.stop_event.is_set(): break
             try:
                 async with websockets.connect(self.cfg.server_url, ping_interval=15,
                                               ping_timeout=8, max_size=1048576) as ws:
@@ -130,7 +139,8 @@ class Bridge:
                     LOG.info("Registered rover %s with %s", self.cfg.name, self.cfg.server_url)
                     sender = asyncio.create_task(self._send(ws))
                     receiver = asyncio.create_task(self._receive(ws))
-                    done, pending = await asyncio.wait([sender, receiver], return_when=asyncio.FIRST_COMPLETED)
+                    health = asyncio.create_task(self._wait_hardware_lost())
+                    done, pending = await asyncio.wait([sender, receiver, health], return_when=asyncio.FIRST_COMPLETED)
                     for task in pending: task.cancel()
                     for task in done: task.result()
             except asyncio.CancelledError:
@@ -149,6 +159,7 @@ class Bridge:
                 await asyncio.to_thread(self.wifi.wait)
                 await asyncio.to_thread(self.robot.connect)
                 LOG.info("Cozmo hardware ready")
+                self.hardware_ready.set()
                 while not self.stop_event.is_set():
                     if not self.wifi.active() or not self.robot.is_healthy():
                         raise RuntimeError("Cozmo Wi-Fi or state stream lost")
@@ -159,6 +170,8 @@ class Bridge:
             except Exception as exc:
                 LOG.warning("Cozmo hardware unavailable: %s", exc)
             finally:
+                self.hardware_ready.clear()
+                self.robot.stop_drive()
                 await asyncio.to_thread(self.robot.close)
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=3)
