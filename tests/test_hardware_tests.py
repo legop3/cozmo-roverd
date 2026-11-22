@@ -109,3 +109,47 @@ def test_default_suite_contains_actual_audio_animation_and_light_controls():
     assert hardware_tests.DEFAULT_SUITE == (
         "baseline-camera", "baseline-animation-camera",
         "backpack-side-camera", "audio-idle", "audio-camera")
+
+
+def test_terminal_report_contains_actual_timeline_and_recent_wire_commands(tmp_path, capsys):
+    import json
+    entries = [
+        {"utc": "2026-11-22T17:05:13+00:00", "event": "command_issued",
+         "action": "stock audio", "transport": {
+            "next_ack_expected": 131, "pending_reliable_packets": 5,
+            "queued_app_commands": 0, "outgoing_packets": 142,
+            "received_frames": 140, "audio_frames_reported_played": 55}},
+        {"utc": "2026-11-22T17:05:14+00:00", "event": "sample",
+         "transport": {"next_ack_expected": 136, "pending_reliable_packets": 5,
+                       "queued_app_commands": 2, "outgoing_packets": 150,
+                       "sent_packets_including_retries": 165,
+                       "received_frames": 180, "received_packets": 700,
+                       "audio_frames_reported_played": 60}},
+        {"utc": "2026-11-22T17:05:18+00:00", "event": "stalled",
+         "transport": {"next_ack_expected": 136, "pending_reliable_packets": 62,
+                       "queued_app_commands": 202, "outgoing_packets": 206,
+                       "sent_packets_including_retries": 206,
+                       "received_frames": 333, "received_packets": 1035,
+                       "audio_frames_reported_played": 62}},
+        {"utc": "2026-11-22T17:05:18+00:00", "event": "sample",
+         "transport": {"next_ack_expected": 136, "pending_reliable_packets": 62,
+                       "queued_app_commands": 202, "outgoing_packets": 206,
+                       "sent_packets_including_retries": 206,
+                       "received_frames": 333, "received_packets": 1035,
+                       "audio_frames_reported_played": 62}},
+    ]
+    (tmp_path / "measurements.jsonl").write_text(
+        "".join(json.dumps(x) + "\n" for x in entries))
+    (tmp_path / "incidents.jsonl").write_text(json.dumps({
+        "event": "disconnection_snapshot", "recent_protocol_packets": [
+            {"direction": "tx", "packet": "OutputAudio",
+             "bytes": 744, "id": 15, "utc": "2026-11-22T17:05:18Z"}]}) + "\n")
+    result = hardware_tests._summarize(tmp_path, 3)
+    hardware_tests._print_summary("audio-camera", result, tmp_path)
+    report = capsys.readouterr().out
+    assert "ACK=  136" in report
+    assert "pending= 62/62" in report
+    assert "queue=  202" in report
+    assert "OutputAudio" in report
+    assert "audio=  62" in report
+    assert "Last 20 queued-to-send packet types" in report
