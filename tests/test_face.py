@@ -524,3 +524,21 @@ def test_speech_aborts_when_first_audio_is_acked_but_no_keyframe_arrives():
     assert controller._cozmo_audio_aborted
     assert list(controller.queue.audio_queue) == []
     assert sent == ["first"]
+
+
+def test_operator_face_gives_latest_tts_a_full_width_readable_row():
+    image = status_image(voltage=3.98, percent=81,
+                         charging=True, last_tts="HELLO WORLD")
+    empty = status_image(voltage=3.98, percent=81,
+                         charging=True, last_tts="")
+    # The message occupies the prominent bottom row, not a 6px
+    # clipped footer. Battery voltage and gauge occupy the top band.
+    assert image.crop((2, 21, 127, 32)).getbbox() is not None
+    assert image.crop((2, 21, 127, 32)).tobytes() != (
+        empty.crop((2, 21, 127, 32)).tobytes())
+    assert image.crop((3, 0, 128, 12)).getbbox() is not None
+    # Long messages should scroll without changing top-row battery data.
+    long0 = status_image(voltage=3.98, percent=81, last_tts="A VERY LONG MESSAGE ACROSS COZMO DISPLAY", scroll=0)
+    long1 = status_image(voltage=3.98, percent=81, last_tts="A VERY LONG MESSAGE ACROSS COZMO DISPLAY", scroll=5)
+    assert long0.crop((0, 21, 128, 32)).tobytes() != long1.crop((0, 21, 128, 32)).tobytes()
+    assert long0.crop((0, 0, 128, 21)).tobytes() == long1.crop((0, 0, 128, 21)).tobytes()
