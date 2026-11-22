@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1018">
+  <title>Cozmo RoverD — Setup</title>
+  <style>
+    :root {color-scheme:dark;--bg:#0b1018;--surface:#121b27;--panel:#162231;--line:#2b3d4f;--text:#f3f6fa;--muted:#a4b3c2;--blue:#60a5fa;--aqua:#69e1c2;--red:#fb7d88;--amber:#ffd18b}
+    * {box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;background:radial-gradient(ellipse at 85% 0,#1b3653 0,transparent 35%),var(--bg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);min-height:100vh}
+    button,input,select {font:inherit} button{cursor:pointer} button:disabled,input:disabled,select:disabled{opacity:.48;cursor:not-allowed}
+    a{color:var(--blue)} .layout{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:100vh;max-width:1550px;margin:auto}
+    aside{position:sticky;top:0;align-self:start;height:100vh;background:#101824d9;border-right:1px solid var(--line);padding:32px 22px;display:flex;flex-direction:column;gap:34px}
+    .brand{display:flex;align-items:center;gap:13px;font-weight:800;letter-spacing:-.5px;font-size:21px}.mark{display:grid;place-items:center;width:45px;height:45px;border-radius:15px;background:#204766;color:var(--aqua);font-size:26px;box-shadow:inset 0 0 0 1px #51778d}
+    .brand small{display:block;font-weight:500;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--muted)}
+    nav{display:grid;gap:7px}nav button{text-align:left;border:0;border-radius:10px;color:var(--muted);background:transparent;padding:12px 13px;display:flex;align-items:center;gap:12px}nav button:hover,nav button.active{background:#23384b;color:var(--text)}.num{width:24px;height:24px;border:1px solid #536678;border-radius:50%;display:inline-grid;place-items:center;font-size:12px}
+    .side-note{margin-top:auto;color:var(--muted);font-size:12px;line-height:1.8}.side-note b{color:var(--aqua)}
+    main{padding:44px clamp(24px,6vw,88px) 100px;max-width:1100px;width:100%;margin:auto}
+    h1,h2,h3,p{margin:0} h1{font-size:clamp(30px,4vw,45px);letter-spacing:-1.4px;line-height:1.2} h2{font-size:21px;letter-spacing:-.5px} h3{font-size:16px}
+    .eyebrow{color:var(--aqua);text-transform:uppercase;font-size:11px;font-weight:800;letter-spacing:2.1px;margin-bottom:12px}
+    .sub{color:var(--muted);font-size:15px;margin-top:13px;max-width:690px}
+    .hero{margin-bottom:26px} .summary{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:22px 0 36px}
+    .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:100px;padding:7px 12px;font-size:12px;color:var(--muted);background:#121f2d}
+    .dot{width:8px;height:8px;border-radius:50%;background:#8ea3b6;box-shadow:0 0 0 3px #8ea3b61a}.dot.ok{background:var(--aqua)}.dot.warn{background:var(--amber)}.dot.bad{background:var(--red)}
+    section{background:linear-gradient(120deg,#172435,#111c2a);border:1px solid var(--line);border-radius:18px;margin:19px 0;padding:27px}
+    .section-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:26px}.section-number{width:35px;height:35px;flex:0 0 35px;display:grid;place-items:center;color:var(--aqua);background:#1a3d46;border:1px solid #34676c;border-radius:12px;font-weight:800}.section-head p{color:var(--muted);margin-top:4px;font-size:13px}
+    label{display:block;font-size:13px;font-weight:650;margin-bottom:8px}.hint{color:var(--muted);font-size:12px;margin:8px 0 0}
+    input,select{display:block;width:100%;border:1px solid #3d5267;border-radius:10px;padding:12px 14px;background:#0d1825;color:var(--text);outline:none;min-height:46px}
+    input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+    input::placeholder{color:#7790a5}
+    select{appearance:none;padding-right:40px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%239badc0' stroke-width='2'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 16px center}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.field{min-width:0}.field.wide{grid-column:1/-1}
+    .heading-row{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:0 0 13px}
+    .btn{border:1px solid #496078;background:#1e3042;color:#eaf4fe;border-radius:10px;padding:11px 17px;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:700;transition:background .15s}
+    .btn:hover{background:#29435c}.btn.primary{background:#3b91ee;border-color:#3b91ee;color:#071727}.btn.primary:hover{background:#6ab0ff}.btn.ghost{background:transparent}.btn.danger{border-color:#865052;color:#ffb3ba}.btn.sm{padding:7px 13px;font-size:12px}
+    .stack{display:grid;gap:10px}.network{display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:12px;padding:13px 15px;background:#101c29;color:var(--text);width:100%;text-align:left;gap:10px}
+    .network:hover{border-color:var(--blue)}.network.selected{border-color:var(--aqua);background:#17343d}.network span{font-size:12px;color:var(--muted)}
+    .empty{border:1px dashed #3c5165;border-radius:12px;padding:20px;text-align:center;color:var(--muted);font-size:13px}
+    .network-list{display:grid;gap:8px;max-height:275px;overflow:auto}
+    .password{display:flex;gap:9px}.password input{flex:1;min-width:0}
+    .notice{margin:18px 0 0;padding:13px 14px;border-radius:10px;border:1px solid #3f5b67;background:#18313d;color:#d5e9ef;font-size:13px}
+    .notice.warn{background:#3e3024;border-color:#71553d;color:#ffe0aa}
+    .switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border:1px solid var(--line);background:#101a27;border-radius:12px}.switch-row input{width:22px;height:22px;min-height:auto;accent-color:var(--aqua)}
+    .colors{display:flex;flex-wrap:wrap;gap:9px}.color{width:35px;height:35px;border-radius:11px;border:3px solid transparent;box-shadow:inset 0 0 0 1px #ffffff3b}.color.selected{outline:2px solid white;outline-offset:2px}
+    details{border-top:1px solid var(--line);margin-top:25px;padding-top:18px}summary{cursor:pointer;font-weight:750;color:#dce7f2}
+    .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:25px}
+    .footer-action{position:sticky;bottom:12px;z-index:3;background:#172637f5;backdrop-filter:blur(20px);border:1px solid #476279;border-radius:14px;box-shadow:0 20px 50px #0008;display:flex;gap:14px;justify-content:space-between;align-items:center;padding:14px 17px;margin-top:25px}
+    .footer-action .muted{font-size:12px}.footer-action strong{font-size:13px}
+    .muted{color:var(--muted)}.log{white-space:pre-wrap;overflow:auto;max-height:220px;background:#0a121b;color:#b9d6e6;padding:16px;font:12px/1.7 ui-monospace,monospace;border-radius:10px;border:1px solid var(--line)}
+    .toast{position:fixed;z-index:10;bottom:25px;right:25px;max-width:min(500px,calc(100vw - 40px));padding:15px 20px;border-radius:12px;background:#224a3c;border:1px solid #65b999;box-shadow:0 10px 35px #0008;color:white;display:none}
+    .toast.error{background:#51262b;border-color:var(--red)}.toast.show{display:block}.spinner{display:inline-block;width:15px;height:15px;border:2px solid #ffffff40;border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+    @media(max-width:930px){.layout{grid-template-columns:1fr}aside{position:relative;width:100%;height:auto;padding:14px 20px;gap:16px}nav{display:flex;flex-wrap:wrap}.side-note{display:none}main{padding:28px 20px 85px}}
+    @media(max-width:580px){.grid{grid-template-columns:1fr}.field.wide{grid-column:auto}section{padding:20px 17px}h1{font-size:30px}.footer-action{flex-direction:column;align-items:stretch}.footer-action button{width:100%}.summary{margin:18px 0 24px}}
+  </style>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand"><div class="mark" aria-hidden="true">◉</div><div>Cozmo RoverD<small>Setup Console</small></div></div>
+    <nav aria-label="Setup sections">
+      <button type="button" data-nav="adapter" class="active"><span class="num">1</span> Wi-Fi adapter</button>
+      <button type="button" data-nav="cozmo"><span class="num">2</span> Connect Cozmo</button>
+      <button type="button" data-nav="server"><span class="num">3</span> MRR server</button>
+      <button type="button" data-nav="options"><span class="num">4</span> Rover settings</button>
+      <button type="button" data-nav="monitor"><span class="num">✓</span> Status &amp; diagnostics</button>
+    </nav>
+    <div class="side-note">A standalone bridge to <b>MultiRoombaRover</b>.<br>Setup stays available even when your robot is offline.<br>Local access only · Fedora Linux</div>
+  </aside>
+  <main>
+    <header class="hero">
+      <div class="eyebrow">Your robot, on your server</div>
+      <h1>Get Cozmo rolling.</h1>
+      <p class="sub">Connect your robot’s Wi-Fi, pick an MRR server, and give Cozmo a name. No terminal commands or hand-editing configuration files required after installation.</p>
+    </header>
+    <div class="summary" aria-live="polite">
+      <span class="pill"><span class="dot" id="status-dot"></span> <span id="status-text">Checking bridge…</span></span>
+      <span class="pill" id="adapter-pill">Wi-Fi: checking…</span>
+      <span class="pill" id="setup-pill">Setup: checking…</span>
+    </div>
+    <section id="adapter">
+      <div class="section-head"><span class="section-number">1</span><div><h2>Choose a Wi-Fi adapter</h2><p>This adapter will be dedicated to Cozmo. Your normal internet/MRR connection stays untouched.</p></div></div>
+      <div class="field">
+        <label for="adapter-select">Dedicated Wi-Fi interface</label>
+        <div class="grid" style="grid-template-columns:minmax(0,1fr) auto;align-items:end">
+          <select id="adapter-select"><option value="">Finding adapters…</option></select>
+          <button class="btn" id="refresh-adapters" type="button">↻ Refresh</button>
+        </div>
+        <p class="hint">Adapters carrying the computer's default network route are protected and cannot be selected.</p>
+      </div>
+      <div id="adapter-warning" class="notice warn" hidden></div>
+    </section>
+    <section id="cozmo">
+      <div class="section-head"><span class="section-number">2</span><div><h2>Find Cozmo</h2><p>Put Cozmo in Wi-Fi connection mode so its network and password appear on the robot's screen.</p></div></div>
+      <div class="heading-row"><label style="margin:0">Nearby Wi-Fi networks</label><button class="btn sm" type="button" id="scan">⌁ Scan networks</button></div>
+      <div class="network-list" id="networks"><div class="empty">Select an adapter, then scan. Cozmo networks will appear first.</div></div>
+      <div class="grid" style="margin-top:18px">
+        <div class="field"><label for="ssid">Selected Wi-Fi network</label><input id="ssid" autocomplete="off" placeholder="Select from scan, or type SSID"></div>
+        <div class="field"><label for="password">Cozmo Wi-Fi password</label>
+          <div class="password"><input id="password" type="password" autocomplete="new-password" placeholder="Password shown on Cozmo"><button type="button" class="btn sm" id="reveal" aria-label="Show password">Show</button></div>
+          <p class="hint" id="password-hint">The password is stored only on this computer.</p>
+        </div>
+      </div>
+      <div class="notice">Cozmo's Wi-Fi usually has no internet access. That's expected: MRR stays connected over your computer's other network connection.</div>
+    </section>
+    <section id="server">
+      <div class="section-head"><span class="section-number">3</span><div><h2>Connect to MRR</h2><p>Enter your existing MultiRoombaRover server. Cozmo will appear in its rover list.</p></div></div>
+      <div class="grid">
+        <div class="field wide"><label for="server-url">MRR rover WebSocket address</label><input id="server-url" inputmode="url" spellcheck="false" placeholder="ws://192.168.1.100:8080/rover"><p class="hint">Use ws:// or wss:// and include /rover. Use the hostname or IP your Fedora computer can reach.</p></div>
+        <div class="field wide"><button type="button" class="btn" id="test-server">Test server connection</button><span id="probe-result" class="hint" role="status" style="margin-left:12px"></span></div>
+      </div>
+    </section>
+    <section id="options">
+      <div class="section-head"><span class="section-number">4</span><div><h2>Customize the rover</h2><p>Good defaults are selected already. Change anything you like.</p></div></div>
+      <div class="grid">
+        <div class="field"><label for="rover-name">Rover name</label><input id="rover-name" maxlength="48" placeholder="cozmo"></div>
+        <div class="field"><label for="description">Description</label><input id="description" maxlength="100" placeholder="Cozmo"></div>
+        <div class="field wide"><label>Rover color</label><div class="colors" id="color-choices" role="group" aria-label="Rover color"></div></div>
+        <div class="field"><label for="speed">Max driving speed</label><select id="speed"></select></div>
+        <div class="field"><label for="watchdog">Stop if commands stop arriving</label><select id="watchdog"></select></div>
+        <div class="field wide"><div class="switch-row"><div><strong>Live camera</strong><p class="hint">Stream Cozmo's camera to MRR over H.264 RTSP.</p></div><input type="checkbox" id="video" checked aria-label="Enable live camera"></div></div>
+        <div class="field"><label for="fps">Camera frame rate</label><select id="fps"></select></div>
+      </div>
+      <details><summary>Advanced video settings</summary><div class="field" style="margin-top:16px"><label for="rtsp-url">Custom RTSP publish URL (optional)</label><input id="rtsp-url" spellcheck="false" placeholder="Auto: rtsp://MRR-HOST:8554/cozmo"><p class="hint">Leave blank to use your MRR server hostname and default RTSP port 8554.</p></div></details>
+    </section>
+    <section id="monitor">
+      <div class="section-head"><span class="section-number">✓</span><div><h2>Bridge status</h2><p>Live service state and recent diagnostic output.</p></div></div>
+      <div class="heading-row"><h3 id="service-label">Checking service…</h3><button class="btn sm" type="button" id="refresh-status">↻ Refresh</button></div>
+      <div class="actions"><button id="start-service" class="btn" type="button">Start bridge</button><button id="stop-service" class="btn danger" type="button">Stop bridge</button></div>
+      <label style="margin-top:24px" for="logs">Recent service logs</label><div class="log" id="logs" role="log" aria-live="off">Loading logs…</div>
+    </section>
+    <div class="footer-action">
+      <div><strong id="save-title">Ready when you are</strong><div class="muted" id="save-subtitle">Save configuration and restart the bridge automatically.</div></div>
+      <button type="button" class="btn primary" id="save">Save &amp; connect Cozmo</button>
+    </div>
+  </main>
+</div>
+<div role="status" id="toast" class="toast"></div>
+</body>
+</html>
