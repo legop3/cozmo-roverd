@@ -340,3 +340,23 @@ def test_headless_fedora_without_any_truetype_fonts_still_draws_readable_face(mo
         image.crop((x, 0, x + 1, 32)).getbbox() is not None
         for x in range(128))
     assert occupied_columns >= 25
+
+
+def test_interlaced_oled_status_has_two_compact_separated_lines():
+    """Protocol rows are physically doubled on Cozmo's interlaced OLED."""
+    image = status_image(voltage=3.91, last_tts="HELLO COZMO")
+    assert image.size == (128, 32)
+    # Keep a blank gap rather than using tall glyphs across the two fields.
+    assert image.crop((0, 14, 128, 17)).getbbox() is None
+    top = image.crop((0, 0, 128, 14)).getbbox()
+    bottom = image.crop((0, 17, 128, 32)).getbbox()
+    assert top is not None and bottom is not None
+    # Max ten logical rows of actual ink: at most 20 physical OLED rows.
+    assert top[3] - top[1] <= 10
+    assert bottom[3] - bottom[1] <= 10
+    # Both logical row parities must carry artwork. Do not discard every
+    # second protocol row; pycozmo/firmware handle physical interlacing.
+    assert any(image.crop((0, y, 128, y + 1)).getbbox() is not None
+               for y in range(0, 32, 2))
+    assert any(image.crop((0, y, 128, y + 1)).getbbox() is not None
+               for y in range(1, 32, 2))
