@@ -40,7 +40,7 @@ class Robot:
                             lambda _client, value: self._picked_up(bool(value)))
             cli.add_handler(pycozmo.event.EvtRobotStateUpdated,
                             lambda _client: self._sample(cli))
-            cli.enable_camera(enable=True, color=True)
+            cli.enable_camera(enable=True, color=False)
             with self.lock:
                 self.client = cli
                 self.last_sensor = time.monotonic()
