@@ -24,15 +24,32 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
         ]}],
     }
 
+def battery_percent(voltage):
+    """Approximate single-cell LiPo charge; voltage is not a fuel gauge."""
+    if voltage is None or not math.isfinite(voltage) or voltage < 2.5 or voltage > 4.5:
+        return None
+    points = [(3.3, 0), (3.55, 5), (3.7, 20), (3.8, 40),
+              (3.9, 60), (4.0, 80), (4.1, 95), (4.2, 100)]
+    if voltage <= points[0][0]:
+        return 0
+    for (lo, a), (hi, b) in zip(points, points[1:]):
+        if voltage <= hi:
+            return round(a + (voltage - lo) * (b - a) / (hi - lo))
+    return 100
+
+
 def state(*, charging=None, docked=None, voltage=None, headlight=False) -> dict:
+    percent = battery_percent(voltage)
     return {
         "type": "roverState", "state": {
             "drivingMode": True, "dockAssist": None, "docking": None,
             "docked": docked,
             "dockingStatus": {"phase": "unknown", "movementLocked": False,
                               "cameraLocked": False, "error": None},
-            "battery": {"percent": None, "charging": charging,
-                        "low": None, "critical": None, "needsCharge": None},
+            "battery": {"percent": percent, "charging": charging,
+                        "low": percent <= 15 if percent is not None else None,
+                        "critical": percent <= 5 if percent is not None else None,
+                        "needsCharge": percent <= 15 if percent is not None else None},
             "headlightOn": headlight, "laserOn": None
         }
     }
