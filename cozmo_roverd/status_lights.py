@@ -1,8 +1,8 @@
 """Cozmo backpack status LED states.
 
 The two side LEDs show the independent PyCozmo and MRR connections.
-The three center LEDs indicate docking/charging; the charger base itself
-does not expose a controllable light through the Cozmo protocol.
+The three center LEDs indicate docking/charging. The actual charger base
+also has four addressable lights via ObjectConnect, CubeId and CubeLights.
 Patterns use firmware-timed LightState frames, not an asyncio blink loop.
 """
 from __future__ import annotations
@@ -47,4 +47,45 @@ def light_signature(*, robot_online, mrr_online, docked, charging, docking):
     """Only change LEDs when their *meaningful* status changes."""
     return (bool(robot_online), bool(mrr_online),
             docked is True, charging if docked is True else None,
+            bool(docking) if docked is not True else False)
+
+
+def charger_lights(*, docked: bool | None, charging: bool | None,
+                   docking: bool = False):
+    """Four dock LEDs, following pycozmo/examples/charger_lights.py.
+
+    The fourth slot is left off, matching the official example. A steady
+    green means docked but not actively charging; amber breathes while
+    charging; purple guides docking. Undocked means completely dark.
+    """
+    from pycozmo import lights
+    from pycozmo.protocol_encoder import LightState
+
+    def make(rgb, dim=None):
+        on = lights.Color(rgb=rgb).to_int16()
+        if dim is None:
+            return LightState(on_color=on, off_color=on)
+        return LightState(
+            on_color=on,
+            off_color=lights.Color(rgb=dim).to_int16(),
+            on_frames=26, off_frames=26,
+            transition_on_frames=9, transition_off_frames=9,
+        )
+
+    if docked is True and charging is True:
+        led = make((255, 160, 0), (18, 8, 0))
+    elif docked is True and charging is False:
+        led = make((0, 210, 65))
+    elif docked is True:
+        led = make((0, 175, 235), (0, 12, 18))
+    elif docking:
+        led = make((145, 55, 255), (8, 0, 12))
+    else:
+        led = lights.off_light
+    return (led, led, led, lights.off_light)
+
+
+def charger_signature(*, docked, charging, docking):
+    """Deduplicate charger commands without conflating unknown charge state."""
+    return (docked is True, charging if docked is True else None,
             bool(docking) if docked is not True else False)
