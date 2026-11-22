@@ -1,4 +1,4 @@
-"""Persistent, bounded Cozmo incident records and passive PyCozmo protocol trace.
+"""Append-only Cozmo incidents and a bounded passive PyCozmo protocol trace.
 
 No changes to PyCozmo methods, robot packets, or connection timing. The
 protocol filter strips payloads before formatting the upstream 'Sent/Got'
@@ -118,9 +118,11 @@ class Recorder:
             datefmt="%Y-%m-%dT%H:%M:%S"))
         self._listener = QueueListener(self._queue, self._trace_output,
                                        respect_handler_level=True)
-        self._incident_output = RotatingFileHandler(
-            self.incidents_path, maxBytes=2 * 1024 * 1024,
-            backupCount=9, encoding="utf-8")
+        # Disconnect evidence is append-only: never discard older incidents.
+        # Only the high-volume packet trace rotates. Existing .1..9 archives
+        # from the previous incident rotation remain untouched.
+        self._incident_output = logging.FileHandler(
+            self.incidents_path, mode="a", encoding="utf-8")
         self._incident_output.setFormatter(logging.Formatter("%(message)s"))
         self._incident_logger = logging.getLogger("cozmo-roverd.incident-file")
         self._incident_logger.addHandler(self._incident_output)
@@ -128,6 +130,9 @@ class Recorder:
         self._incident_logger.setLevel(logging.INFO)
         self._protocol_logger = logging.getLogger("pycozmo.protocol")
         self._original_level = self._protocol_logger.level
+        self._original_propagate = self._protocol_logger.propagate
+        # Packet trace is written only to its rotating file, not journald.
+        self._protocol_logger.propagate = False
         self._protocol_logger.setLevel(logging.DEBUG)
         self._protocol_logger.addHandler(self._trace_handler)
         self._listener.start()
