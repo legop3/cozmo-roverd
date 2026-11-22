@@ -234,10 +234,10 @@ class Bridge:
                 except Exception as exc:
                     LOG.warning("Face status refresh failed: %s", exc)
                 last_face_at = now
-            # The simple side LEDs are on by default: just ONE LightStateSide
-            # packet on connect or MRR status change, with no animation.
-            # Keep charger discovery/animation off pending isolated testing.
-            if _env_enabled("COZMO_BACKPACK_STATUS", default=True):
+            # Both LED paths are opt-in. Hardware testing confirmed even a
+            # single LightStateSide packet can trigger a reliable-ACK stall
+            # on this robot; never jeopardize motor/camera connectivity.
+            if _env_enabled("COZMO_BACKPACK_STATUS"):
                 try:
                     await asyncio.to_thread(self.robot.refresh_status_lights,
                                             self.mrr_connected)
