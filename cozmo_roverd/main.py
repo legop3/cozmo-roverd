@@ -129,7 +129,7 @@ class Bridge:
                                               ping_timeout=8, max_size=1048576) as ws:
                     await ws.send(json.dumps(hello(
                         self.cfg.name, self.cfg.description, self.cfg.color,
-                        self.cfg.max_speed, self.cfg.video)))
+                        self.cfg.max_speed, self.cfg.video, self.cfg.private)))
                     await ws.send(json.dumps(state(
                         charging=self.robot.charging, headlight=self.robot.headlight)))
                     self.publish_sensor()
