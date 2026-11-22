@@ -235,6 +235,13 @@ class Bridge:
                                         self.mrr_connected)
             except Exception as exc:
                 LOG.warning("Status lights update failed: %s", exc)
+            # The physical charging station is a separately connected Cozmo
+            # object; discover it lazily, and send LED updates only on changes.
+            if last_telemetry_at < 0 or now - last_telemetry_at >= 1.0:
+                try:
+                    await asyncio.to_thread(self.robot.refresh_charger_lights)
+                except Exception as exc:
+                    LOG.warning("Charger lights update failed: %s", exc)
             if last_telemetry_at >= 0 and now - last_telemetry_at < 1.0:
                 await asyncio.sleep(0.05)
                 continue
