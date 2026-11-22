@@ -106,6 +106,19 @@ In addition to the existing command and playback counters, the isolated test rec
 
 MRR `tts` commands still update the **last message on Cozmo's face immediately**. If the request asks Cozmo to actually speak, the bridge returns an explicit unsupported-audio error rather than synthesizing a file, pausing video, transmitting speaker packets, or risking the robot. The `speak:false` option displays the message without an error. Camera streaming is no longer modified by TTS requests. Drive, servo and other controls are unaffected. The dashboard reports the disabled speaker status.
 
+## MRR presence after a Cozmo hardware outage
+
+Cozmo stays listed on MRR for **10 minutes** after the robot hardware
+connection fails, while the bridge keeps retrying PyCozmo independently.
+During this grace period, the RTSP reconnecting slate displays
+`MRR OFFLINE IN MM:SS`. If the robot reconnects, the countdown disappears
+and resets completely. If it remains disconnected for 10 uninterrupted
+minutes, the bridge closes only its MRR WebSocket so the rover goes offline
+in the server's normal presence system. The bridge and RTSP worker keep
+running, and MRR registration resumes automatically when Cozmo reconnects.
+The 10-minute timer also applies on bridge startup when no robot is available.
+No MRR server changes are necessary.
+
 ## Temporary face transport isolation
 
 Hardware logs on November 22 showed fresh camera and RobotState packets but
