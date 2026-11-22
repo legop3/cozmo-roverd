@@ -31,6 +31,8 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_audio_blocked_at = None
     controller._cozmo_audio_aborted = False
     controller._cozmo_audio_backpressure_ticks = 0
+    controller._cozmo_audio_frames_submitted = 0
+    controller._cozmo_last_idle_silence_at = 0.0
 
     def run_frame(self):
         # Cozmo's Wi-Fi replies are still arriving when TTS freezes
@@ -82,11 +84,24 @@ def _limit_animation_idle_traffic(cli):
             return
         if audio_pkt is not None:
             self.cli.conn.send(audio_pkt)
+            self._cozmo_audio_frames_submitted += 1
             self.playing_audio = True
         elif self.playing_audio:
             self.playing_audio = False
             self.cli.conn.send(protocol_encoder.OutputSilence())
+            self._cozmo_last_idle_silence_at = time.monotonic()
             self.cli.conn.post_event(event.EvtAudioCompleted, self.cli)
+        elif (self.image_displayed
+              and getattr(self.cli.conn, "state", None) ==
+                  getattr(self.cli.conn, "CONNECTED", object())
+              and time.monotonic() - self._cozmo_last_idle_silence_at >= 1.0):
+            # Cozmo's face animation is clocked by OutputSilence even when
+            # no speech is playing. Removing *all* silence packets caused
+            # image keyframes to accumulate and the face to stay blank.
+            # One small silence packet per second is sufficient for the
+            # static dashboard and avoids PyCozmo's default 30 Hz flood.
+            self.cli.conn.send(protocol_encoder.OutputSilence())
+            self._cozmo_last_idle_silence_at = time.monotonic()
         if (image_pkt is None and self.procedural_face_enabled
                 and not self.playing_animation and not self.image_displayed):
             image_pkt = self._get_face_image()
@@ -441,6 +456,7 @@ class Robot:
                 "queued_frames_remaining": queue_size,
                 "aborted_due_to_congestion": getattr(cli.anim_controller, "_cozmo_audio_aborted", False) if cli else None,
                 "backpressure_ticks": getattr(cli.anim_controller, "_cozmo_audio_backpressure_ticks", 0) if cli else None,
+                "frames_submitted_to_transport": getattr(cli.anim_controller, "_cozmo_audio_frames_submitted", 0) if cli else None,
             }
 
     def note_tts(self, text):
@@ -570,6 +586,7 @@ class Robot:
                 controller.enable_animations(True)
                 controller._cozmo_audio_aborted = False
                 controller._cozmo_audio_blocked_at = None
+                controller._cozmo_audio_frames_submitted = 0
                 # Explicitly use the same 30-FPS output-audio queue that the
                 # built-in PyCozmo playback uses, with a verified nonempty WAV.
                 controller.play_audio(frames)
