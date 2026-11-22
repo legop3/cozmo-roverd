@@ -9,6 +9,7 @@ from collections import deque
 from statistics import median
 import math
 import time
+from .battery_gauge import VoltageFuelGauge
 
 # Based on PyCozmo's public RobotStatusFlag enum. Cozmo reports no calibrated
 # percent / fuel-gauge charge, so the percentage remains an estimate.
@@ -33,6 +34,7 @@ class BatteryTracker:
         self.percent = None
         self._smoothed_voltage = None
         self._smoothed_at = None
+        self.gauge = VoltageFuelGauge()
         self.docked = None
         self.charging = None
         self.raw_charging = None
@@ -45,30 +47,28 @@ class BatteryTracker:
         self._last_charging_true = None
         self._last_sample = None
 
-    def observe(self, voltage, flags, now=None):
-        from .protocol import battery_percent
+    def observe(self, voltage, flags, now=None, moving=False):
         now = time.monotonic() if now is None else now
         flags = int(flags)
         self._last_sample = now
         voltage = finite_float(voltage)
-        if voltage is not None and 2.7 <= voltage <= 4.4:
+        valid_voltage = voltage is not None and 2.7 <= voltage <= 4.4
+        if valid_voltage:
             self.voltages.append(voltage)
             self.voltage = voltage
-            # Median rejects spikes. Smooth voltage over elapsed time rather
-            # than packet count; Cozmo's RobotState rate is not constant.
-            stable_voltage = median(self.voltages)
-            if self._smoothed_voltage is None:
-                self._smoothed_voltage = stable_voltage
-            else:
-                elapsed = max(0.0, now - self._smoothed_at)
-                alpha = 1.0 - math.exp(-elapsed / 20.0)
-                self._smoothed_voltage += alpha * (stable_voltage - self._smoothed_voltage)
-            self._smoothed_at = now
-            candidate = battery_percent(self._smoothed_voltage)
-            # Avoid one-percent flicker; track real sustained changes.
-            if self.percent is None or (candidate is not None
-                                        and abs(candidate - self.percent) >= 2):
-                self.percent = candidate
+        # Interpret charging and motion before estimating charge. Never use
+        # charger terminal voltage as an instantaneous percentage reading.
+        charge_now = bool(flags & CHARGING)
+        dock_now = bool(flags & ON_CHARGER) or charge_now
+        self.gauge.observe(
+            median(self.voltages) if valid_voltage else None,
+            moving=bool(moving or flags & MOVING),
+            charging=charge_now, docked=dock_now, now=now)
+        self._smoothed_voltage = self.gauge.filtered_voltage
+        if self.gauge.soc is not None:
+            # Publish only integer changes; the float estimate is filtered
+            # continuously by the model and exposed separately in diagnostics.
+            self.percent = round(self.gauge.soc)
         self.raw_docked = bool(flags & ON_CHARGER)
         self.raw_charging = bool(flags & CHARGING)
         contact = self.raw_docked or self.raw_charging
@@ -129,6 +129,7 @@ class BatteryTracker:
             "voltage_v": self.voltage,
             "estimated_percent": self.percent,
             "smoothed_voltage_v": self._smoothed_voltage,
+            "fuel_gauge": self.gauge.diagnostics(),
             "raw_docked": self.raw_docked,
             "raw_charging": self.raw_charging,
             "stable_docked": self.docked,
