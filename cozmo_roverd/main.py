@@ -247,6 +247,8 @@ class Bridge:
                     "last_tts_frames": self.robot.last_tts_frames,
                     "last_tts_played_at": self.robot.last_tts_played_at,
                     "face_frames_sent": self.robot.face_frames_sent,
+                    "face_last_encoded_bytes": self.robot.face_last_encoded_bytes,
+                    "face_last_error": self.robot.face_last_error,
                     "speaker": self.robot.speaker_diagnostics(),
                     "transport": self.robot.transport_diagnostics(),
                     "last_packet_error": self.robot.last_packet_error,
