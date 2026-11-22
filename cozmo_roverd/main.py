@@ -186,16 +186,22 @@ class Bridge:
         else:
             raise ValueError(f"unsupported command: {cmd}")
 
-    async def _send(self, ws):
+    async def _send(self, ws, initial_state=None):
         last_sensor = 0.0
         last_state = 0.0
+        # Avoid emitting full state for each tiny sensor change or timer tick.
+        # The receiving server also has a targeted 5 Hz sensor channel.
+        previous_state = json.dumps(initial_state) if initial_state is not None else None
         while not self.stop_event.is_set():
             while not self.results.empty():
                 await ws.send(json.dumps(self.results.get_nowait()))
             now = time.monotonic()
             if self.state_dirty.is_set() or now - last_state >= 1.0:
                 self.state_dirty.clear()
-                await ws.send(json.dumps(self.current_state()))
+                current = json.dumps(self.current_state())
+                if current != previous_state:
+                    await ws.send(current)
+                    previous_state = current
                 last_state = now
             if self.hardware_ready.is_set() and now - last_sensor >= 0.2:
                 reading = self.current_sensor()
@@ -354,7 +360,8 @@ class Bridge:
                     await ws.send(json.dumps(hello(
                         self.cfg.name, self.cfg.description, self.cfg.color,
                         self.cfg.max_speed, self.cfg.video, self.cfg.private)))
-                    await ws.send(json.dumps(self.current_state()))
+                    initial_state = self.current_state()
+                    await ws.send(json.dumps(initial_state))
                     self.mrr_connected = True
                     if diagnostics.active():
                         diagnostics.active().event("mrr_connected")
@@ -362,7 +369,7 @@ class Bridge:
                     while not self.results.empty():
                         self.results.get_nowait()
                     LOG.info("Registered rover %s with %s", self.cfg.name, self.cfg.server_url)
-                    sender = asyncio.create_task(self._send(ws))
+                    sender = asyncio.create_task(self._send(ws, initial_state))
                     receiver = asyncio.create_task(self._receive(ws))
                     done, pending = await asyncio.wait([sender, receiver], return_when=asyncio.FIRST_COMPLETED)
                     for task in pending: task.cancel()
