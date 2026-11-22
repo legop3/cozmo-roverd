@@ -32,6 +32,7 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_audio_aborted = False
     controller._cozmo_audio_backpressure_ticks = 0
     controller._cozmo_audio_frames_submitted = 0
+    controller._cozmo_audio_played_baseline = None
     controller._cozmo_last_idle_silence_at = 0.0
 
     def run_frame(self):
@@ -55,7 +56,18 @@ def _limit_animation_idle_traffic(cli):
                 pending = ((sender.window.next_seq - sender.window.expected_seq)
                            % sender.window.max_seq)
             backlog = sender.queue.qsize()
-            if pending >= 1 or backlog >= 1:
+            # A network ACK only means the robot received a frame, not
+            # that the firmware's small animation buffer has played it.
+            # Never put more than two speech frames in that buffer even
+            # when network ACKs happen quickly.
+            reported_played = getattr(self, "num_audio_frames_played", None)
+            played_baseline = self._cozmo_audio_played_baseline
+            playback_backlog = 0
+            if (reported_played is not None and played_baseline is not None):
+                playback_backlog = max(
+                    0, self._cozmo_audio_frames_submitted
+                    - max(0, reported_played - played_baseline))
+            if pending >= 1 or backlog >= 1 or playback_backlog >= 2:
                 now = time.monotonic()
                 self._cozmo_audio_backpressure_ticks += 1
                 if self._cozmo_audio_blocked_at is None:
@@ -468,6 +480,7 @@ class Robot:
                 "aborted_due_to_congestion": getattr(cli.anim_controller, "_cozmo_audio_aborted", False) if cli else None,
                 "backpressure_ticks": getattr(cli.anim_controller, "_cozmo_audio_backpressure_ticks", 0) if cli else None,
                 "frames_submitted_to_transport": getattr(cli.anim_controller, "_cozmo_audio_frames_submitted", 0) if cli else None,
+                "playback_counter_at_speech_start": getattr(cli.anim_controller, "_cozmo_audio_played_baseline", None) if cli else None,
             }
 
     def note_tts(self, text):
@@ -599,6 +612,8 @@ class Robot:
                 controller._cozmo_audio_blocked_at = None
                 controller._cozmo_audio_frames_submitted = 0
                 controller._cozmo_audio_backpressure_ticks = 0
+                controller._cozmo_audio_played_baseline = getattr(
+                    controller, "num_audio_frames_played", None)
                 # Explicitly use the same 30-FPS output-audio queue that the
                 # built-in PyCozmo playback uses, with a verified nonempty WAV.
                 controller.play_audio(frames)
