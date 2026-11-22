@@ -1,4 +1,4 @@
-"""Local-first Fedora setup dashboard. Intentionally bound only to loopback.
+"""Authenticated HTTPS setup dashboard for headless Fedora hosts.
 
 Runs independently of the rover daemon so setup stays available when the
 robot is offline or the main configuration is invalid.
@@ -6,6 +6,9 @@ robot is offline or the main configuration is invalid.
 from __future__ import annotations
 
 import argparse
+import base64
+import hmac
+import ssl
 import ipaddress
 import json
 import logging
@@ -285,6 +288,7 @@ def recent_logs() -> list[str]:
 class Handler(BaseHTTPRequestHandler):
     server_version = "CozmoSetup/1"
     config_path = CONFIG
+    access_password = ""
 
     def log_message(self, fmt, *args):
         LOG.info("%s %s", self.address_string(), fmt % args)
@@ -300,16 +304,44 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def reject_host(self) -> bool:
-        # DNS rebinding defense for localhost privileged service.
-        host = self.headers.get("Host", "").split(":")[0].strip("[]").lower()
-        if host not in ("localhost", "127.0.0.1", "::1"):
-            self.send_json(403, {"error": "Open the setup UI using localhost"})
-            return True
-        return False
+    def authenticated(self) -> bool:
+        # The setup service controls networking and systemd; enforce auth on
+        # every resource and every API request, not just mutation endpoints.
+        raw = self.headers.get("Authorization", "")
+        try:
+            scheme, token = raw.split(" ", 1)
+            if scheme.lower() != "basic":
+                raise ValueError("Unsupported authentication method")
+            decoded = base64.b64decode(token, validate=True).decode("utf-8")
+            username, password = decoded.split(":", 1)
+            good = username == "admin" and hmac.compare_digest(
+                password.encode(), self.access_password.encode())
+        except (ValueError, UnicodeError, TypeError):
+            good = False
+        if not good:
+            body = b"Authentication required"
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="Cozmo RoverD Setup", charset="UTF-8"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        return good
+
+    def origin_valid(self) -> bool:
+        # Same-origin requests only; a malicious website cannot invoke the
+        # admin API, even if the user's browser has cached HTTP Basic auth.
+        origin = self.headers.get("Origin")
+        if not origin:
+            return False
+        parsed = urlsplit(origin)
+        if parsed.scheme != "https" or parsed.path or parsed.query or parsed.fragment:
+            return False
+        return parsed.netloc.lower() == self.headers.get("Host", "").lower()
 
     def do_GET(self):
-        if self.reject_host():
+        if not self.authenticated():
             return
         try:
             if self.path == "/":
@@ -350,10 +382,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.reject_host():
             return
-        origin = self.headers.get("Origin", "")
-        if origin not in ("http://localhost:8765", "http://127.0.0.1:8765",
-                          "http://[::1]:8765"):
-            self.send_json(403, {"error": "Request must come from local setup page"})
+        if not self.origin_valid():
+            self.send_json(403, {"error": "Request must come from the same HTTPS setup page"})
             return
         try:
             size = int(self.headers.get("Content-Length", "0"))
@@ -402,13 +432,24 @@ def main():
     parser = argparse.ArgumentParser(description="Cozmo RoverD setup UI")
     parser.add_argument("--config", default=CONFIG)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--bind", default="0.0.0.0")
+    parser.add_argument("--cert", default="/etc/cozmo-roverd/setup.crt")
+    parser.add_argument("--key", default="/etc/cozmo-roverd/setup.key")
+    parser.add_argument("--password-file", default="/etc/cozmo-roverd/setup.password")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("Invalid port")
     Handler.config_path = args.config
+    Handler.access_password = Path(args.password_file).read_text().strip()
+    if len(Handler.access_password) < 16:
+        parser.error("Setup password missing or too short")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    LOG.info("Setup UI at http://127.0.0.1:%s", args.port)
+    server = ThreadingHTTPServer((args.bind, args.port), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(args.cert, args.key)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    LOG.info("Setup UI listening with authenticated HTTPS on %s:%s", args.bind, args.port)
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
