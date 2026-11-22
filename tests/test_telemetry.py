@@ -209,3 +209,50 @@ def test_battery_tracker_keeps_voltage_even_when_telemetry_goes_stale():
     tracker.observe(0.0, 0x3000, now=110.0)
     assert tracker.voltage == 3.87
     assert tracker.docked is True
+
+
+def test_firmware_2381_lift_angle_is_converted_to_actual_height_mm():
+    import math
+    from cozmo_roverd.robot_packet import lift_height_from_robot_state, snapshot_packet
+
+    # The real robot reports approximately -0.207 rad near the bottom
+    # despite the upstream packet field being named lift_height_mm.
+    low = lift_height_from_robot_state(-0.20736032724380493)
+    mid = lift_height_from_robot_state(0.25)
+    high = lift_height_from_robot_state(math.asin((92.0 - 45.0) / 66.0))
+    assert 31.9 <= low <= 32.1
+    assert low < mid < high
+    assert abs(high - 92.0) < 0.01
+    assert lift_height_from_robot_state(70.0) == 70.0
+    assert lift_height_from_robot_state(float("nan")) is None
+
+    packet = fake_packet()
+    packet.lift_height_mm = -0.20736032724380493
+    reading = snapshot_packet(packet)
+    assert 31.9 <= reading["lift_height_mm"] <= 32.1
+    assert reading["raw_robot_state"]["lift_raw"] == packet.lift_height_mm
+
+
+def test_hud_uses_corrected_lift_reading_from_live_robot_packet():
+    from cozmo_roverd.main import Bridge
+    from cozmo_roverd.media import Publisher
+    from PIL import Image
+    bridge = object.__new__(Bridge)
+    robot = Robot(max_speed=100, on_state=lambda: None,
+                  on_sensor=lambda: None, on_frame=lambda image: None)
+    bridge.robot = robot
+    bridge.mrr_connected = True
+    bridge.hardware_stage = "online"
+    bridge.hardware_reconnect_attempts = 0
+    bridge.last_hardware_error = None
+
+    robot._packet(fake_client(), fake_packet())
+    frame = Image.new("RGB", (320, 240), (30, 50, 80))
+    publisher = Publisher("rtsp://localhost:8554/cozmo")
+    normal = publisher.render_frame(frame, bridge.hud_state())
+    pkt = fake_packet()
+    pkt.lift_height_mm = -0.20736032724380493
+    robot._packet(fake_client(), pkt)
+    low = publisher.render_frame(frame, bridge.hud_state())
+    assert normal.crop((175, 3, 202, 31)).tobytes() != (
+        low.crop((175, 3, 202, 31)).tobytes())
