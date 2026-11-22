@@ -102,7 +102,7 @@ def test_tts_last_message_is_kept_even_without_audio(bridge):
 
 def test_manual_face_and_volume_controls_are_removed(bridge):
     for control, value in (("face", "Hello"), ("volume", 60),
-                           ("clear_face", True)):
+                           ("clear_face", True), ("light", True), ("light", False)):
         with pytest.raises(ValueError, match="unsupported peripheral"):
             bridge.execute({"type": "peripheral", "peripheral": {
                 "id": "cozmo", "control": control, "value": value}})
