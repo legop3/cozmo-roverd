@@ -90,6 +90,12 @@ class BatteryTracker:
                     self.needs_charge = False
         return self
 
+    def age_seconds(self, now=None):
+        if self._last_sample is None:
+            return None
+        now = time.monotonic() if now is None else now
+        return round(max(0.0, now - self._last_sample), 2)
+
     def stale(self, now=None, timeout=3.0):
         now = time.monotonic() if now is None else now
         return self._last_sample is None or now - self._last_sample > timeout
@@ -112,6 +118,8 @@ class BatteryTracker:
             "stable_docked": self.docked,
             "stable_charging": self.charging,
             "voltage_samples": list(self.voltages),
+            "age_seconds": self.age_seconds(),
+            "stale": self.stale(),
         }
 
 def snapshot_packet(pkt):
