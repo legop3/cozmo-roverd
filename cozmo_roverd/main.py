@@ -214,7 +214,10 @@ class Bridge:
             try:
                 # The face is a local status display, independent of MRR
                 # messages and the video pipeline.
-                await asyncio.to_thread(self.robot.refresh_face)
+                try:
+                    await asyncio.to_thread(self.robot.refresh_face)
+                except Exception as exc:
+                    LOG.warning("Face status refresh failed: %s", exc)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 snap = dict(self.robot.latest)
                 if snap:
