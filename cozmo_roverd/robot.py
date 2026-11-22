@@ -9,7 +9,7 @@ import threading
 import time
 from PIL import Image, ImageDraw
 from .face import status_image, compact_status_image
-from .status_lights import charger_lights, charger_signature
+from .status_lights import backpack_lights, charger_lights, charger_signature
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
@@ -358,30 +358,26 @@ class Robot:
         self.on_state()
 
     def refresh_status_lights(self, mrr_connected=False):
-        """Send one minimal side-LED packet only when link status changes.
+        """Set the five steady backpack colors once per robot connection.
 
-        Previous implementation sent both LightStateCenter and LightStateSide,
-        including firmware-paced color animations. During the new lighting
-        rollout Cozmo stopped ACKing commands. Start with the supported
-        red-only side LEDs and avoid touching the center LEDs entirely.
+        The two outer LEDs only support red. The RGB center group gets
+        independent blue, green and amber LEDs. No MRR-dependent changes.
         """
         with self.lock:
             if self.client is None or not self.ready:
                 return False
-            import pycozmo
-            signature = bool(mrr_connected)
-            if signature == self._status_light_signature:
+            if self._status_light_signature == "connected":
                 return False
             if not self._lights_transport_ready(self.client):
                 return False
-            # The side LEDs have only red emitters. Two steady states are
-            # unambiguous and require no animation timing on the firmware.
-            red = pycozmo.lights.red_light
-            off = pycozmo.lights.off_light
-            self.client.conn.send(
-                pycozmo.protocol_encoder.LightStateSide(
-                    states=(red, red if mrr_connected else off)))
-            self._status_light_signature = signature
+            import pycozmo
+            p = pycozmo.protocol_encoder
+            colors = backpack_lights()
+            # PyCozmo exposes the three center and two side LEDs as
+            # separate packet types, both sent once on initial connection.
+            self.client.conn.send(p.LightStateCenter(states=colors[1:4]))
+            self.client.conn.send(p.LightStateSide(states=(colors[0], colors[4])))
+            self._status_light_signature = "connected"
             return True
 
     def refresh_charger_lights(self):
@@ -440,8 +436,8 @@ class Robot:
                 return True
 
             signature = charger_signature(
-                docked=self.battery.docked, charging=self.battery.charging,
-                docking=bool(self.dock_assist or self.undock_active))
+                docked=self.battery.docked,
+                docking=bool(self.dock_assist))
             if signature == self._charger_last_signature:
                 return False
             if not self._lights_transport_ready(cli):
@@ -449,8 +445,8 @@ class Robot:
             # CubeId selects the charger, CubeLights changes that object's LEDs.
             cli.conn.send(p.CubeId(object_id=self._charger_object_id))
             cli.conn.send(p.CubeLights(states=charger_lights(
-                docked=self.battery.docked, charging=self.battery.charging,
-                docking=bool(self.dock_assist or self.undock_active))))
+                docked=self.battery.docked,
+                docking=bool(self.dock_assist))))
             self._charger_last_signature = signature
             return True
 
