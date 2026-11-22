@@ -237,6 +237,8 @@ async function refreshTelemetry() {
         ["Speaker audio frames reported", displayMetric(audio.robot_reported_audio_frames)],
         ["Queued audio frames remaining", displayMetric(audio.queued_frames_remaining)],
         ["Face screen updates", displayMetric(response.face_frames_sent)],
+        ["Last encoded face image", displayMetric(response.face_last_encoded_bytes, " bytes")],
+        ["Face display error", displayMetric(response.face_last_error)],
       ]),
       telemetryCard("Video & connectivity", [
         ["Cozmo connected", displayMetric(response.hardware_connected)],
