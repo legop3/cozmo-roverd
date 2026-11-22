@@ -122,6 +122,7 @@ def test_charger_detection_completes_assist_and_stops_once():
     robot, _ = fake_robot()
     robot.dock_assist = True
     robot.drive(120, 120)
+    assert robot.client.drives[-1] == (70, 70)
     from cozmo_roverd.robot_packet import BatteryTracker
     robot.battery = BatteryTracker()
     packet = NS(
@@ -150,13 +151,13 @@ def test_pickup_and_docked_status_never_block_direct_driving():
     robot.cliff = True
     robot.dock_assist = True
     robot.drive(250, -250)
-    assert robot.client.drives[-1] == (250, -250)
-    assert robot.commanded_wheels == (250, -250)
+    assert robot.client.drives[-1] == (70, -70)
+    assert robot.commanded_wheels == (70, -70)
     assert robot.client.last_acceleration["lwheel_acc"] == 10000.0
     assert robot.client.last_acceleration["rwheel_acc"] == 10000.0
     robot._picked_up(True)
     robot._cliff(True)
-    assert robot.client.drives[-1] == (250, -250)
+    assert robot.client.drives[-1] == (70, -70)
 
 
 def test_live_exposure_switch_uses_adaptive_sensor_control():
@@ -297,7 +298,6 @@ def test_manual_drive_off_dock_lowers_lift_and_levels_head_once():
     robot, _ = fake_robot()
     robot.on_charger = True
     robot._dock_contact_handled = True
-    robot._departure_posture_set = False
     robot.drive(0, 0)
     assert robot.client.lifts == []
     robot.drive(80, 80)
@@ -336,3 +336,55 @@ def test_scripted_undock_still_lowers_lift_only_once():
     robot.battery._contact_lost_since = time.monotonic() - 1
     robot._packet(NS(robot_status=0), _charger_packet(flags=0))
     assert robot.client.lifts == [32.0]
+
+
+def test_dock_assist_caps_both_wheels_to_70_without_changing_normal_drive():
+    robot, _ = fake_robot()
+    robot.drive(180, -120)
+    assert robot.client.drives[-1] == (180, -120)
+    robot.assist_docking()
+    robot.drive(250, -250)
+    assert robot.client.drives[-1] == (70, -70)
+    assert robot.commanded_wheels == (70, -70)
+    robot.drive(-12, 5)
+    assert robot.client.drives[-1] == (-12, 5)
+    robot.cancel_docking()
+    robot.drive(180, -120)
+    assert robot.client.drives[-1] == (180, -120)
+
+
+def test_dock_lift_retries_only_if_measured_below_target():
+    robot, _ = fake_robot()
+    robot.on_charger = True
+    robot.set_dock_lift(True)
+    assert robot.client.lifts == [92.0]
+    robot.latest = {"lift_height_mm": 42.0}
+    robot.battery.observe(3.9, 0x1000)
+    robot._dock_lift_sent_at = time.monotonic() - 3.0
+    assert robot.refresh_dock_lift()
+    assert robot.client.lifts == [92.0, 92.0]
+    robot.latest["lift_height_mm"] = 91.0
+    robot._dock_lift_sent_at = time.monotonic() - 3.0
+    assert not robot.refresh_dock_lift()
+    assert robot.client.lifts == [92.0, 92.0]
+
+
+def test_dock_lift_uses_physical_contact_even_without_assist():
+    robot, _ = fake_robot()
+    robot._packet(NS(robot_status=0x1000), _charger_packet(flags=0x1000))
+    assert robot.on_charger is True
+    assert robot.client.lifts == [92.0]
+    assert robot.client.drives == [(0, 0)]
+    robot._packet(NS(robot_status=0x1000), _charger_packet(flags=0x1000))
+    assert robot.client.lifts == [92.0]
+
+
+def test_cancelling_assist_lowers_lift_unless_still_docked():
+    robot, _ = fake_robot()
+    robot.on_charger = False
+    robot.assist_docking()
+    robot.cancel_docking()
+    assert robot.client.lifts[-1] == 32.0
+    robot.on_charger = True
+    assert robot.refresh_dock_lift()
+    assert robot.client.lifts[-1] == 92.0
