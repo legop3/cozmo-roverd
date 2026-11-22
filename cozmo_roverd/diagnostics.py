@@ -59,7 +59,11 @@ def _safe_command(msg):
 
 
 class _ProtocolMetadata(logging.Filter):
-    """Strip potentially huge or sensitive packet reprs BEFORE formatting."""
+    """Strip huge packet reprs and retain a short, in-memory wire history."""
+    def __init__(self, recorder):
+        super().__init__()
+        self.recorder = recorder
+
     def filter(self, record):
         if record.name == "pycozmo.protocol" and record.args:
             fmt = record.msg if isinstance(record.msg, str) else ""
@@ -72,6 +76,12 @@ class _ProtocolMetadata(logging.Filter):
                 record.msg = "wire %s %s bytes=%s id=%s"
                 record.args = ("tx" if fmt.startswith("Sent") else "rx",
                                type(pkt).__name__, length, getattr(pkt, "id", None))
+                item = {"utc": _utc(), "monotonic": round(time.monotonic(), 3),
+                        "direction": record.args[0],
+                        "packet": record.args[1],
+                        "bytes": length, "id": record.args[3]}
+                with self.recorder.lock:
+                    self.recorder.packets.append(item)
         return True
 
 
@@ -95,10 +105,11 @@ class Recorder:
         self.incidents_path = self.directory / "incidents.jsonl"
         self.events = deque(maxlen=120)
         self.transport = deque(maxlen=90)
+        self.packets = deque(maxlen=300)
         self.lock = threading.Lock()
         self._queue = Queue(maxsize=8192)
         self._trace_handler = _DropWhenFull(self._queue)
-        self._trace_handler.addFilter(_ProtocolMetadata())
+        self._trace_handler.addFilter(_ProtocolMetadata(self))
         self._trace_output = RotatingFileHandler(
             self.directory / "protocol.log", maxBytes=8 * 1024 * 1024,
             backupCount=4, encoding="utf-8")
@@ -161,11 +172,13 @@ class Recorder:
         with self.lock:
             recent = list(self.events)
             samples = list(self.transport)
+            packets = list(self.packets)
         # Captured BEFORE cleanup destroys the live transport counters.
         self._write({"utc": _utc(), "monotonic": round(time.monotonic(), 3),
                      "event": "disconnection_snapshot", "reason": reason,
                      "stage": stage, "context": context,
                      "last_events": recent, "transport_history": samples,
+                     "recent_protocol_packets": packets,
                      "trace_queue_dropped": self._trace_handler.dropped})
 
     def close(self):
