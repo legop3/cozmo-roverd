@@ -47,3 +47,50 @@ def test_face_updates_only_on_change_but_last_message_is_persistent():
     assert len(robot.client.images) == 2
     assert all(isinstance(im, Image.Image) for im in robot.client.images)
     assert all(im.size == (128, 32) for im in robot.client.images)
+
+
+
+def test_tts_generates_wav_and_queues_verified_audio_frames(monkeypatch):
+    from pathlib import Path
+    from subprocess import CompletedProcess
+    import pycozmo
+    import cozmo_roverd.robot as robot_module
+
+    robot = robot_with_face()
+    enabled, playback = [], []
+
+    class Controller:
+        def enable_animations(self, enabled_now):
+            enabled.append(enabled_now)
+        def play_audio(self, frames):
+            playback.append(frames)
+
+    robot.client.anim_controller = Controller()
+    def fake_subprocess(args, **kwargs):
+        if "-w" in args:
+            Path(args[args.index("-w") + 1]).write_bytes(b"RIFF" + bytes(100))
+        else:
+            Path(args[args.index("-y") + 1]).write_bytes(b"RIFF" + bytes(100))
+        return CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(robot_module.subprocess, "run", fake_subprocess)
+    monkeypatch.setattr(pycozmo.audio, "load_wav", lambda path: ["audio-1", "audio-2"])
+
+    robot.note_tts("Hello Cozmo")
+    robot.speak("Hello Cozmo")
+    assert enabled == [True]
+    assert playback == [["audio-1", "audio-2"]]
+    assert robot.last_tts_frames == 2
+    assert robot.last_tts_error is None
+    assert robot.last_tts == "Hello Cozmo"
+
+
+def test_tts_failure_is_visible_in_face_diagnostics(monkeypatch):
+    import cozmo_roverd.robot as robot_module
+    robot = robot_with_face()
+    def broken(*args, **kwargs):
+        raise FileNotFoundError("espeak-ng missing")
+    monkeypatch.setattr(robot_module.subprocess, "run", broken)
+    import pytest
+    with pytest.raises(RuntimeError, match="TTS failed"):
+        robot.speak("test")
+    assert "espeak-ng" in robot.last_tts_error
