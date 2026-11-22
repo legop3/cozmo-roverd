@@ -12,8 +12,8 @@ import time
 # Conservative single-cell Li-ion approximate *resting* voltage curve.
 # Calibration against a particular Cozmo battery will improve accuracy.
 OCV_POINTS = (
-    (3.30, 0), (3.50, 4), (3.60, 10), (3.70, 20),
-    (3.75, 30), (3.80, 40), (3.85, 52), (3.90, 65),
+    (3.00, 0), (3.20, 3), (3.30, 6), (3.50, 12), (3.60, 20), (3.70, 30),
+    (3.75, 38), (3.80, 48), (3.85, 58), (3.90, 68),
     (3.95, 75), (4.00, 83), (4.05, 90), (4.10, 95),
     (4.17, 100),
 )
@@ -57,6 +57,7 @@ class VoltageFuelGauge:
         self.rest_confirmed = False
         self._rest_low_since = None
         self.low_confirmed = False
+        self.critical_confirmed = False
 
     def restore(self, data, *, now_wall=None):
         """Warm start from bounded, recent measurements; never trust old SOC."""
@@ -135,17 +136,23 @@ class VoltageFuelGauge:
                 self.soc = _approach(self.soc, target, elapsed, 100.0)
                 # Low-battery status requires sustained resting evidence, not
                 # a momentary motor-induced drop or a charging-voltage guess.
-                # Anki's documented Cozmo warning is below 3.5 V.
-                # Treat that as a rested-voltage warning threshold, not
-                # a universal cell cutoff or an arbitrary SOC percentage.
-                if self.rest_voltage < 3.50:
+                # User-selected lower warning point: permit more of the
+                # battery's usable range before asking to recharge.
+                # These are RESTED voltages, not motor-load readings.
+                if self.rest_voltage < 3.30:
                     if self._rest_low_since is None:
                         self._rest_low_since = now
                     if now - self._rest_low_since >= 25.0:
                         self.low_confirmed = True
-                elif self.rest_voltage >= 3.60:
+                elif self.rest_voltage >= 3.40:
                     self._rest_low_since = None
                     self.low_confirmed = False
+                # Critical is distinct from low; never flag critical just
+                # because the estimated SOC curve is at its low end.
+                if self.rest_voltage < 3.10 and self.low_confirmed:
+                    self.critical_confirmed = True
+                elif self.rest_voltage >= 3.25:
+                    self.critical_confirmed = False
         elif mode == "moving":
             if prior != "moving":
                 self._motion_since = now
@@ -208,4 +215,5 @@ class VoltageFuelGauge:
             "method": "voltage_only_state_estimator",
             "rest_confirmed": self.rest_confirmed,
             "low_confirmed": self.low_confirmed,
+            "critical_confirmed": self.critical_confirmed,
         }
