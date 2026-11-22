@@ -115,3 +115,18 @@ def test_side_status_leds_use_red_channel_only():
                 assert right.on_color == right.off_color
             else:
                 assert right.on_color != right.off_color
+
+
+def test_optional_led_features_default_off_and_enable_independently(monkeypatch):
+    from cozmo_roverd.main import _env_enabled
+    monkeypatch.delenv("COZMO_BACKPACK_STATUS", raising=False)
+    monkeypatch.delenv("COZMO_CHARGER_STATUS", raising=False)
+    assert not _env_enabled("COZMO_BACKPACK_STATUS")
+    assert not _env_enabled("COZMO_CHARGER_STATUS")
+    monkeypatch.setenv("COZMO_BACKPACK_STATUS", "1")
+    assert _env_enabled("COZMO_BACKPACK_STATUS")
+    assert not _env_enabled("COZMO_CHARGER_STATUS")
+    monkeypatch.setenv("COZMO_BACKPACK_STATUS", "0")
+    monkeypatch.setenv("COZMO_CHARGER_STATUS", "yes")
+    assert not _env_enabled("COZMO_BACKPACK_STATUS")
+    assert _env_enabled("COZMO_CHARGER_STATUS")
