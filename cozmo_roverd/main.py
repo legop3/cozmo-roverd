@@ -55,6 +55,7 @@ class Bridge:
             if self._gauge_file.is_file():
                 saved = json.loads(self._gauge_file.read_text())
                 self.robot.battery.gauge.restore(saved)
+                self.robot.battery.restore_charge_state(saved)
                 # Recent raw voltage is valuable even if Cozmo goes silent
                 # while charging, including when the bridge restarts.
                 self.robot.battery.restore_voltage(saved)
@@ -336,6 +337,7 @@ class Bridge:
                         learned = self.robot.battery.gauge.export()
                         if learned is not None:
                             learned.update(self.robot.battery.voltage_snapshot())
+                            learned.update(self.robot.battery.charge_state_snapshot())
                             self._gauge_file.parent.mkdir(parents=True, exist_ok=True)
                             gauge_tmp = self._gauge_file.with_suffix(".tmp")
                             gauge_tmp.write_text(json.dumps(learned))
