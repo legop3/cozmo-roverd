@@ -19,6 +19,11 @@ class Robot:
         self.max_speed = max_speed
         self.camera_mode = camera_mode
         self.manual_exposure_ms = 10
+        self._auto_gain = 1.0
+        self._auto_exposure_ms = 16
+        self._auto_last_measure_at = 0.0
+        self._auto_pending = False
+        self._auto_measured_brightness = None
         self.docking_phase = None
         self.dock_assist = False
         self.undock_active = False
@@ -103,6 +108,10 @@ class Robot:
                 self._face_sent_at = 0.0
                 self._face_clock_at = 0.0
                 self._status_light_signature = None
+                self._auto_gain = 1.0
+                self._auto_exposure_ms = 16
+                self._auto_last_measure_at = 0.0
+                self._auto_pending = False
                 self._charger_factory_id = None
                 self._charger_object_id = None
                 self._charger_connect_at = 0.0
@@ -223,9 +232,11 @@ class Robot:
                 raise RuntimeError("Cozmo disconnected")
             config = client.camera_config
             if self.camera_mode == "auto":
-                # Firmware controls both exposure and analog gain in AE mode.
-                # These gain/exposure fields are ignored when AE is enabled.
-                gain, exposure, automatic = 1.0, 0, True
+                # Use our camera-feedback automatic exposure rather than the
+                # firmware's AE, which doesn't cover the user's full lighting
+                # range on this robot. Update only when measured brightness
+                # changes, and always respect the calibrated sensor limits.
+                gain, exposure, automatic = self._auto_gain, self._auto_exposure_ms, False
             elif self.camera_mode == "manual":
                 # Do not pin sensor gain to its 0.1x minimum: that made
                 # the manual shutter slider unusably dark compared to the
@@ -246,6 +257,76 @@ class Robot:
                 auto_exposure_enabled=automatic))
             LOG.info("Camera settings applied: mode=%s gain=%.3f exposure=%sms auto=%s",
                      self.camera_mode, gain, exposure, automatic)
+            return True
+
+    def observe_camera_brightness(self, image):
+        """Use real camera pixels to automatically adjust sensor exposure/gain.
+
+        Sample at most once per 0.8 seconds and do no transport I/O from
+        PyCozmo's image callback. Avoid tiny oscillations near the target.
+        """
+        now = time.monotonic()
+        with self.lock:
+            if (self.camera_mode != "auto" or self.client is None or not self.ready
+                    or now - self._auto_last_measure_at < 0.8):
+                return
+            self._auto_last_measure_at = now
+        # A tiny thumbnail is sufficient and avoids affecting video encoding.
+        from PIL import Image
+        sample = image.convert("L").resize((32, 24))
+        hist = sample.histogram()
+        pixels = sum(hist)
+        if not pixels:
+            return
+        # Ignore the darkest/brightest 10% so a small lamp or black border
+        # does not dominate brightness; operate on the central 80%.
+        lower, upper = pixels * 0.1, pixels * 0.9
+        count, total, rank = 0, 0, 0
+        for value, n in enumerate(hist):
+            used = max(0, min(rank + n, upper) - max(rank, lower))
+            total += used * value
+            count += used
+            rank += n
+        brightness = total / count if count else 0.0
+        with self.lock:
+            self._auto_measured_brightness = round(brightness, 1)
+            # Brightness near 105 is left alone to prevent flicker.
+            if 88 <= brightness <= 125:
+                return
+            # Use gentle exposure changes; long exposure when necessary,
+            # and analog gain for dim scenes. No post-processing.
+            factor = max(0.55, min(1.8, 105 / max(1, brightness)))
+            current = self._auto_exposure_ms * self._auto_gain
+            target = current * factor
+            conf = getattr(self.client, "camera_config", None)
+            max_gain = float(getattr(conf, "max_gain", 3.984375))
+            min_gain = float(getattr(conf, "min_gain", 0.1))
+            max_ms = int(getattr(conf, "max_exposure_time_ms", 67))
+            min_ms = int(getattr(conf, "min_exposure_time_ms", 1))
+            target = max(min_ms * min_gain, min(max_ms * max_gain, target))
+            # Favor shutter up to 33ms (30fps), then increase gain, then
+            # extend shutter further when already at max gain.
+            new_exposure = max(min_ms, min(33, max_ms, round(target)))
+            new_gain = max(min_gain, min(max_gain, target / new_exposure))
+            if new_gain >= max_gain and target > new_exposure * max_gain:
+                new_exposure = min(max_ms, max(min_ms, round(target / max_gain)))
+                new_gain = max_gain
+            if (abs(new_exposure - self._auto_exposure_ms) >= 1
+                    or abs(new_gain - self._auto_gain) >= 0.035):
+                self._auto_gain = new_gain
+                self._auto_exposure_ms = new_exposure
+                self._auto_pending = True
+
+    def refresh_auto_camera_exposure(self):
+        """Apply pending camera settings outside of PyCozmo's receive thread."""
+        with self.lock:
+            if (not self._auto_pending or self.camera_mode != "auto"
+                    or self.client is None or not self.ready):
+                return False
+            if not self._lights_transport_ready(self.client):
+                return False
+            self.configure_camera()
+            self._auto_pending = False
             return True
 
     def set_camera_auto_exposure(self):
