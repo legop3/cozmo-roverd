@@ -120,6 +120,9 @@ def test_bridge_state_sender_resends_snapshot_and_never_needs_sensor_queue():
         task = asyncio.create_task(bridge._send(socket))
         await asyncio.sleep(0.3)
         bridge.hardware_ready.clear()
+        # Losing Cozmo must not end the MRR connection. Stop the sender
+        # explicitly, rather than waiting for hardware_ready to close it.
+        bridge.stop_event.set()
         await task
         return socket.messages
     messages = asyncio.run(exercise())
