@@ -6,24 +6,29 @@ Standalone Fedora Linux bridge that makes an Anki Cozmo appear as a rover on an 
 
 Use **two network paths**: an Ethernet connection or primary Wi-Fi for reaching MRR, and a **second, dedicated Wi-Fi adapter** for Cozmo. Cozmo provides its own Wi-Fi access point. This bridge binds a NetworkManager connection exclusively to the adapter chosen in config, disables the default route on that connection and uses it only to communicate with Cozmo. Do **not** choose the host's normal uplink adapter. The SSID and password must be read from Cozmo's screen.
 
-## Fedora installation
+## Fedora installation and guided setup
+
+Plug a **second Wi-Fi adapter** into your Fedora computer. Keep Ethernet or your primary Wi-Fi connected to the MRR network. The setup UI explicitly protects adapters used for default routes.
 
 ```bash
 git clone https://github.com/legop3/cozmo-roverd.git
 cd cozmo-roverd
 sudo bash install-fedora.sh
-sudo nano /etc/cozmo-roverd.toml
 ```
 
-In the TOML, set `rover.server_url` to the existing MRR server's `ws://HOST:PORT/rover` (or `wss://`), `wifi.interface` to the dedicated adapter shown by `nmcli device status`, and `wifi.ssid` and `wifi.password` to the credentials Cozmo shows. The host must already be able to reach the MRR server through its **other** connection. Then:
+**Open http://127.0.0.1:8765 on the Fedora computer.** The setup website runs as its own `cozmo-roverd-setup.service`, independently of the rover daemon, and works before Cozmo is connected. On a headless Fedora host, forward it securely over SSH: `ssh -L 8765:127.0.0.1:8765 user@fedora-host`, then open http://127.0.0.1:8765 on your own computer. It is intentionally not exposed publicly or to the local network, since it can change network and service settings.
 
-```bash
-sudo /opt/cozmo-roverd/.venv/bin/cozmo-roverd --check
-sudo systemctl enable --now cozmo-roverd
-journalctl -u cozmo-roverd -f
-```
+The four steps are:
+1. **Adapter:** choose your dedicated Wi-Fi device from a dropdown; adapters carrying the host's default route are disabled.
+2. **Cozmo:** display Cozmo's Wi-Fi credentials on the robot, click **Scan networks**, pick its SSID from the results and enter its password.
+3. **MRR server:** enter the WebSocket URL (for example, `ws://192.168.1.100:8080/rover`), then click **Test server connection**. This checks TCP reachability; a successful test does not prove rover authorization or full protocol operation.
+4. **Rover:** choose the name, color, speed, stop timeout, and video settings with simple controls. Click **Save & connect Cozmo**.
 
-Use `sudo systemctl restart cozmo-roverd` after editing configuration. The systemd service starts automatically after reboot. This is a non-containerized Fedora install because it must manage a physical Wi-Fi adapter.
+The setup UI validates data, keeps existing passwords when appropriate, writes `/etc/cozmo-roverd.toml` atomically with 0600 permissions and maintains a `.bak` copy, enables the rover service, and restarts it with the new settings. The final panel shows service state, recent logs and start/stop controls.
+
+To upgrade an existing installation, `git pull` then rerun `sudo bash install-fedora.sh`. Existing configuration is preserved. You do **not** have to manually edit the TOML. The web UI uses the same configuration file as the daemon.
+
+The setup site binds to `127.0.0.1:8765` and never changes MRR itself. It requires root locally to operate NetworkManager and systemd. You should not reverse-proxy or port-forward this privileged interface to untrusted networks.
 
 ## Controls
 
