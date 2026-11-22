@@ -186,7 +186,7 @@ def status_image(*, voltage=None, percent=None, charging=None, docked=None,
 
 
 def compact_status_image(*, voltage=None, percent=None, charging=None,
-                         last_tts="", scroll=0, battery_only=False):
+                         last_tts="", scroll=0, battery_only=False, message_limit=14):
     """A simpler *generated graphic* for small firmware animation buffers.
 
     Cozmo's internal animation-keyframe buffer is separate from the UDP
@@ -210,9 +210,9 @@ def compact_status_image(*, voltage=None, percent=None, charging=None,
         if msg:
             msg = msg[:256]
             position = scroll % (len(msg) + 3)
-            msg = (msg + "   " + msg)[position:position + 14]
+            msg = (msg + "   " + msg)[position:position + message_limit]
         else:
             msg = "READY"
-        _text(draw, (17, 20), msg, _SMALL)
+        _text(draw, (17, 20), msg, _TINY)
     reduced = canvas.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
     return reduced.point(lambda v: 255 if v >= 105 else 0, mode="1")
