@@ -57,6 +57,27 @@ Camera images are published via FFmpeg to the server's existing MediaMTX RTSP en
 
 The bridge uses **upstream PyCozmo unchanged at runtime**: no send-thread or animation-controller method replacements. The unused experimental UDP frame-batching patch and failed animation/audio monkey-patch have been removed. Since upstream's animation controller would continuously enqueue display and silence frames, this bridge disables animation playback and sends its static face image directly as a standard `DisplayImage` packet with a limited `OutputSilence` clock (up to 4 Hz) and an image refresh when needed. The face path checks the reliable send window before enqueueing traffic. This preserves the existing HUD, camera, driving, and other control paths without invasive patches.
 
+## Frame pacing and receive-thread isolation
+
+Live PyCozmo callbacks now hand off camera images immediately to the RTSP
+publisher and queue at most one image for automatic exposure analysis (sampled
+at most every 0.8 seconds). `RobotState` packets likewise move onto a bounded
+single-item worker queue: stale backlogged packets are replaced by the latest
+state rather than blocking PyCozmo's receive thread. Dock contacts, battery
+recovery, and MRR state updates retain the same handling on that worker.
+Maintenance calls for auto-exposure, dock lift, and lighting run on independent
+cadences; slow optional work no longer holds up the telemetry export loop.
+No face or hardware audio traffic has been re-enabled.
+
+The local `/run/cozmo-roverd/telemetry.json` now exposes video diagnostics:
+`video.camera_input_fps_2s` (actual incoming Cozmo camera frames),
+`video.rtsp_output_fps_2s` (frames successfully written to FFmpeg),
+`video.rtsp_unique_camera_frames`, `video.rtsp_repeated_camera_frames`,
+`video.ffmpeg_write_last_ms`, and `video.ffmpeg_write_max_ms`.
+It also includes `state_packets_coalesced` and `camera_analysis_skipped`.
+If video stutters, compare input FPS against output FPS and write latency
+before assuming the robot or network is dropping frames.
+
 ## Persistent reconnect diagnostics
 
 The bridge writes **persistent, size-bounded diagnostics** to `/var/log/cozmo-roverd/`, independently of the systemd journal. These survive a service restart or a robot disconnect:
