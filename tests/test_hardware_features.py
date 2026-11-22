@@ -11,6 +11,7 @@ class DummyClient:
         self.drives = []
         self.lifts = []
         self.heads = []
+        self.headlights = []
         self.packets = []
         self.conn = NS(send=lambda p: self.packets.append(p))
         self.camera_config = NS(
@@ -30,6 +31,9 @@ class DummyClient:
 
     def set_lift_height(self, height):
         self.lifts.append(height)
+
+    def set_head_light(self, enabled):
+        self.headlights.append(enabled)
 
 
 def fake_robot(mode="bright"):
@@ -114,7 +118,7 @@ def test_commanded_speed_is_recorded_for_anki_remote_control_rate():
     assert robot.commanded_wheels == (250, 250)
 
 
-def test_charger_detection_does_not_issue_stop_during_assist():
+def test_charger_detection_completes_assist_and_stops_once():
     robot, _ = fake_robot()
     robot.dock_assist = True
     robot.drive(120, 120)
@@ -134,7 +138,8 @@ def test_charger_detection_does_not_issue_stop_during_assist():
     )
     client = NS(robot_status=0x1000)
     robot._packet(client, packet)
-    assert robot.client.drives[-1] == (120, 120)
+    assert robot.client.drives[-1] == (0, 0)
+    assert robot.client.lifts[-1] == 92.0
     assert robot.dock_assist is False
 
 
@@ -208,3 +213,67 @@ def test_undock_without_backoff_levels_head_and_lowers_lift():
     assert robot.client.heads == [0.0]
     assert robot.client.lifts == [32.0]
     assert outcomes == [("u2", None)]
+
+
+def test_dock_assist_complete_lifecycle_and_temporary_headlight():
+    from tests.test_telemetry import fake_client, fake_packet
+    robot, _ = fake_robot()
+    robot.on_charger = False
+    robot.assist_docking()
+    assert robot.dock_assist
+    assert robot.docking_phase == "assisting"
+    assert robot.headlight is True
+    assert robot.client.headlights == [True]
+    assert robot.client.lifts[-1] == 92.0
+    # Repeating the command does not resend expensive hardware changes.
+    robot.assist_docking()
+    assert robot.client.headlights == [True]
+    robot._packet(fake_client(flags=0x3000), fake_packet(flags=0x3000))
+    assert not robot.dock_assist
+    assert robot.docking_phase is None
+    assert robot.client.headlights == [True, False]
+    assert robot.client.heads[-1] == 0.0
+    assert robot.client.lifts[-1] == 92.0
+    # Sustained contact doesn't repeat completion work.
+    count = len(robot.client.heads)
+    robot._packet(fake_client(flags=0x3000), fake_packet(flags=0x3000))
+    assert len(robot.client.heads) == count
+
+
+def test_cancel_assist_restores_posture_and_headlight():
+    robot, _ = fake_robot()
+    robot.on_charger = False
+    robot.assist_docking()
+    robot.cancel_docking()
+    assert robot.dock_assist is False
+    assert robot.docking_phase is None
+    assert robot.headlight is False
+    assert robot.client.headlights == [True, False]
+    assert robot.client.heads[-1] == 0.0
+    assert robot.client.lifts[-1] == 32.0
+    before = (len(robot.client.lifts), len(robot.client.headlights))
+    robot.cancel_docking()
+    assert before == (len(robot.client.lifts), len(robot.client.headlights))
+
+
+def test_dock_assist_preserves_manually_enabled_headlight():
+    robot, _ = fake_robot()
+    robot.on_charger = False
+    robot.light(True)
+    robot.assist_docking()
+    robot.cancel_docking()
+    assert robot.headlight is True
+    assert robot.client.headlights == [True]
+
+
+def test_failed_undock_restores_lift_to_parked_height():
+    robot, _ = fake_robot()
+    robot.on_charger = True
+    done = Event()
+    outcomes = []
+    robot.start_undock("u3", True, lambda ident, err: (outcomes.append(err), done.set()))
+    assert done.wait(6)
+    assert outcomes[0] is not None
+    assert robot.client.lifts[0] == 32.0
+    assert robot.client.lifts[-1] == 92.0
+    assert not robot.undock_active
