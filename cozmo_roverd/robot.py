@@ -33,6 +33,7 @@ class Robot:
         self.voltage = None
         self.last_sensor = 0.0
         self.moving = False
+        self.commanded_wheels = (0, 0)
         self.ready = False
         self.battery = BatteryTracker()
         self.packets_received = 0
@@ -145,6 +146,7 @@ class Robot:
                 try: self.client.drive_wheels(0, 0)
                 except Exception: LOG.exception("Unable to stop wheels")
             self.moving = False
+            self.commanded_wheels = (0, 0)
 
     def drive(self, left, right):
         with self.lock:
@@ -159,6 +161,7 @@ class Robot:
                 right = max(-60, min(60, right))
             self.client.drive_wheels(left, right)
             self.moving = left != 0 or right != 0
+            self.commanded_wheels = (left, right)
 
     def lift_motor(self, main):
         """Use MRR main-brush signed PWM to control the lift continuously."""
@@ -191,7 +194,7 @@ class Robot:
                      self.camera_mode, gain, exposure, automatic)
 
     def start_undock(self, command_id, backoff, completed):
-        """Perform timed reverse until dock contact clears and report result."""
+        """Drive forward off Cozmo charging contacts, then report completion."""
         with self.lock:
             if self.undock_active:
                 raise ValueError("undock already in progress")
@@ -210,7 +213,7 @@ class Robot:
             error = None
             try:
                 if backoff:
-                    self.drive(-self.max_speed, -self.max_speed)
+                    self.drive(self.max_speed, self.max_speed)
                     deadline = time.monotonic() + 3.0
                     while time.monotonic() < deadline:
                         if self._undock_cancel.is_set():
@@ -341,6 +344,7 @@ class Robot:
             cli, self.client = self.client, None
             self.ready = False
             self.moving = False
+            self.commanded_wheels = (0, 0)
             self.battery = BatteryTracker()
             self._undock_cancel.set()
             self.undock_active = False
