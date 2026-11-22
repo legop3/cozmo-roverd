@@ -22,7 +22,7 @@ The four steps are:
 1. **Adapter:** choose your dedicated Wi-Fi device from a dropdown; adapters carrying the host's default route are disabled.
 2. **Cozmo:** display Cozmo's Wi-Fi credentials on the robot, click **Scan networks**, pick its SSID from the results and enter its password.
 3. **MRR server:** enter the WebSocket URL (for example, `ws://192.168.1.100:8080/rover`), then click **Test server connection**. This checks TCP reachability; a successful test does not prove rover authorization or full protocol operation.
-4. **Rover:** choose the name, color, speed, stop timeout, and video settings with simple controls. Click **Save & connect Cozmo**.
+4. **Rover:** choose the name, color, **Private rover** mode, speed, stop timeout, and video settings with simple controls. Click **Save & connect Cozmo**.
 
 The setup UI validates data, keeps existing passwords when appropriate, writes `/etc/cozmo-roverd.toml` atomically with 0600 permissions and maintains a `.bak` copy, enables the rover service, and restarts it with the new settings. The final panel shows service state, recent logs and start/stop controls.
 
@@ -32,7 +32,7 @@ The setup page listens on `0.0.0.0:8765` and does not change MRR itself. **There
 
 ## Controls
 
-Normal MRR drive commands control Cozmo's wheels (clamped to the configured speed). The camera servo maps to Cozmo's head tilt. The existing headlight control and a generic peripheral button control backpack LEDs. Generic peripherals expose lift height (0-100%) and a two-line monochrome face text display. The bridge reports Cozmo wheel speeds, battery voltage, cliff detection and charging status. It **does not fabricate** a battery percentage from voltage; percentage remains unavailable. Cozmo does not support Roomba auto-docking/brush commands, so those return explicit errors.
+The **Private rover** toggle maps directly to MRR’s native `private.enabled` hello property (off by default). It affects how MRR treats the rover; it does not secure the setup website, which remains intentionally accessible on your LAN.\n\nNormal MRR drive commands control Cozmo's wheels (clamped to the configured speed). The camera servo maps to Cozmo's head tilt. The existing headlight control and a generic peripheral button control backpack LEDs. Generic peripherals expose lift height (0-100%) and a two-line monochrome face text display. The bridge reports Cozmo wheel speeds, battery voltage, cliff detection and charging status. It **does not fabricate** a battery percentage from voltage; percentage remains unavailable. Cozmo does not support Roomba auto-docking/brush commands, so those return explicit errors.
 
 The local drive watchdog stops the robot on command silence, MRR disconnect, cliff detection, pickup or bridge shutdown. No stale movement commands replay after reconnect.
 
