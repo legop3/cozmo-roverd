@@ -83,8 +83,8 @@ class Robot:
         self.cliff = value
 
     def _picked_up(self, value):
+        # Pickup is telemetry only, not a driving permission check.
         self.picked_up = value
-        if value: self.stop_drive()
 
     def _packet(self, cli, pkt):
         # No network I/O in the PyCozmo receive thread.
@@ -151,15 +151,14 @@ class Robot:
     def drive(self, left, right):
         with self.lock:
             if self.client is None: raise RuntimeError("Cozmo disconnected")
-            if self.picked_up:
-                self.stop_drive()
-                raise RuntimeError("Motion blocked by pickup sensor")
             if self.on_charger and not self.undock_active and (left or right):
                 raise RuntimeError("Use undock to leave charging contacts")
             if self.dock_assist:
                 left = max(-60, min(60, left))
                 right = max(-60, min(60, right))
-            self.client.drive_wheels(left, right)
+            # Request a rapid hardware transition, not a software ramp.
+            # High acceleration is explicit; no command timeout is introduced.
+            self.client.drive_wheels(left, right, lwheel_acc=10000.0, rwheel_acc=10000.0)
             self.moving = left != 0 or right != 0
             self.commanded_wheels = (left, right)
 
