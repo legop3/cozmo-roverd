@@ -336,3 +336,84 @@ def test_tts_aborts_instead_of_unbounded_retransmission_on_stalled_ack():
     assert controller._cozmo_audio_aborted
     assert list(q.audio_queue) == []
     assert sent == []
+
+
+
+def test_tts_sends_only_one_unacknowledged_audio_frame_at_a_time():
+    from collections import deque
+    from threading import Lock
+    from queue import Queue
+    from types import SimpleNamespace as NS
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+    from pycozmo.protocol_encoder import OutputSilence
+
+    sent = []
+    window = NS(next_seq=0, expected_seq=0, max_seq=65534)
+    sender = NS(lock=Lock(), window=window, queue=Queue())
+    class AudioQueue:
+        def __init__(self):
+            self.lock = Lock()
+            self.audio_queue = deque(["audio1", "audio2", "audio3"])
+        def get(self):
+            with self.lock:
+                return (self.audio_queue.popleft() if self.audio_queue else None,
+                        None, None)
+    controller = NS(queue=AudioQueue(), animations_enabled=True,
+                    playing_audio=False, procedural_face_enabled=False,
+                    playing_animation=False, image_displayed=False)
+    def send(packet):
+        sent.append(packet)
+        # Mimic sender thread collecting a queued packet into the reliable
+        # window, but *not* acknowledging it until the test advances ACK.
+        window.next_seq += 1
+    cli = NS(anim_controller=controller,
+             conn=NS(send=send, send_thread=sender, post_event=lambda *a: None))
+    _limit_animation_idle_traffic(cli)
+    controller._run_frame()
+    assert sent == ["audio1"]
+    for _ in range(20):
+        controller._run_frame()
+    assert sent == ["audio1"]
+    assert list(controller.queue.audio_queue) == ["audio2", "audio3"]
+    window.expected_seq = 1
+    controller._run_frame()
+    assert sent == ["audio1", "audio2"]
+    controller._run_frame()
+    assert len(sent) == 2
+    window.expected_seq = 2
+    controller._run_frame()
+    assert sent[-1] == "audio3"
+    controller._run_frame()
+    assert len(sent) == 3  # trailing silence must await final ACK
+    window.expected_seq = 3
+    controller._run_frame()
+    assert isinstance(sent[-1], OutputSilence)
+    assert controller._cozmo_audio_frames_submitted == 3
+
+
+def test_idle_face_clock_is_low_rate_and_only_runs_when_connected():
+    from types import SimpleNamespace as NS
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+    from pycozmo.protocol_encoder import OutputSilence
+    import time
+
+    sent = []
+    controller = NS(
+        queue=NS(get=lambda: (None, None, None)),
+        animations_enabled=True, playing_audio=False,
+        procedural_face_enabled=False, playing_animation=False,
+        image_displayed=True)
+    cli = NS(anim_controller=controller,
+             conn=NS(send=sent.append, CONNECTED=3, state=3,
+                     post_event=lambda *a: None))
+    _limit_animation_idle_traffic(cli)
+    controller._cozmo_last_idle_silence_at = time.monotonic()
+    for _ in range(30):
+        controller._run_frame()
+    assert not sent
+    controller._cozmo_last_idle_silence_at -= 2
+    controller._run_frame()
+    assert len(sent) == 1
+    assert isinstance(sent[0], OutputSilence)
+    controller._run_frame()
+    assert len(sent) == 1
