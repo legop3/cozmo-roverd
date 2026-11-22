@@ -106,7 +106,6 @@ function configFromUI() {
     ssid: field("ssid"),
     password: field("password"),
     max_speed: Number(field("speed")),
-    watchdog_seconds: Number(field("watchdog")),
     fps: Number(field("fps")),
     video: $("video").checked,
     rtsp_url: field("rtsp-url").trim(),
@@ -129,7 +128,6 @@ function applyConfig(config, options) {
   $("rtsp-url").value = config.rtsp_url;
   selectOptions($("speed"), options.speeds.map(n => ({value:n,label:`${n} mm/s`})), config.max_speed);
   selectOptions($("fps"), options.fps.map(n => ({value:n,label:`${n} FPS`})), config.fps);
-  selectOptions($("watchdog"), options.watchdog.map(n => ({value:n,label:`${n} seconds`})), config.watchdog_seconds);
   $("fps").disabled = !config.video;
   makeColorChoices();
   state.dirty = false;
