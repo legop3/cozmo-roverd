@@ -1,0 +1,21 @@
+[Unit]
+Description=Cozmo RoverD local web setup dashboard
+Wants=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/cozmo-roverd/.venv/bin/cozmo-roverd-setup --config /etc/cozmo-roverd.toml
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc /run
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
