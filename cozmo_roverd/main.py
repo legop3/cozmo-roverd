@@ -17,13 +17,12 @@ from .wifi import Wifi
 
 LOG = logging.getLogger("cozmo-roverd")
 
-def _env_enabled(name):
-    """Only an explicit opt-in enables potentially disruptive LED packets.
-
-    Cozmo firmware 2381 has shown reliable-ACK stalls immediately after the
-    new automatic light commands. Keep core control and video independent.
-    """
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+def _env_enabled(name, default=False):
+    """Explicit opt-out for safe side LEDs, opt-in for experimental dock LEDs."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 class Bridge:
@@ -235,10 +234,10 @@ class Bridge:
                 except Exception as exc:
                     LOG.warning("Face status refresh failed: %s", exc)
                 last_face_at = now
-            # Isolate optional lighting from core Cozmo transport. Either
-            # feature can be tested individually after baseline stability is
-            # confirmed. Never send any LED commands unless opted in.
-            if _env_enabled("COZMO_BACKPACK_STATUS"):
+            # The simple side LEDs are on by default: just ONE LightStateSide
+            # packet on connect or MRR status change, with no animation.
+            # Keep charger discovery/animation off pending isolated testing.
+            if _env_enabled("COZMO_BACKPACK_STATUS", default=True):
                 try:
                     await asyncio.to_thread(self.robot.refresh_status_lights,
                                             self.mrr_connected)
