@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import inspect
 import math
 import os
 from pathlib import Path
@@ -38,6 +39,17 @@ DEFAULT_SUITE = (
     "backpack-side-camera", "audio-idle", "audio-camera",
 )
 SERVICE = "cozmo-roverd.service"
+
+
+def _pycozmo_transport_patched():
+    """Check the *installed* implementation, not a claimed version number."""
+    try:
+        from pycozmo.conn import SendThread
+        source = inspect.getsource(SendThread._send_packets)
+        return "self._send_frame(to_frame, first_seq, last_seq, last_ack)" in source
+    except (ImportError, OSError):
+        return False
+
 
 
 def _service_active():
@@ -418,7 +430,8 @@ def _worker(config_path, case, duration, output_dir):
             fd.flush()
             os.fsync(fd.fileno())
 
-    write("test_started", pycozmo_module=pycozmo.__file__)
+    write("test_started", pycozmo_module=pycozmo.__file__,
+          corrected_frame_split=_pycozmo_transport_patched())
     try:
         if _service_active():
             raise RuntimeError("Production cozmo-roverd.service is running; stop it before testing")
@@ -544,6 +557,9 @@ def main(argv=None):
         parser.error("--duration must be 3..120 seconds")
     if not args._worker and not args.i_understand_risk:
         parser.error("Requires --i-understand-risk: tests send real robot packets")
+    if not _pycozmo_transport_patched():
+        parser.error("Installed pycozmo still has the old frame-splitting bug. "
+                     "Run: sudo ./install-fedora.sh from the current checkout")
     if args._worker:
         if args.case is None:
             parser.error("Internal worker needs --case")
@@ -564,6 +580,7 @@ def main(argv=None):
             if _service_active():
                 raise RuntimeError("Rover service is still running; refusing to share robot")
         print("Cozmo diagnostic tests (real hardware)", flush=True)
+        print("PyCozmo split-frame sequence correction: VERIFIED installed", flush=True)
         print(f"Log directory: {suite_dir}", flush=True)
         for case in cases:
             results[case] = _run_case(case, args, suite_dir)
