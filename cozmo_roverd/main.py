@@ -379,7 +379,12 @@ class Bridge:
                 os.replace(tmp, target)
             except (OSError, TypeError, ValueError) as exc:
                 LOG.warning("Cannot export local telemetry: %s", exc)
-            await asyncio.sleep(0.05)
+            # File export is diagnostic-only and must not occupy the main
+            # asyncio loop 20 times a second or compete with live commands.
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
 
     async def _receive(self, ws):
         async for raw in ws:
