@@ -382,6 +382,7 @@ class Robot:
             self.last_tts_error = None
             self._face_scroll = 0
             self._face_last_content = None
+            self._face_sent_at = 0.0
 
     def refresh_face(self):
         """Update robot-local diagnostics once per second, not per camera frame."""
