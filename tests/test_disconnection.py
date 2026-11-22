@@ -64,3 +64,44 @@ def test_offline_commands_receive_explicit_errors_without_closing_socket():
     assert [item["id"] for item in results] == ["drive-1", "drive-2"]
     assert all(item["type"] == "ack" and item["status"] == "error" for item in results)
     assert all("reconnecting" in item["error"] for item in results)
+
+
+
+def test_failed_robot_connection_retries_and_recovers_without_wifi_reassociation(monkeypatch):
+    import time
+    from cozmo_roverd.robot_packet import BatteryTracker
+    async def run():
+        bridge = disconnected_bridge()
+        bridge.hardware_stage = "starting"
+        bridge.last_hardware_error = None
+        bridge.hardware_reconnect_attempts = 0
+        bridge.publish_state = lambda: None
+        calls = []
+        loop = asyncio.get_running_loop()
+        class Wifi:
+            def wait(self):
+                calls.append("wifi")
+            def active(self):
+                return True
+        class Robot:
+            ready = False
+            battery = BatteryTracker()
+            last_sensor = time.monotonic()
+            def connect(self):
+                calls.append("connect")
+                if calls.count("connect") == 1:
+                    raise RuntimeError("first handshake failed")
+                self.ready = True
+                loop.call_soon_threadsafe(bridge.stop_event.set)
+            def close(self):
+                calls.append("close")
+                self.ready = False
+        bridge.wifi = Wifi()
+        bridge.robot = Robot()
+        await asyncio.wait_for(bridge._hardware(), timeout=6)
+        return calls, bridge.hardware_reconnect_attempts
+    calls, attempts = asyncio.run(run())
+    assert calls.count("connect") == 2
+    assert calls.count("wifi") == 2
+    assert calls.count("close") == 2
+    assert attempts == 2
