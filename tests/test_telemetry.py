@@ -103,10 +103,13 @@ def test_bridge_state_sender_resends_snapshot_and_never_needs_sensor_queue():
         bridge.hardware_ready.set()
         bridge.stop_event = asyncio.Event()
         bridge.state_dirty = asyncio.Event()
+        from cozmo_roverd.robot_packet import BatteryTracker
+        tracker = BatteryTracker()
+        tracker.observe(3.9, 0x1000)
         bridge.robot = NS(
-            charging=False, on_charger=True, headlight=False,
-            voltage=3.9, ready=True,
-            latest={"battery_voltage_v": 3.9, "cliff_detected": False,
+            charging=tracker.charging, on_charger=True, headlight=False,
+            voltage=3.9, ready=True, battery=tracker,
+            latest={"battery_voltage_v": 3.9, "on_charger": True,
                     "wheel_speeds_mmps": {"left": 8, "right": 9}},
         )
         socket = Socket()
