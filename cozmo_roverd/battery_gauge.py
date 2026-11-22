@@ -54,6 +54,9 @@ class VoltageFuelGauge:
         self._charge_started = None
         self._last_full_detected = None
         self._loaded = None
+        self.rest_confirmed = False
+        self._rest_low_since = None
+        self.low_confirmed = False
 
     def restore(self, data, *, now_wall=None):
         """Warm start from bounded, recent measurements; never trust old SOC."""
@@ -104,7 +107,9 @@ class VoltageFuelGauge:
         if self.soc is None:
             # Charging voltage is biased high; warm-start saved SOC when present.
             # A first-ever estimate is explicitly uncertain.
-            first = ocv_percent(v)
+            # Under wheel load the terminal voltage can be far below its
+            # open-circuit value. Avoid initializing at an artificially low SOC.
+            first = ocv_percent(min(4.17, v + (0.12 if mode == "moving" else 0)))
             if self._loaded is not None:
                 first = self._loaded
                 if mode == "rest" and abs(first - ocv_percent(v)) > 35:
@@ -125,8 +130,19 @@ class VoltageFuelGauge:
                 self.rest_voltage = v if self.rest_voltage is None else _approach(
                     self.rest_voltage, v, elapsed, 30.0)
                 target = ocv_percent(self.rest_voltage)
+                self.rest_confirmed = True
                 # Slow down recalibration; allow real SOC correction over time.
                 self.soc = _approach(self.soc, target, elapsed, 100.0)
+                # Low-battery status requires sustained resting evidence, not
+                # a momentary motor-induced drop or a charging-voltage guess.
+                if target <= 15:
+                    if self._rest_low_since is None:
+                        self._rest_low_since = now
+                    if now - self._rest_low_since >= 25.0:
+                        self.low_confirmed = True
+                elif target >= 25:
+                    self._rest_low_since = None
+                    self.low_confirmed = False
         elif mode == "moving":
             if prior != "moving":
                 self._motion_since = now
@@ -143,7 +159,9 @@ class VoltageFuelGauge:
             # During load, charge may fall but cannot rise from a sag estimate.
             target = ocv_percent(min(4.17, v + self.learned_sag_v))
             if target < self.soc:
-                self.soc = _approach(self.soc, target, elapsed, 180.0)
+                self.soc = max(
+                    self.soc - 0.07 * elapsed,
+                    _approach(self.soc, target, elapsed, 180.0))
             self._rest_since = None
         else:
             self._rest_since = None
@@ -185,4 +203,6 @@ class VoltageFuelGauge:
             "rest_voltage_v": round(self.rest_voltage, 4) if self.rest_voltage is not None else None,
             "learned_motor_sag_v": round(self.learned_sag_v, 4),
             "method": "voltage_only_state_estimator",
+            "rest_confirmed": self.rest_confirmed,
+            "low_confirmed": self.low_confirmed,
         }
