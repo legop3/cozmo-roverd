@@ -8,6 +8,7 @@ import math
 import threading
 import time
 from PIL import Image, ImageDraw
+from .face import status_image
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
@@ -39,6 +40,13 @@ class Robot:
         self.packets_received = 0
         self.last_packet_error = None
         self.packet_status = {}
+        self.last_tts = ""
+        self.last_tts_error = None
+        self.last_tts_frames = 0
+        self.last_tts_played_at = None
+        self.face_frames_sent = 0
+        self._face_scroll = 0
+        self._face_last_content = None
 
     def connect(self):
         import pycozmo
@@ -61,6 +69,8 @@ class Robot:
                             lambda _client, pkt: self._packet(cli, pkt))
             cli.enable_camera(enable=True, color=True)
             cli.set_volume(50000)
+            cli.enable_animations(True)
+            cli.enable_procedural_face(False)
             cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
             self.configure_camera(cli)
             with self.lock:
@@ -287,58 +297,81 @@ class Robot:
             self.client.set_all_backpack_lights(
                 pycozmo.lights.white_light if enabled else pycozmo.lights.off_light)
 
-    def volume(self, percent):
+    def note_tts(self, text):
+        """Remember a speech message even if synthesis or playback fails."""
         with self.lock:
-            if self.client is None: raise RuntimeError("Cozmo disconnected")
-            self.client.set_volume(round(65535 * percent / 100))
+            self.last_tts = " ".join(str(text).split())[:512]
+            self.last_tts_error = None
+            self._face_scroll = 0
+            self._face_last_content = None
 
-    def clear_face(self):
+    def refresh_face(self):
+        """Update robot-local diagnostics once per second, not per camera frame."""
         with self.lock:
-            if self.client is None: raise RuntimeError("Cozmo disconnected")
-            self.client.clear_screen()
+            if self.client is None or not self.ready:
+                return False
+            battery = self.battery
+            image = status_image(
+                voltage=battery.voltage,
+                percent=battery.percent,
+                charging=battery.charging,
+                docked=battery.docked,
+                cliff=self.cliff, picked_up=self.picked_up,
+                moving=self.moving, wheels=self.commanded_wheels,
+                last_tts=self.last_tts, audio_error=self.last_tts_error,
+                scroll=self._face_scroll,
+            )
+            content = image.tobytes()
+            self._face_scroll += 1
+            if content == self._face_last_content:
+                return False
+            self.client.display_image(image)
+            self.face_frames_sent += 1
+            self._face_last_content = content
+            return True
 
     def speak(self, text, *, speed=1.0):
-        """Generate offline speech locally and play through Cozmo's speaker."""
-        message = str(text).strip()[:512]
+        """Generate eSpeak audio and queue validated frames to Cozmo's speaker."""
+        import pycozmo
+        message = " ".join(str(text).split())[:512]
         if not message:
             raise ValueError("TTS text is empty")
         speed = max(0.5, min(2.0, float(speed)))
-        # PyCozmo accepts 22050-Hz signed 16-bit PCM, not arbitrary WAV.
-        with tempfile.TemporaryDirectory(prefix="cozmo-speech-") as directory:
-            raw = str(Path(directory) / "raw.wav")
-            output = str(Path(directory) / "cozmo.wav")
-            try:
-                subprocess.run(["espeak-ng", "-s", str(round(175 * speed)),
-                                "-w", raw, message],
-                               check=True, capture_output=True, timeout=20)
-                subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-                                "-y", "-i", raw, "-ar", "22050", "-ac", "1",
-                                "-c:a", "pcm_s16le", output],
-                               check=True, capture_output=True, timeout=20)
-            except FileNotFoundError as exc:
-                raise RuntimeError("Install espeak-ng and ffmpeg for Cozmo TTS") from exc
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-                raise RuntimeError("Offline speech generation failed") from exc
+        try:
+            with tempfile.TemporaryDirectory(prefix="cozmo-speech-") as directory:
+                raw = str(Path(directory) / "raw.wav")
+                output = str(Path(directory) / "cozmo.wav")
+                subprocess.run(
+                    ["espeak-ng", "-s", str(round(175 * speed)), "-w", raw, message],
+                    check=True, capture_output=True, timeout=20)
+                subprocess.run(
+                    ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                     "-i", raw, "-ar", "22050", "-ac", "1",
+                     "-c:a", "pcm_s16le", output],
+                    check=True, capture_output=True, timeout=20)
+                if not Path(output).is_file() or Path(output).stat().st_size <= 44:
+                    raise RuntimeError("TTS produced no PCM audio")
+                frames = pycozmo.audio.load_wav(output)
+                if not frames:
+                    raise RuntimeError("TTS produced no Cozmo audio frames")
             with self.lock:
-                if self.client is None:
+                if self.client is None or not self.ready:
                     raise RuntimeError("Cozmo disconnected")
-                self.client.play_audio(output)
-
-    def face(self, text):
-        image = Image.new("1", (128, 32), color=0)
-        draw = ImageDraw.Draw(image)
-        # Fits up to two short lines; overflow deliberately clipped.
-        words = str(text).split()
-        lines = ["", ""]
-        for word in words:
-            i = 0 if len(lines[0] + " " + word) <= 19 else 1
-            if len(lines[i] + " " + word) <= 19:
-                lines[i] = (lines[i] + " " + word).strip()
-        for i, line in enumerate(lines):
-            draw.text((2, 2 + i * 15), line, fill=1)
-        with self.lock:
-            if self.client is None: raise RuntimeError("Cozmo disconnected")
-            self.client.display_image(image)
+                controller = self.client.anim_controller
+                controller.enable_animations(True)
+                # Explicitly use the same 30-FPS output-audio queue that the
+                # built-in PyCozmo playback uses, with a verified nonempty WAV.
+                controller.play_audio(frames)
+                self.last_tts_frames = len(frames)
+                self.last_tts_played_at = time.time()
+                self.last_tts_error = None
+            LOG.info("Queued %d Cozmo speaker frames for TTS", len(frames))
+        except (OSError, subprocess.CalledProcessError,
+                subprocess.TimeoutExpired, ValueError, RuntimeError) as exc:
+            with self.lock:
+                self.last_tts_error = str(exc)[:180]
+            LOG.exception("Cozmo speaker TTS failed")
+            raise RuntimeError(f"Cozmo TTS failed: {exc}") from exc
 
     def close(self):
         with self.lock:
