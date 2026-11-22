@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import signal
+import threading
 import time
 from pathlib import Path
 import websockets
@@ -32,6 +33,9 @@ class Bridge:
         self.cfg = config
         self.stop_event = asyncio.Event()
         self.hardware_ready = asyncio.Event()
+        # MRR commands run in worker threads. Only the hardware supervisor
+        # may destroy/recreate the active PyCozmo client.
+        self._reconnect_requested = threading.Event()
         self.state_dirty = asyncio.Event()
         self.results = asyncio.Queue(maxsize=16)
         self.mrr_connected = False
@@ -197,11 +201,10 @@ class Bridge:
             control, value = p.get("control"), p.get("value")
             if control == "lift" and type(value) is int and 0 <= value <= 100:
                 self.robot.lift(value)
-            elif control == "camera_auto_exposure" and type(value) is bool:
-                if value:
-                    self.robot.set_camera_auto_exposure()
-            elif control == "camera_manual_exposure" and type(value) is int and 1 <= value <= 67:
-                self.robot.set_camera_manual_exposure(value)
+            elif control == "reconnect" and value is True:
+                # Request a clean teardown through _hardware. Do not close
+                # the client here: execute() runs on a different thread.
+                self._reconnect_requested.set()
             else:
                 raise ValueError("unsupported peripheral value")
         else:
@@ -526,6 +529,11 @@ class Bridge:
                 stalled_ack_since = None
                 previous_expected_seq = None
                 while not self.stop_event.is_set():
+                    if self._reconnect_requested.is_set():
+                        LOG.info("Manual Cozmo reconnection requested from MRR")
+                        if diagnostics.active():
+                            diagnostics.active().event("hardware_manual_reconnect")
+                        break
                     now = time.monotonic()
                     if now - last_wifi_check >= 2.0:
                         if self.wifi.active():
@@ -598,6 +606,9 @@ class Bridge:
                         video=(self.publisher.diagnostics() if self.publisher else None))
             finally:
                 self.hardware_ready.clear()
+                # A momentary UI button must trigger exactly one cycle, not
+                # repeat across reconnection attempts.
+                self._reconnect_requested.clear()
                 if getattr(self, "_hardware_offline_since", None) is None:
                     self._hardware_offline_since = time.monotonic()
                 self.hardware_stage = "cleaning_up"
