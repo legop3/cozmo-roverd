@@ -7,6 +7,26 @@ import pytest
 from cozmo_roverd import setup
 
 
+def test_private_rover_saved_and_validated(tmp_path):
+    data = {
+        "name":"cozmo", "description":"Cozmo", "color":"#3ba8ff",
+        "server_url":"ws://localhost:8080/rover", "interface":"wlan1",
+        "ssid":"Cozmo_ABC", "password":"password123",
+        "max_speed":100, "watchdog_seconds":0.65,
+        "video":True, "fps":15, "rtsp_url":"", "private":True,
+    }
+    with patch.object(setup, "interfaces", return_value=[
+            {"name":"wlan1", "selectable":True}]):
+        result = setup.validate_payload(data, {})
+        assert result["rover"]["private"] is True
+        target = tmp_path / "test.toml"
+        setup.write_config(str(target), result)
+        from cozmo_roverd.config import load
+        assert load(str(target)).private is True
+        with pytest.raises(ValueError, match="Private rover"):
+            setup.validate_payload({**data, "private":"true"}, {})
+
+
 def test_nmcli_escaped_ssid():
     assert setup.parse_nmcli(r"Cozmo\:123:80:WPA2:*") == ["Cozmo:123", "80", "WPA2", "*"]
 
