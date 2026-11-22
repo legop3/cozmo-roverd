@@ -595,7 +595,7 @@ class Bridge:
                         video=(self.publisher.diagnostics() if self.publisher else None))
             finally:
                 self.hardware_ready.clear()
-                if self._hardware_offline_since is None:
+                if getattr(self, "_hardware_offline_since", None) is None:
                     self._hardware_offline_since = time.monotonic()
                 self.hardware_stage = "cleaning_up"
                 if diagnostics.active():
