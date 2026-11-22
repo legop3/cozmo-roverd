@@ -44,6 +44,15 @@ class Bridge:
         self.robot = Robot(max_speed=config.max_speed, on_state=self.publish_state,
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
                            camera_mode=config.camera_mode)
+        # Reuse recent SOC/sag learning across service restarts. Do not write
+        # persistent files from the PyCozmo receive callback.
+        self._gauge_file = Path("/var/log/cozmo-roverd/battery-gauge.json")
+        try:
+            if self._gauge_file.is_file():
+                saved = json.loads(self._gauge_file.read_text())
+                self.robot.battery.gauge.restore(saved)
+        except (OSError, ValueError, TypeError) as exc:
+            LOG.warning("Ignoring stored fuel gauge data: %s", exc)
         self.head_degrees = 10.0
         self._diag_last_sample = 0.0
         if self.publisher:
@@ -243,6 +252,7 @@ class Bridge:
         target = Path("/run/cozmo-roverd/telemetry.json")
         last_face_at = -1.0
         last_telemetry_at = -1.0
+        last_gauge_saved_at = -1.0
         while not self.stop_event.is_set():
             now = time.monotonic()
             if last_face_at < 0 or now - last_face_at >= 0.25:
@@ -274,6 +284,20 @@ class Bridge:
                 await asyncio.sleep(0.05)
                 continue
             last_telemetry_at = now
+            if last_gauge_saved_at < 0 or now - last_gauge_saved_at >= 30.0:
+                # Save only a compact, validated model snapshot, at most once
+                # per 30 seconds and never for each incoming battery packet.
+                last_gauge_saved_at = now
+                if hasattr(self, "_gauge_file"):
+                    try:
+                        learned = self.robot.battery.gauge.export()
+                        if learned is not None:
+                            self._gauge_file.parent.mkdir(parents=True, exist_ok=True)
+                            gauge_tmp = self._gauge_file.with_suffix(".tmp")
+                            gauge_tmp.write_text(json.dumps(learned))
+                            os.replace(gauge_tmp, self._gauge_file)
+                    except (OSError, ValueError, TypeError) as exc:
+                        LOG.warning("Cannot save battery gauge calibration: %s", exc)
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 snap = dict(self.robot.latest)
