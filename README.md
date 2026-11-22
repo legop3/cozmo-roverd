@@ -35,7 +35,7 @@ The local drive watchdog stops the robot on command silence, MRR disconnect, cli
 
 Camera images are published via FFmpeg to the server's existing MediaMTX RTSP endpoint, default `rtsp://SERVER:8554/<rover.name>`. Resolution: 320x240, up to 15 FPS, H.264 low-latency settings. The server must accept RTSP publishes. If the default MediaMTX RTSP port is not 8554, configure `media.rtsp_url` explicitly.
 
-**Note:** Fedora's `ffmpeg-free` build may not contain the `libx264` encoder. Check `ffmpeg -encoders | grep libx264` and install a compatible FFmpeg build if absent. The installer does not silently enable third-party repositories.
+**Note:** Fedora's `ffmpeg-free` build may not contain `libx264`. The bridge automatically uses `libopenh264` when available instead. Enable the official `fedora-cisco-openh264` repository and install `openh264` if necessary, or install a full FFmpeg build. Check `ffmpeg -encoders | grep -E 'libx264|libopenh264'`. The installer does not silently enable third-party repositories.
 
 ## Status and current limitations
 
@@ -54,7 +54,7 @@ python3 -m venv .venv
 - `nmcli device status`: identify the dedicated Wi-Fi device and ensure it is not the uplink.
 - `nmcli -f GENERAL,IP4 device show wlan1`: inspect Cozmo-only link.
 - `journalctl -u cozmo-roverd -n 100 --no-pager`: view connection, command and media errors.
-- `ffmpeg -encoders | grep libx264`: check video encoder.
+- `ffmpeg -encoders | grep -E 'libx264|libopenh264'`: check video encoder.
 - If Cozmo drops its hotspot, restore it on the robot and the service retries connection.
 
 Security: Cozmo Wi-Fi credentials are stored in root-owned `/etc/cozmo-roverd.toml`; don't commit real credentials. The service intentionally runs as root so NetworkManager can activate the dedicated interface; it must be installed only on a trusted Linux host.
