@@ -1,5 +1,5 @@
 [Unit]
-Description=Cozmo RoverD local web setup dashboard
+Description=Cozmo RoverD LAN web setup dashboard
 Wants=NetworkManager.service
 After=NetworkManager.service
 
