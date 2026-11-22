@@ -33,7 +33,6 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,48}$")
 COLORS = ("#3ba8ff", "#32c49b", "#ffb44c", "#b48cff", "#ff6f8a", "#f4f4f5")
 SPEEDS = (40, 60, 80, 100, 120, 150, 180, 200)
 FPS = (5, 10, 15)
-WATCHDOG = (0.35, 0.5, 0.65, 0.8, 1.0, 1.5)
 MAX_BODY = 8192
 
 
@@ -176,7 +175,6 @@ def public_config(path: str) -> dict:
         "ssid": wifi.get("ssid", ""),
         "has_password": bool(wifi.get("password")),
         "max_speed": rover.get("max_speed", 100),
-        "watchdog_seconds": rover.get("watchdog_seconds", 0.65),
         "video": media.get("enabled", True),
         "fps": media.get("fps", 15),
         "rtsp_url": media.get("rtsp_url", ""),
@@ -189,7 +187,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Invalid configuration")
     allowed = {"name", "description", "color", "private", "server_url", "interface", "ssid", "password",
-               "max_speed", "watchdog_seconds", "video", "fps", "rtsp_url"}
+               "max_speed", "video", "fps", "rtsp_url", "watchdog_seconds"}
     if set(payload) - allowed:
         raise ValueError("Unknown configuration field")
     name = str(payload.get("name", "")).strip()
@@ -229,13 +227,10 @@ def validate_payload(payload: dict, current: dict) -> dict:
         raise ValueError("Private rover option must be on or off")
     max_speed = payload.get("max_speed")
     fps = payload.get("fps")
-    watchdog = payload.get("watchdog_seconds")
     if type(max_speed) is not int or max_speed not in SPEEDS:
         raise ValueError("Choose a speed from the dropdown")
     if type(fps) is not int or fps not in FPS:
         raise ValueError("Choose an FPS value from the dropdown")
-    if type(watchdog) not in (float, int) or float(watchdog) not in WATCHDOG:
-        raise ValueError("Choose a watchdog timeout from the dropdown")
     video = payload.get("video")
     if type(video) is not bool:
         raise ValueError("Video setting is invalid")
@@ -246,7 +241,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
             raise ValueError("RTSP override must be rtsp://host:port/path (no credentials)")
     return {"rover": {"name": name, "description": desc, "color": color, "private": private,
                       "server_url": url, "max_speed": max_speed,
-                      "watchdog_seconds": watchdog},
+                      },
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
             "media": {"enabled": video, "fps": fps, "rtsp_url": rtsp}}
 
@@ -365,7 +360,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             elif self.path == "/api/config":
                 self.send_json(200, {"config": public_config(self.config_path),
-                                     "options": {"speeds": SPEEDS, "fps": FPS, "watchdog": WATCHDOG, "colors": COLORS}})
+                                     "options": {"speeds": SPEEDS, "fps": FPS, "colors": COLORS}})
             elif self.path == "/api/interfaces":
                 self.send_json(200, {"interfaces": interfaces(), "radio": radio_status()})
             elif self.path == "/api/telemetry":
