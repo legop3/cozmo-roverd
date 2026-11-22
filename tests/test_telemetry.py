@@ -172,3 +172,40 @@ def test_docked_robot_not_disconnected_just_for_silent_telemetry():
     robot.battery.observe(3.9, 0, now=time.monotonic() + 1)
     assert robot.battery.docked is False
     assert not robot.is_healthy()
+
+
+
+def test_reconnect_keeps_last_valid_voltage_while_docked():
+    """A docked robot may not send an immediate fresh voltage after reconnect."""
+    robot = Robot(max_speed=100, on_state=lambda: None,
+                  on_sensor=lambda: None, on_frame=lambda frame: None)
+    robot._packet(fake_client(flags=0x3000, battery=3.94),
+                  fake_packet(0x3000, 3.94))
+    original_tracker = robot.battery
+    assert robot.voltage == 3.94
+    robot.close()
+    assert robot.battery is original_tracker
+    assert robot.battery.voltage == 3.94
+    assert robot.voltage == 3.94
+    assert robot.on_charger is True
+    # A zero / invalid voltage measurement should not erase the last
+    # measured value just because charging status is still being sent.
+    robot._packet(fake_client(flags=0x3000, battery=0.0),
+                  fake_packet(0x3000, 0.0))
+    assert robot.battery.voltage == 3.94
+    assert robot.voltage == 3.94
+    # A subsequent valid report supersedes the historical measurement.
+    robot._packet(fake_client(flags=0x3000, battery=4.01),
+                  fake_packet(0x3000, 4.01))
+    assert robot.voltage == 4.01
+
+
+def test_battery_tracker_keeps_voltage_even_when_telemetry_goes_stale():
+    from cozmo_roverd.robot_packet import BatteryTracker
+    tracker = BatteryTracker()
+    tracker.observe(3.87, 0x3000, now=100.0)
+    assert tracker.stale(now=104.0)
+    assert tracker.voltage == 3.87
+    tracker.observe(0.0, 0x3000, now=110.0)
+    assert tracker.voltage == 3.87
+    assert tracker.docked is True
