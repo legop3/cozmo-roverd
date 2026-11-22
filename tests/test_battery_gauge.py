@@ -74,7 +74,41 @@ def test_low_warning_uses_resting_3_3v_not_motor_sag():
 def test_short_motor_sag_never_confirms_low_voltage():
     g = VoltageFuelGauge()
     tick(g, 3.65, 0, 80)
-    tick(g, 3.1, 80, 40, moving=True)
+    tick(g, 3.1, 80, 2, moving=True)
     assert g.low_confirmed is False
-    tick(g, 3.65, 120, 40)
+    tick(g, 3.65, 82, 40)
+    assert g.low_confirmed is False
+
+
+def test_sustained_loaded_voltage_warns_before_power_loss():
+    g = VoltageFuelGauge()
+    tick(g, 3.80, 0, 100)
+    tick(g, 3.40, 100, 8, moving=True)
+    assert g.low_confirmed is False
+    g.observe(3.40, now=108, moving=True)
+    assert g.low_confirmed is True
+    assert g.critical_confirmed is False
+    # A short recovery does not hide a real low-battery warning.
+    tick(g, 3.75, 109, 3, moving=True)
+    assert g.low_confirmed is True
+
+
+def test_sustained_critical_loaded_voltage_triggers_fast():
+    g = VoltageFuelGauge()
+    tick(g, 3.80, 0, 90)
+    tick(g, 3.14, 90, 3, moving=True)
+    assert g.low_confirmed is False
+    g.observe(3.14, now=93, moving=True)
+    assert g.critical_confirmed is True
+    assert g.low_confirmed is True
+
+
+def test_low_voltage_recovery_requires_rest_not_one_motor_spike():
+    g = VoltageFuelGauge()
+    tick(g, 3.85, 0, 50)
+    tick(g, 3.40, 50, 15, moving=True)
+    assert g.low_confirmed is True
+    tick(g, 3.90, 65, 8, moving=True)
+    assert g.low_confirmed is True
+    tick(g, 3.95, 73, 250)
     assert g.low_confirmed is False
