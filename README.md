@@ -55,6 +55,8 @@ Camera images are published via FFmpeg to the server's existing MediaMTX RTSP en
 
 The bridge retains its MRR registration while reconnecting Cozmo. It now reuses an active NetworkManager association, waits through brief RobotState pauses, and retries fresh PyCozmo handshakes without transmitting a protocol Disconnect to an absent robot. A stalled PyCozmo start/stop triggers a supervised service restart rather than blocking recovery indefinitely. In the setup dashboard, **Cozmo recovery stage**, **Last Cozmo failure**, and **Robot reconnect attempts** explain what the bridge is doing.
 
+The Cozmo firmware also has an **animation keyframe buffer** much smaller than the maximum Wi-Fi packet size. If the dashboard image encodes above a conservative 160-byte target, the bridge automatically switches to a smaller generated bitmap (battery voltage and latest speech), and then to a battery-only graphic if needed. Face updates are limited to every five seconds and are deferred when the reliable control channel is busy; no oversized image is knowingly queued. `face_last_encoded_bytes` and `face_last_error` show the current behavior. This reduces animation-buffer pressure but does not prove every remaining firmware buffer warning is eliminated.
+
 FFmpeg's RTSP/encoding errors are written to `/run/cozmo-roverd/ffmpeg.log`, not endlessly printed in the bridge's journal. Use `journalctl -u cozmo-roverd -n 100 --no-pager` for connection messages and `cat /run/cozmo-roverd/ffmpeg.log` only when debugging video. This does not prove the physical cause of a Wi-Fi/robot disconnect; it makes recovery and failures observable.
 
 ## In-video HUD, camera field of view, and temporary disconnects
