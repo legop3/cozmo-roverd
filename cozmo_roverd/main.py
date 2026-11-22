@@ -100,8 +100,9 @@ class Bridge:
             if not isinstance(payload, dict): raise ValueError("driveDirect missing")
             left = bounded_speed(payload.get("left"), self.cfg.max_speed)
             right = bounded_speed(payload.get("right"), self.cfg.max_speed)
-            if not self.robot.undock_active:
-                self.robot.drive(left, right)
+            if self.robot.undock_active:
+                self.robot.interrupt_undock()
+            self.robot.drive(left, right)
         elif cmd == "servo":
             payload = msg.get("servo")
             if not isinstance(payload, dict): raise ValueError("servo payload missing")
@@ -287,7 +288,9 @@ class Bridge:
             except Exception as exc:
                 LOG.warning("MRR disconnected: %s", exc)
             self.mrr_connected = False
-            self.robot.stop_drive()
+            # Losing the MRR connection does not change the last commanded
+            # wheel speed. Only a subsequent drive command or an explicit
+            # robot lifecycle operation should do that.
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=3)
             except asyncio.TimeoutError:
