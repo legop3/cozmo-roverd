@@ -24,7 +24,9 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
         "horn": {"enabled": False},
         "media": {"rtspPort": 8554, "video": {"enabled": video, "profile": "custom"}},
         "peripherals": [{"id": "cozmo", "name": "Cozmo", "controls": [
-            {"id": "lift", "name": "Lift height (%)", "type": "slider", "min": 0, "max": 100}
+            {"id": "lift", "name": "Lift height (%)", "type": "slider", "min": 0, "max": 100},
+            {"id": "camera_auto_exposure", "name": "Auto exposure", "type": "button", "mode": "momentary"},
+            {"id": "camera_manual_exposure", "name": "Manual exposure (ms)", "type": "slider", "min": 1, "max": 67}
         ]}],
     }
 
