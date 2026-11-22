@@ -42,9 +42,11 @@ def test_face_updates_only_on_change_but_last_message_is_persistent():
     assert robot.refresh_face()
     assert not robot.refresh_face()
     robot.note_tts("This is a message")
-    assert robot.refresh_face()
-    assert robot.last_tts == "This is a message"
+    # The new message is displayed as soon as it arrives, even if later
+    # audio synthesis/playback gets stuck.
     assert len(robot.client.images) == 2
+    assert not robot.refresh_face()
+    assert robot.last_tts == "This is a message"
     assert all(isinstance(im, Image.Image) for im in robot.client.images)
     assert all(im.size == (128, 32) for im in robot.client.images)
 
