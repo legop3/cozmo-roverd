@@ -15,7 +15,7 @@ class Config:
     description: str = "Anki Cozmo"
     color: str = "#3ba8ff"
     max_speed: int = 250
-    camera_mode: str = "bright"
+    camera_mode: str = "auto"
     video: bool = True
     private: bool = False
     rtsp_url: str = ""
@@ -32,7 +32,7 @@ def load(path: str) -> Config:
         description=str(rover.get("description", "Anki Cozmo")),
         color=str(rover.get("color", "#3ba8ff")),
         max_speed=int(rover.get("max_speed", 250)),
-        camera_mode=str(media.get("camera_mode", "bright")),
+        camera_mode=str(media.get("camera_mode", "auto")),
         video=bool(media.get("enabled", True)),
         private=rover.get("private", False),
         rtsp_url=str(media.get("rtsp_url", "")),
