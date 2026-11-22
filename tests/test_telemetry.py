@@ -305,7 +305,8 @@ def test_charger_contact_stops_wheels_once_and_rearms_after_undock():
                   on_sensor=lambda: None, on_frame=lambda _: None)
     robot.client = NS(
         drive_wheels=lambda left, right: stops.append((left, right)),
-        set_lift_height=lambda height: raises.append(height))
+        set_lift_height=lambda height: raises.append(height),
+        set_head_angle=lambda angle: None)
     robot.ready = True
     robot.moving = True
     robot.commanded_wheels = (100, 100)
@@ -315,9 +316,10 @@ def test_charger_contact_stops_wheels_once_and_rearms_after_undock():
 
     receive(0)
     assert stops == []
+    assert raises == [32.0]  # first observed off-dock state
     receive(0x1000)
     assert stops == [(0, 0)]
-    assert raises == [92.0]
+    assert raises == [32.0, 92.0]
     assert robot.moving is False
     assert robot.commanded_wheels == (0, 0)
     # Charging status and a momentary contact drop must not resend stop.
@@ -331,7 +333,7 @@ def test_charger_contact_stops_wheels_once_and_rearms_after_undock():
     receive(0)
     receive(0x1000)
     assert stops == [(0, 0), (0, 0)]
-    assert raises == [92.0, 92.0]
+    assert raises == [32.0, 92.0, 32.0, 92.0]
 
 
 
