@@ -118,9 +118,10 @@ class Bridge:
         pass
 
     def handle_frame(self, image):
-        self.robot.observe_camera_brightness(image)
+        # No image analysis in the PyCozmo camera callback.
         if self.publisher:
             self.publisher.submit(image)
+        self.robot.queue_camera_analysis(image)
 
     def report_result(self, command_id, error=None):
         def enqueue():
@@ -287,50 +288,31 @@ class Bridge:
             "sample_age": battery.age_seconds(),
         }
 
+    async def _maintenance(self, method, interval):
+        """Run each maintenance responsibility independently of the others.
+
+        Slow camera settings or charger discovery cannot hold up telemetry
+        export, the next maintenance task, or the PyCozmo receive thread.
+        Robot command serialization still belongs to the Robot's lock.
+        """
+        while not self.stop_event.is_set():
+            try:
+                await asyncio.to_thread(method)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOG.exception("Cozmo maintenance failed: %s", method.__name__)
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+
     async def _telemetry_file(self):
-        """Export Cozmo-only fields the MRR sensor protocol cannot represent."""
+        """Export and persist at most once a second, independently of motors."""
         target = Path("/run/cozmo-roverd/telemetry.json")
-        last_face_at = -1.0
-        last_telemetry_at = -1.0
         last_gauge_saved_at = -1.0
         while not self.stop_event.is_set():
             now = time.monotonic()
-            if last_face_at < 0 or now - last_face_at >= 0.25:
-                try:
-                    await asyncio.to_thread(self.robot.refresh_face)
-                    await asyncio.to_thread(self.robot.advance_face_display)
-                except Exception as exc:
-                    LOG.warning("Face status refresh failed: %s", exc)
-                last_face_at = now
-            # Update sensor gain/shutter in the normal worker, never from the
-            # camera receive thread. No digital video brightness processing.
-            try:
-                await asyncio.to_thread(self.robot.refresh_auto_camera_exposure)
-            except Exception as exc:
-                LOG.warning("Automatic camera exposure update failed: %s", exc)
-            # Reconcile the actual lift position when docked/assisting.
-            # A single SetLiftHeight can be ignored at charger contact;
-            # retry only if fresh lift telemetry still shows it below target.
-            try:
-                await asyncio.to_thread(self.robot.refresh_dock_lift)
-            except Exception as exc:
-                LOG.warning("Dock lift position correction failed: %s", exc)
-            # One-time steady backpack colors; charger changes only on
-            # dock-contact / dock-assist transitions. Deduped in Robot.
-            # A congested send window defers updates until it clears.
-            try:
-                await asyncio.to_thread(self.robot.refresh_status_lights)
-            except Exception as exc:
-                LOG.warning("Backpack lights update failed: %s", exc)
-            if last_telemetry_at < 0 or now - last_telemetry_at >= 1.0:
-                try:
-                    await asyncio.to_thread(self.robot.refresh_charger_lights)
-                except Exception as exc:
-                    LOG.warning("Charger lights update failed: %s", exc)
-            if last_telemetry_at >= 0 and now - last_telemetry_at < 1.0:
-                await asyncio.sleep(0.05)
-                continue
-            last_telemetry_at = now
             if last_gauge_saved_at < 0 or now - last_gauge_saved_at >= 30.0:
                 # Save only a compact, validated model snapshot, at most once
                 # per 30 seconds and never for each incoming battery packet.
@@ -366,6 +348,8 @@ class Bridge:
                     "rover_state": self.current_state()["state"],
                     "video": self.publisher.diagnostics() if self.publisher else {"enabled": False},
                     "packets_received": self.robot.packets_received,
+                    "state_packets_coalesced": self.robot.state_packets_coalesced,
+                    "camera_analysis_skipped": self.robot.camera_analysis_skipped,
                     "last_tts": self.robot.last_tts,
                     "last_tts_error": self.robot.last_tts_error,
                     "last_tts_frames": self.robot.last_tts_frames,
@@ -644,6 +628,20 @@ class Bridge:
         if self.publisher: self.publisher.start()
         tasks = [asyncio.create_task(self._hardware()), asyncio.create_task(self._mrr()),
                  asyncio.create_task(self._telemetry_file())]
+        # Maintain independent cadences rather than one serial 50ms loop.
+        tasks += [
+            asyncio.create_task(self._maintenance(self.robot.refresh_auto_camera_exposure, 0.2)),
+            asyncio.create_task(self._maintenance(self.robot.refresh_dock_lift, 0.25)),
+            asyncio.create_task(self._maintenance(self.robot.refresh_status_lights, 0.5)),
+            asyncio.create_task(self._maintenance(self.robot.refresh_charger_lights, 1.0)),
+        ]
+        # No face-display packets on live Cozmo hardware until their reliable
+        # transport issue has been resolved. Keep the opt-in test path.
+        if self.robot._face_transport_enabled:
+            tasks += [
+                asyncio.create_task(self._maintenance(self.robot.refresh_face, 0.25)),
+                asyncio.create_task(self._maintenance(self.robot.advance_face_display, 0.25)),
+            ]
         try:
             await self.stop_event.wait()
         finally:
