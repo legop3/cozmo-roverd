@@ -34,7 +34,7 @@ The setup page listens on `0.0.0.0:8765` and does not change MRR itself. **There
 
 The **Private rover** toggle maps directly to MRR’s native `private.enabled` hello property (off by default). It affects how MRR treats the rover; it does not secure the setup website, which remains intentionally accessible on your LAN.\n\nNormal MRR drive commands control Cozmo's wheels (clamped to the configured speed). The camera servo maps to Cozmo's head tilt. The existing headlight control and a generic peripheral button control backpack LEDs. Generic peripherals expose lift height (0-100%) and a two-line monochrome face text display. The bridge reports Cozmo wheel speeds, battery voltage, charger-contact status, cliff detection and charging status. It also reports an **approximate** battery percentage to MRR, interpolated from one-cell LiPo voltage. This is not an accurate battery fuel gauge: motor load and charging can affect the indicated percentage. Cozmo does not support Roomba auto-docking/brush commands, so those return explicit errors.
 
-The local drive watchdog stops the robot on command silence, MRR disconnect, cliff detection, pickup or bridge shutdown. No stale movement commands replay after reconnect.
+Drive commands set persistent wheel speeds until another drive command changes them; **there is no command-silence timeout**. An explicit zero-speed drive command stops the wheels. Bridge disconnect, shutdown, cliff detection, and pickup still stop motion. No stale movement commands replay after reconnect.
 
 ## Video
 
