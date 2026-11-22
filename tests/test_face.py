@@ -94,3 +94,25 @@ def test_tts_failure_is_visible_in_face_diagnostics(monkeypatch):
     with pytest.raises(RuntimeError, match="TTS failed"):
         robot.speak("test")
     assert "espeak-ng" in robot.last_tts_error
+
+
+def test_generated_widgets_change_with_battery_and_telemetry():
+    baseline = status_image(
+        voltage=3.8, percent=10, charging=False, wheels=(0, 0),
+        cliff=False, picked_up=False)
+    charged = status_image(
+        voltage=4.2, percent=95, charging=True, docked=True,
+        wheels=(250, -250), cliff=True, picked_up=True,
+        audio_error="speech playback failed")
+    assert baseline.size == charged.size == (128, 32)
+    assert baseline.mode == charged.mode == "1"
+    assert baseline.tobytes() != charged.tobytes()
+
+
+def test_generated_face_has_no_content_outside_128x32_canvas():
+    image = status_image(
+        voltage=3.91, percent=73, charging=True,
+        wheels=(200, -200), last_tts="Hello from the rover",
+        scroll=100)
+    assert image.getbbox() is not None
+    assert len(image.tobytes()) == 128 * 32 // 8
