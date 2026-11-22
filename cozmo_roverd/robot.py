@@ -171,7 +171,6 @@ class Robot:
         self.face_encoded_on_pixels = None
         self.face_decoded_columns = None
         self._status_light_signature = None
-        self._status_light_override_until = 0.0
         self._charger_factory_id = None
         self._charger_object_id = None
         self._charger_connect_at = 0.0
@@ -213,8 +212,7 @@ class Robot:
                 self._face_last_content = None
                 self._face_sent_at = 0.0
                 self._status_light_signature = None
-                self._status_light_override_until = 0.0
-                self._charger_factory_id = None
+                        self._charger_factory_id = None
                 self._charger_object_id = None
                 self._charger_connect_at = 0.0
                 self._charger_last_signature = None
@@ -436,21 +434,6 @@ class Robot:
             self.headlight = enabled
         self.on_state()
 
-    def backpack(self, enabled):
-        """MRR manual LED command temporarily overrides automated status lights.
-
-        Keep the existing peripheral behavior, restoring status after 30s.
-        The front headlight remains independent.
-        """
-        with self.lock:
-            if self.client is None:
-                raise RuntimeError("Cozmo disconnected")
-            import pycozmo
-            self.client.set_all_backpack_lights(
-                pycozmo.lights.white_light if enabled else pycozmo.lights.off_light)
-            self._status_light_override_until = time.monotonic() + 30.0
-            self._status_light_signature = None
-
     def refresh_status_lights(self, mrr_connected=False):
         """Apply one event-driven hardware pattern, never software-blink.
 
@@ -459,8 +442,6 @@ class Robot:
         """
         with self.lock:
             if self.client is None or not self.ready:
-                return False
-            if time.monotonic() < self._status_light_override_until:
                 return False
             signature = light_signature(
                 robot_online=True, mrr_online=mrr_connected,
@@ -769,8 +750,7 @@ class Robot:
             self.docking_phase = None
             self.dock_assist = False
             self._status_light_signature = None
-            self._status_light_override_until = 0.0
-            self._charger_factory_id = None
+                self._charger_factory_id = None
             self._charger_object_id = None
             self._charger_connect_at = 0.0
             self._charger_last_signature = None
