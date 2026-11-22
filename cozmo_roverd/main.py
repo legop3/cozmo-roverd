@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 import signal
 import time
@@ -37,6 +38,9 @@ class Bridge:
         self.hardware_stage = "starting"
         self.last_hardware_error = None
         self.hardware_reconnect_attempts = 0
+        # MRR remains registered for 10 uninterrupted minutes of hardware
+        # outage, then goes offline until Cozmo actually reconnects.
+        self._hardware_offline_since = time.monotonic()
         self.last_state_sent = 0.0
         self.loop = asyncio.get_running_loop()
         self.wifi = Wifi(config)
@@ -226,6 +230,29 @@ class Bridge:
                 last_sensor = now
             await asyncio.sleep(0.05)
 
+    MRR_HARDWARE_GRACE_SECONDS = 10 * 60
+
+    def _mrr_offline_remaining(self, now=None):
+        """Seconds left before hardware outage removes this rover from MRR."""
+        if self.hardware_ready.is_set():
+            return None
+        since = getattr(self, "_hardware_offline_since", None)
+        if since is None:
+            return None
+        now = time.monotonic() if now is None else now
+        return max(0, int(math.ceil(self.MRR_HARDWARE_GRACE_SECONDS - (now - since))))
+
+    async def _watch_mrr_hardware(self):
+        """End MRR registration only if an outage exceeds the grace period."""
+        while not self.stop_event.is_set():
+            if self._mrr_offline_remaining() == 0:
+                LOG.warning("Cozmo unavailable for 10 minutes; unregistering from MRR")
+                rec = diagnostics.active()
+                if rec:
+                    rec.event("mrr_hardware_grace_expired")
+                return
+            await asyncio.sleep(0.5)
+
     def hud_state(self):
         latest = self.robot.latest
         battery = self.robot.battery
@@ -233,6 +260,7 @@ class Bridge:
         wheels = latest.get("wheel_speeds_mmps") or {}
         return {
             "connected": self.robot.ready,
+            "mrr_offline_remaining_seconds": self._mrr_offline_remaining(),
             "mrr_connected": self.mrr_connected,
             "hardware_stage": self.hardware_stage,
             "hardware_reconnect_attempts": self.hardware_reconnect_attempts,
@@ -397,6 +425,12 @@ class Bridge:
 
     async def _mrr(self):
         while not self.stop_event.is_set():
+            # Once the grace period expires, do not repeatedly re-register
+            # an offline rover. Hardware retries continue independently.
+            if self._mrr_offline_remaining() == 0:
+                await self.hardware_ready.wait()
+                if self.stop_event.is_set():
+                    break
             try:
                 async with websockets.connect(self.cfg.server_url, ping_interval=15,
                                               ping_timeout=8, max_size=1048576) as ws:
@@ -414,9 +448,18 @@ class Bridge:
                     LOG.info("Registered rover %s with %s", self.cfg.name, self.cfg.server_url)
                     sender = asyncio.create_task(self._send(ws, initial_state))
                     receiver = asyncio.create_task(self._receive(ws))
-                    done, pending = await asyncio.wait([sender, receiver], return_when=asyncio.FIRST_COMPLETED)
-                    for task in pending: task.cancel()
-                    for task in done: task.result()
+                    availability = asyncio.create_task(self._watch_mrr_hardware())
+                    tasks = (sender, receiver, availability)
+                    try:
+                        done, pending = await asyncio.wait(
+                            tasks, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            task.result()
+                    finally:
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -468,6 +511,7 @@ class Bridge:
                 if diagnostics.active():
                     diagnostics.active().event("hardware_ready",
                         reconnect_attempts=self.hardware_reconnect_attempts)
+                self._hardware_offline_since = None
                 self.hardware_ready.set()
                 # State updates can pause during charging, exposure changes,
                 # camera traffic, or transient radio congestion. Do not tear
@@ -551,6 +595,8 @@ class Bridge:
                         video=(self.publisher.diagnostics() if self.publisher else None))
             finally:
                 self.hardware_ready.clear()
+                if self._hardware_offline_since is None:
+                    self._hardware_offline_since = time.monotonic()
                 self.hardware_stage = "cleaning_up"
                 if diagnostics.active():
                     diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
