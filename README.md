@@ -106,6 +106,28 @@ In addition to the existing command and playback counters, the isolated test rec
 
 MRR `tts` commands still update the **last message on Cozmo's face immediately**. If the request asks Cozmo to actually speak, the bridge returns an explicit unsupported-audio error rather than synthesizing a file, pausing video, transmitting speaker packets, or risking the robot. The `speak:false` option displays the message without an error. Camera streaming is no longer modified by TTS requests. Drive, servo and other controls are unaffected. The dashboard reports the disabled speaker status.
 
+## Cozmo low-battery charging recovery
+
+MRR continues to own locking and unlocking; this bridge reports
+`battery.needsCharge`. Cozmo has no current sensor or calibrated charge
+percentage, so the displayed estimate is **not** a prerequisite for unlocking.
+After a confirmed low-battery event, recovery now requires either:
+
+- **15 minutes of received charging-state telemetry** with a recent valid
+  battery reading of at least **3.65 V**, or
+- **35 minutes of received charging-state telemetry** if Cozmo withholds
+  valid voltage samples while docked, or
+- An explicitly detected completed charge cycle following at least
+  two minutes of observed charging, with adequate recent voltage.
+
+Only successive fresh charging packets accumulate credit; a silent robot,
+stale telemetry, dock contact without charging, and pauses in charging cannot
+earn unobserved time. Brief pauses retain accrued credit; losing contact for
+30 seconds or a long telemetry gap resets it. Recent readings below 3.45 V
+block unlocking. When recovery is confirmed, RoverD also clears its old
+low-voltage latch so undocking does not immediately trigger another lock.
+All recovery evidence is diagnostic-only and no new commands are sent to Cozmo.
+
 ## MRR presence after a Cozmo hardware outage
 
 Cozmo stays listed on MRR for **10 minutes** after the robot hardware
