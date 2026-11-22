@@ -4,15 +4,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Do not request ffmpeg-free alongside RPM Fusion's ffmpeg: the packages conflict.
 # Preserve the host's existing FFmpeg installation and its encoders.
-dnf install -y python3 python3-pip python3-devel gcc git NetworkManager
+dnf install -y python3 python3-pip python3-devel gcc git NetworkManager libva-intel-driver libva-utils
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "FFmpeg not found; installing a Fedora-compatible build..."
   if ! dnf install -y ffmpeg; then
     dnf install -y ffmpeg-free
   fi
 fi
-if ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -Eq "libx264|libopenh264"; then
-  echo "No H.264 encoder available. Install Fedora openh264 (fedora-cisco-openh264) or a full FFmpeg build before enabling video." >&2
+# Capture the full encoder list first: grep -q in a pipe under pipefail
+# can SIGPIPE ffmpeg and incorrectly claim its encoders are missing.
+encoder_list="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+if ! grep -Eq 'libx264|libopenh264|h264_vaapi' <<< "$encoder_list"; then
+  echo "Warning: FFmpeg lists no H.264 encoder. Video diagnostics in the service will explain further." >&2
 fi
 install -d /opt/cozmo-roverd
 # Install from the working checkout; do not overwrite user config on upgrades.
