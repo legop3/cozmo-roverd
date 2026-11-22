@@ -1,6 +1,7 @@
 """A temporary Cozmo outage must not terminate the MRR rover session."""
 import asyncio
 import json
+import threading
 from types import SimpleNamespace as NS
 from cozmo_roverd.main import Bridge
 from cozmo_roverd.robot_packet import BatteryTracker
@@ -24,6 +25,7 @@ class FakeSocket:
 def disconnected_bridge():
     bridge = object.__new__(Bridge)
     bridge.hardware_ready = asyncio.Event()
+    bridge._reconnect_requested = threading.Event()
     bridge.stop_event = asyncio.Event()
     bridge.state_dirty = asyncio.Event()
     bridge.results = asyncio.Queue()
@@ -155,4 +157,56 @@ def test_mrr_availability_watcher_expires_only_after_grace():
         # Force a sufficiently long elapsed period without changing clocks.
         assert bridge._mrr_offline_remaining() == 0
         await asyncio.wait_for(bridge._watch_mrr_hardware(), timeout=0.2)
+    asyncio.run(run())
+
+
+def test_manual_reconnect_uses_existing_hardware_supervisor():
+    async def run():
+        bridge = disconnected_bridge()
+        bridge.hardware_stage = "starting"
+        bridge.last_hardware_error = None
+        bridge.hardware_reconnect_attempts = 0
+        bridge.publish_state = lambda: None
+        bridge._diag_last_sample = 0
+        bridge.publisher = None
+        bridge.mrr_connected = True
+        calls = []
+        connected_twice = asyncio.Event()
+        class Wifi:
+            def wait(self):
+                calls.append("wifi")
+            def active(self):
+                return True
+        class Robot:
+            ready = False
+            battery = BatteryTracker()
+            last_sensor = 0
+            packets_received = 0
+            def connect(self):
+                calls.append("connect")
+                self.ready = True
+                if calls.count("connect") == 2:
+                    bridge.loop.call_soon_threadsafe(connected_twice.set)
+            def close(self):
+                calls.append("close")
+                self.ready = False
+            def transport_diagnostics(self):
+                return None
+        bridge.loop = asyncio.get_running_loop()
+        bridge.wifi = Wifi()
+        bridge.robot = Robot()
+        supervisor = asyncio.create_task(bridge._hardware())
+        try:
+            await asyncio.wait_for(bridge.hardware_ready.wait(), timeout=3)
+            bridge.execute({"type": "peripheral", "peripheral": {
+                "id": "cozmo", "control": "reconnect", "value": True}})
+            await asyncio.wait_for(connected_twice.wait(), timeout=7)
+            assert bridge.hardware_ready.is_set()
+            assert calls[:4] == ["wifi", "connect", "close", "wifi"]
+            assert calls.count("connect") == 2
+            assert bridge.mrr_connected is True
+            assert not bridge._reconnect_requested.is_set()
+        finally:
+            bridge.stop_event.set()
+            await asyncio.wait_for(supervisor, timeout=4)
     asyncio.run(run())
