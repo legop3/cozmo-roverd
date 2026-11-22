@@ -220,11 +220,69 @@ class Publisher:
         self._draw_lift_indicator(draw, st.get("lift"))
         return output
 
-    def _offline_frame(self):
+    @staticmethod
+    def _recovery_status(data, *, had_video=False):
+        """Describe the actual supervisor state, not an assumed camera outage."""
+        stage = data.get("hardware_stage", "starting")
+        online = data.get("connected", False)
+        if stage == "connecting_wifi":
+            title, detail = "CONNECTING TO COZMO", "Waiting for robot Wi-Fi"
+        elif stage == "connecting_robot":
+            title, detail = "CONNECTING TO COZMO", "Establishing robot session"
+        elif stage == "cleaning_up":
+            title, detail = "COZMO RECONNECTING", "Resetting robot connection"
+        elif stage == "retrying":
+            title, detail = "COZMO RECONNECTING", "Retrying robot connection"
+        elif online or stage == "online":
+            title = "CAMERA RECONNECTING" if had_video else "WAITING FOR CAMERA"
+            detail = "Robot connected; waiting for live frames"
+        elif had_video:
+            title, detail = "COZMO RECONNECTING", "Restoring robot connection"
+        else:
+            title, detail = "CONNECTING TO COZMO", "Starting robot connection"
+        return title, detail
+
+    def _offline_frame(self, data=None):
+        """Persistent RTSP recovery slate, updated from the hardware supervisor.
+
+        This is separate from the optional in-video HUD: connection status
+        remains visible even when the regular telemetry overlay is disabled.
+        """
+        st = data or {}
         image = Image.new("RGB", (320, 240), (12, 17, 23))
         draw = ImageDraw.Draw(image)
-        draw.text((105, 103), "NO LIVE CAMERA", fill=(255, 255, 255))
-        draw.text((98, 121), "Waiting for frames", fill=(160, 174, 190))
+        title, detail = self._recovery_status(
+            st, had_video=self.frame_count > 0)
+        draw.rounded_rectangle((22, 66, 298, 175), radius=9,
+                               fill=(20, 31, 40), outline=(65, 87, 101), width=1)
+        # A small animated signal indicates the stream is still alive.
+        dots = 1 + (int(time.monotonic()) % 3)
+        draw.text((35, 78), "LINK " + ("*" * dots),
+                  fill=(83, 241, 204))
+        draw.text((35, 102), title, fill=(245, 250, 251))
+        draw.text((35, 126), detail, fill=(169, 191, 201))
+        attempts = st.get("hardware_reconnect_attempts", 0)
+        try:
+            attempts = max(0, int(attempts))
+        except (TypeError, ValueError, OverflowError):
+            attempts = 0
+        if attempts:
+            draw.text((35, 150), f"Reconnect attempts: {attempts}",
+                      fill=(122, 163, 181))
+        # Keep the last real error visible without allowing long log strings
+        # to overflow the 320-pixel frame.
+        error = st.get("last_hardware_error")
+        if error and not st.get("connected", False):
+            msg = str(error).replace("\n", " ")
+            while msg and draw.textbbox((0, 0), msg)[2] > 270:
+                msg = msg[:-1]
+            if msg:
+                draw.text((25, 190), msg, fill=(216, 158, 128))
+        # MRR registration is independent of the physical robot connection.
+        mrr = st.get("mrr_connected")
+        if mrr is not None:
+            draw.text((25, 218), "MRR: CONNECTED" if mrr else "MRR: RECONNECTING",
+                      fill=(113, 205, 174) if mrr else (220, 173, 110))
         return image
 
     def _run(self):
@@ -262,19 +320,27 @@ class Publisher:
                 while self.running.is_set() and process.poll() is None:
                     try:
                         image = self.frames.get(timeout=0.5)
-                        is_offline = False
+                        # A buffered image must not masquerade as live video
+                        # after the supervisor has dropped the Cozmo link.
+                        got_frame = True
                     except queue.Empty:
-                        # Keep RTSP published during a physical robot outage.
-                        # One fresh status slate per second, not a buffered
-                        # sequence of old camera frames.
-                        if self.last_frame_time is not None and time.monotonic() - self.last_frame_time < 1.0:
-                            continue
-                        image = self._offline_frame()
-                        is_offline = True
-                        time.sleep(0.5)
+                        got_frame = False
+                        image = None
                     try:
                         data = self.state_provider() if self.state_provider is not None else {}
-                        frame = self.render_frame(image, data).tobytes()
+                        fresh = (self.last_frame_time is not None and
+                                 time.monotonic() - self.last_frame_time < 1.0)
+                        # The camera can pause independently while the robot
+                        # stays online; show that distinction explicitly.
+                        if got_frame and fresh and data.get("connected", True):
+                            frame = self.render_frame(image, data).tobytes()
+                        elif not fresh:
+                            frame = self._offline_frame(data).tobytes()
+                            time.sleep(0.5)
+                        else:
+                            # Waiting for the next frame within the normal
+                            # one-second camera gap; avoid fake offline flashes.
+                            continue
                         process.stdin.write(frame)
                     except (BrokenPipeError, OSError, ValueError) as exc:
                         self.last_error = str(exc)[:180]
