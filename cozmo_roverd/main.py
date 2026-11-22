@@ -51,6 +51,9 @@ class Bridge:
             if self._gauge_file.is_file():
                 saved = json.loads(self._gauge_file.read_text())
                 self.robot.battery.gauge.restore(saved)
+                # Recent raw voltage is valuable even if Cozmo goes silent
+                # while charging, including when the bridge restarts.
+                self.robot.battery.restore_voltage(saved)
         except (OSError, ValueError, TypeError) as exc:
             LOG.warning("Ignoring stored fuel gauge data: %s", exc)
         self.head_degrees = 10.0
@@ -292,6 +295,7 @@ class Bridge:
                     try:
                         learned = self.robot.battery.gauge.export()
                         if learned is not None:
+                            learned.update(self.robot.battery.voltage_snapshot())
                             self._gauge_file.parent.mkdir(parents=True, exist_ok=True)
                             gauge_tmp = self._gauge_file.with_suffix(".tmp")
                             gauge_tmp.write_text(json.dumps(learned))
@@ -301,8 +305,12 @@ class Bridge:
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 snap = dict(self.robot.latest)
-                if snap:
-                    snap["battery_percent_estimated"] = self.current_state()["state"]["battery"]["percent"]
+                # Latest rich RobotState may be absent after reconnect; battery
+                # retains the last measured voltage independently.
+                snap["battery_voltage_v"] = self.robot.battery.voltage
+                snap["battery_percent_estimated"] = self.robot.battery.percent
+                snap["on_charger"] = self.robot.battery.docked
+                snap["charging"] = self.robot.battery.charging
                 output = {
                     "hardware_connected": self.robot.ready,
                     "hardware_stage": self.hardware_stage,
