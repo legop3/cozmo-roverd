@@ -121,12 +121,50 @@ def test_optional_led_features_default_off_and_enable_independently(monkeypatch)
     from cozmo_roverd.main import _env_enabled
     monkeypatch.delenv("COZMO_BACKPACK_STATUS", raising=False)
     monkeypatch.delenv("COZMO_CHARGER_STATUS", raising=False)
-    assert not _env_enabled("COZMO_BACKPACK_STATUS")
+    assert _env_enabled("COZMO_BACKPACK_STATUS", default=True)
     assert not _env_enabled("COZMO_CHARGER_STATUS")
     monkeypatch.setenv("COZMO_BACKPACK_STATUS", "1")
     assert _env_enabled("COZMO_BACKPACK_STATUS")
     assert not _env_enabled("COZMO_CHARGER_STATUS")
     monkeypatch.setenv("COZMO_BACKPACK_STATUS", "0")
     monkeypatch.setenv("COZMO_CHARGER_STATUS", "yes")
-    assert not _env_enabled("COZMO_BACKPACK_STATUS")
+    assert not _env_enabled("COZMO_BACKPACK_STATUS", default=True)
     assert _env_enabled("COZMO_CHARGER_STATUS")
+
+
+def test_minimal_backpack_status_sends_one_packet_on_state_change_only():
+    p = pycozmo.protocol_encoder
+    robot = make_robot()
+    # Start with MRR offline, then connect, then disconnect.
+    assert robot.refresh_status_lights(mrr_connected=False)
+    assert len(robot.client.conn.sent) == 1
+    packet = robot.client.conn.sent[0]
+    assert isinstance(packet, p.LightStateSide)
+    assert packet.states[0].on_color != 0
+    assert packet.states[0].on_color == packet.states[0].off_color
+    assert packet.states[1].on_color == 0
+    assert not robot.refresh_status_lights(mrr_connected=False)
+    assert len(robot.client.conn.sent) == 1
+    assert robot.refresh_status_lights(mrr_connected=True)
+    assert len(robot.client.conn.sent) == 2
+    assert isinstance(robot.client.conn.sent[1], p.LightStateSide)
+    assert robot.client.conn.sent[1].states[1].on_color != 0
+    assert not robot.refresh_status_lights(mrr_connected=True)
+    assert robot.refresh_status_lights(mrr_connected=False)
+    assert len(robot.client.conn.sent) == 3
+    # Side update must never enqueue a LightStateCenter packet.
+    assert all(isinstance(pkt, p.LightStateSide)
+               for pkt in robot.client.conn.sent)
+
+
+def test_backpack_status_does_not_modify_center_lights_or_need_docking_state():
+    p = pycozmo.protocol_encoder
+    robot = make_robot()
+    robot.battery.docked = True
+    robot.battery.charging = True
+    assert robot.refresh_status_lights(mrr_connected=True)
+    robot.battery.docked = False
+    robot.battery.charging = False
+    assert not robot.refresh_status_lights(mrr_connected=True)
+    assert len(robot.client.conn.sent) == 1
+    assert isinstance(robot.client.conn.sent[0], p.LightStateSide)
