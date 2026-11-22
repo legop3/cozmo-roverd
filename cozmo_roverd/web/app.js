@@ -231,6 +231,9 @@ async function refreshTelemetry() {
       telemetryCard("Video & connectivity", [
         ["Cozmo connected", displayMetric(response.hardware_connected)],
         ["MRR connected", displayMetric(response.mrr_connected)],
+        ["Configured max", displayMetric(response.max_speed_config_mmps, " mm/s")],
+        ["Commanded wheels", "L " + displayMetric((response.commanded_wheels_mmps || {}).left, " mm/s") +
+                             " / R " + displayMetric((response.commanded_wheels_mmps || {}).right, " mm/s")],
         ["RobotState packets", displayMetric(response.packets_received)],
         ["Last packet error", displayMetric(response.last_packet_error)],
         ["Encoder", displayMetric(vid.encoder)],
