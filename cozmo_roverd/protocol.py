@@ -20,7 +20,9 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
         "peripherals": [{"id": "cozmo", "name": "Cozmo", "controls": [
             {"id": "lift", "name": "Lift height (%)", "type": "slider", "min": 0, "max": 100},
             {"id": "face", "name": "Face text", "type": "text", "maxLength": 80},
-            {"id": "light", "name": "Backpack lights", "type": "button", "mode": "toggle"}
+            {"id": "light", "name": "Backpack lights", "type": "button", "mode": "toggle"},
+            {"id": "volume", "name": "Speaker volume", "type": "slider", "min": 0, "max": 100},
+            {"id": "clear_face", "name": "Clear face display", "type": "button", "mode": "momentary"}
         ]}],
     }
 
