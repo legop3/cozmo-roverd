@@ -13,6 +13,52 @@ from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
+def _limit_animation_idle_traffic(cli):
+    """Keep audio frames at native cadence; do not flood Cozmo while idle.
+
+    PyCozmo's default AnimationController sends OutputSilence and the most
+    recently displayed image on *every* 30 Hz animation tick. With camera
+    packets already streaming that is a substantial constant transmit load,
+    and can contribute to transport congestion or firmware buffer starvation.
+    Drive it with its normal timer/queue but send only changed images, one
+    ending silence packet after speech, and a screen keepalive every 10 s.
+    """
+    import types
+    from pycozmo import event, protocol_encoder
+
+    controller = cli.anim_controller
+    controller._cozmo_image_refresh_at = 0.0
+
+    def run_frame(self):
+        audio_pkt, image_pkt, pkts = self.queue.get()
+        if not self.animations_enabled:
+            return
+        if audio_pkt is not None:
+            self.cli.conn.send(audio_pkt)
+            self.playing_audio = True
+        elif self.playing_audio:
+            self.playing_audio = False
+            self.cli.conn.send(protocol_encoder.OutputSilence())
+            self.cli.conn.post_event(event.EvtAudioCompleted, self.cli)
+        if (image_pkt is None and self.procedural_face_enabled
+                and not self.playing_animation and not self.image_displayed):
+            image_pkt = self._get_face_image()
+        if image_pkt is not None:
+            self.last_image_pkt = image_pkt
+            self.cli.conn.send(image_pkt)
+            self._cozmo_image_refresh_at = time.monotonic()
+        elif (self.image_displayed
+              and time.monotonic() - self._cozmo_image_refresh_at >= 10.0):
+            # Cozmo otherwise times out its display at around 30 seconds.
+            self.cli.conn.send(self.last_image_pkt)
+            self._cozmo_image_refresh_at = time.monotonic()
+        if pkts:
+            for pkt in pkts:
+                self.cli.conn.send(pkt)
+
+    controller._run_frame = types.MethodType(run_frame, controller)
+
+
 class Robot:
     def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="bright"):
         self.max_speed = max_speed
@@ -47,10 +93,12 @@ class Robot:
         self.face_frames_sent = 0
         self._face_scroll = 0
         self._face_last_content = None
+        self._face_sent_at = 0.0
 
     def connect(self):
         import pycozmo
         cli = pycozmo.Client(enable_animations=True, enable_procedural_face=False)
+        _limit_animation_idle_traffic(cli)
         cli.start()
         try:
             cli.connect()
@@ -79,6 +127,7 @@ class Robot:
                 self.ready = True
                 # The new robot display has no cached image from the old link.
                 self._face_last_content = None
+                self._face_sent_at = 0.0
             self.on_state()
             LOG.info("Cozmo connected")
         except Exception:
@@ -339,6 +388,10 @@ class Robot:
         with self.lock:
             if self.client is None or not self.ready:
                 return False
+            # The incoming 4 Hz ticker does not need to send four new
+            # DisplayImage packets every second; cap actual transfers to 1 Hz.
+            if time.monotonic() - self._face_sent_at < 1.0:
+                return False
             battery = self.battery
             image = status_image(
                 voltage=battery.voltage,
@@ -356,6 +409,7 @@ class Robot:
                 return False
             self.client.display_image(image)
             self.face_frames_sent += 1
+            self._face_sent_at = time.monotonic()
             self._face_last_content = content
             return True
 
