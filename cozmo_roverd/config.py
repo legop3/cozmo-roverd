@@ -16,6 +16,7 @@ class Config:
     color: str = "#3ba8ff"
     max_speed: int = 100
     video: bool = True
+    private: bool = False
     rtsp_url: str = ""
     fps: int = 15
     watchdog_seconds: float = 0.65
@@ -31,10 +32,13 @@ def load(path: str) -> Config:
         color=str(rover.get("color", "#3ba8ff")),
         max_speed=int(rover.get("max_speed", 100)),
         video=bool(media.get("enabled", True)),
+        private=rover.get("private", False),
         rtsp_url=str(media.get("rtsp_url", "")),
         fps=int(media.get("fps", 15)),
         watchdog_seconds=float(rover.get("watchdog_seconds", 0.65)),
     )
+    if type(c.private) is not bool:
+        raise ValueError("rover.private must be a boolean")
     url = urlsplit(c.server_url)
     if url.scheme not in ("ws", "wss") or not url.hostname or url.path.rstrip("/") != "/rover":
         raise ValueError("rover.server_url must be ws(s)://host[:port]/rover")
