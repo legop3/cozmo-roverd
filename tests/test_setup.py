@@ -132,3 +132,13 @@ def test_unavailable_adapter_not_mistaken_for_uplink(tmp_path):
     assert devices[0]["unavailable"]
     assert devices[0]["selectable"]
     assert devices[0]["state_label"] == "Wi-Fi unavailable"
+
+
+def test_setup_service_can_write_etc_config():
+    # The web setup saves atomically via mkstemp in /etc, not only writes
+    # to the already existing TOML file. Do not remount /etc read-only.
+    from pathlib import Path
+    unit = Path(__file__).resolve().parents[1] / "packaging/cozmo-roverd-setup.service"
+    contents = unit.read_text()
+    assert "ProtectSystem=full" not in contents
+    assert "ProtectSystem=strict" not in contents
