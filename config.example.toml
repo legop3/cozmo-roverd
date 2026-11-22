@@ -17,5 +17,7 @@ password = "PASSWORD_SHOWN_ON_COZMO"
 enabled = true
 fps = 15
 camera_mode = "bright"
+# Overlay additional Cozmo hardware telemetry onto RTSP frames.
+hud = true
 # Optional override, otherwise rtsp://SERVER-HOST:8554/<rover.name>
 # rtsp_url = "rtsp://YOUR-MRR-SERVER:8554/cozmo"
