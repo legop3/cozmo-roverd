@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import signal
 import time
 from pathlib import Path
@@ -21,7 +22,9 @@ class Bridge:
         self.cfg = config
         self.stop_event = asyncio.Event()
         self.hardware_ready = asyncio.Event()
-        self.outbox = asyncio.Queue(maxsize=64)
+        self.state_dirty = asyncio.Event()
+        self.mrr_connected = False
+        self.last_state_sent = 0.0
         self.loop = asyncio.get_running_loop()
         self.wifi = Wifi(config)
         self.publisher = Publisher(rtsp_target(config), config.fps) if config.video else None
@@ -29,25 +32,31 @@ class Bridge:
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame)
         self.head_degrees = 10.0
 
-    def enqueue(self, data):
-        # Called from event-dispatch threads. Never block PyCozmo's receive loop.
-        def add():
-            if self.outbox.full():
-                try: self.outbox.get_nowait()
-                except asyncio.QueueEmpty: pass
-            self.outbox.put_nowait(data)
-        self.loop.call_soon_threadsafe(add)
-
     def publish_state(self):
-        self.enqueue(state(charging=self.robot.charging, headlight=self.robot.headlight, voltage=self.robot.voltage))
+        # Status callbacks originate in PyCozmo's receive thread. Coalesce
+        # changes rather than queuing every packet (which can starve state).
+        self.loop.call_soon_threadsafe(self.state_dirty.set)
+
+    def current_state(self):
+        return state(charging=self.robot.charging,
+                     docked=self.robot.on_charger,
+                     headlight=self.robot.headlight,
+                     voltage=self.robot.voltage,
+                     driving=self.robot.ready)
+
+    def current_sensor(self):
+        latest = self.robot.latest
+        if not latest:
+            return None
+        wheels = latest.get("wheel_speeds_mmps") or {}
+        return sensor(voltage=latest.get("battery_voltage_v"),
+                      cliff=latest.get("cliff_detected"),
+                      left=wheels.get("left"), right=wheels.get("right"))
 
     def publish_sensor(self):
-        if time.monotonic() - self.robot.last_sensor > 5:
-            return
-        c = self.robot.client
-        self.enqueue(sensor(voltage=self.robot.voltage, cliff=self.robot.cliff,
-                            left=float(c.left_wheel_speed.mmps) if c else None,
-                            right=float(c.right_wheel_speed.mmps) if c else None))
+        # Sensors are sent at a bounded 5 Hz in _send, not for every hardware
+        # packet. The latest complete snapshot always wins.
+        pass
 
     def handle_frame(self, image):
         if self.publisher:
@@ -94,8 +103,43 @@ class Bridge:
             raise ValueError(f"unsupported command: {cmd}")
 
     async def _send(self, ws):
-        while True:
-            await ws.send(json.dumps(await self.outbox.get()))
+        last_sensor = 0.0
+        last_state = 0.0
+        while self.hardware_ready.is_set() and not self.stop_event.is_set():
+            now = time.monotonic()
+            if self.state_dirty.is_set() or now - last_state >= 1.0:
+                self.state_dirty.clear()
+                await ws.send(json.dumps(self.current_state()))
+                last_state = now
+            if now - last_sensor >= 0.2:
+                reading = self.current_sensor()
+                if reading:
+                    await ws.send(json.dumps(reading))
+                last_sensor = now
+            await asyncio.sleep(0.05)
+
+    async def _telemetry_file(self):
+        """Export Cozmo-only fields the MRR sensor protocol cannot represent."""
+        target = Path("/run/cozmo-roverd/telemetry.json")
+        while not self.stop_event.is_set():
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                snap = dict(self.robot.latest)
+                if snap:
+                    snap["battery_percent_estimated"] = self.current_state()["state"]["battery"]["percent"]
+                output = {
+                    "hardware_connected": self.robot.ready,
+                    "mrr_connected": self.mrr_connected,
+                    "cozmo": snap,
+                    "rover_state": self.current_state()["state"],
+                    "video": self.publisher.diagnostics() if self.publisher else {"enabled": False},
+                }
+                tmp = target.with_suffix(".tmp")
+                tmp.write_text(json.dumps(output))
+                os.replace(tmp, target)
+            except (OSError, TypeError, ValueError) as exc:
+                LOG.warning("Cannot export local telemetry: %s", exc)
+            await asyncio.sleep(1.0)
 
     async def _receive(self, ws):
         async for raw in ws:
@@ -130,12 +174,9 @@ class Bridge:
                     await ws.send(json.dumps(hello(
                         self.cfg.name, self.cfg.description, self.cfg.color,
                         self.cfg.max_speed, self.cfg.video, self.cfg.private)))
-                    await ws.send(json.dumps(state(
-                        charging=self.robot.charging, headlight=self.robot.headlight)))
-                    self.publish_sensor()
-                    # Never replay stale movement or telemetry from before reconnection.
-                    while not self.outbox.empty():
-                        self.outbox.get_nowait()
+                    await ws.send(json.dumps(self.current_state()))
+                    self.mrr_connected = True
+                    self.state_dirty.clear()
                     LOG.info("Registered rover %s with %s", self.cfg.name, self.cfg.server_url)
                     sender = asyncio.create_task(self._send(ws))
                     receiver = asyncio.create_task(self._receive(ws))
@@ -147,6 +188,7 @@ class Bridge:
                 raise
             except Exception as exc:
                 LOG.warning("MRR disconnected: %s", exc)
+            self.mrr_connected = False
             self.robot.stop_drive()
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=3)
@@ -180,7 +222,8 @@ class Bridge:
 
     async def run(self):
         if self.publisher: self.publisher.start()
-        tasks = [asyncio.create_task(self._hardware()), asyncio.create_task(self._mrr())]
+        tasks = [asyncio.create_task(self._hardware()), asyncio.create_task(self._mrr()),
+                 asyncio.create_task(self._telemetry_file())]
         try:
             await self.stop_event.wait()
         finally:
