@@ -7,7 +7,13 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
     return {
         "type": "hello", "name": name, "description": description,
         "color": color, "maxWheelSpeed": max_speed,
-        "private": {"enabled": private},
+        "private": {"enabled": private, "safety": {
+            "speedLimitEnabled": False,
+            "hardOvercurrentEnabled": False,
+            "hardBumpEnabled": False,
+            "cliffEnabled": False,
+            "virtualWallEnabled": False
+        }},
         "cameraServo": {"enabled": True, "minAngle": -25, "maxAngle": 44,
                         "homeAngle": 10, "nudgeDegrees": 5, "allowRawPulse": False,
                         "invert": False, "minPulseUs": 1000, "maxPulseUs": 2000,
@@ -49,7 +55,7 @@ def state(*, charging=None, docked=None, voltage=None, headlight=False, driving=
         "type": "roverState", "state": {
             "drivingMode": driving, "dockAssist": dock_assist, "docking": False,
             "docked": docked,
-            "dockingStatus": {"phase": phase, "movementLocked": phase == "undocking" or bool(docked),
+            "dockingStatus": {"phase": phase, "movementLocked": False,
                               "cameraLocked": bool(dock_assist), "error": None},
             "battery": battery,
             "headlightOn": headlight, "laserOn": None
