@@ -201,56 +201,20 @@ def test_fallback_encoders_do_not_use_uncontrolled_default_bitrates():
         assert "-bufsize" in args
 
 
-def test_pose_warning_appears_after_debounce_and_disappears_on_treads(monkeypatch):
-    import cozmo_roverd.media as media
-    clock = [10.0]
-    monkeypatch.setattr(media.time, "monotonic", lambda: clock[0])
+
+def test_original_imu_and_lift_gauges_remain_without_orientation_warning():
     publisher = Publisher("rtsp://localhost:8554/cozmo", hud=True)
     frame = Image.new("RGB", (320, 240), (30, 50, 80))
-    normal = publisher.render_frame(frame, {"orientation": "ON_THREADS"})
-    clock[0] += 0.4
-    assert publisher.render_frame(frame, {"orientation": "ON_THREADS"}).tobytes() == normal.tobytes()
-    just_tipped = publisher.render_frame(frame, {"orientation": "ON_BACK"})
-    assert just_tipped.tobytes() == normal.tobytes()
-    clock[0] += 0.31
-    tipped = publisher.render_frame(frame, {"orientation": "ON_BACK"})
-    assert tipped.crop((44, 3, 144, 32)).tobytes() != normal.crop((44, 3, 144, 32)).tobytes()
-    # Changing back to upright does not flicker after a single sample.
-    still_tipped = publisher.render_frame(frame, {"orientation": "ON_THREADS"})
-    assert still_tipped.tobytes() == tipped.tobytes()
-    clock[0] += 0.31
-    cleared = publisher.render_frame(frame, {"orientation": "ON_THREADS"})
-    assert cleared.tobytes() == normal.tobytes()
-
-
-def test_pose_warning_distinguishes_four_orientation_states(monkeypatch):
-    import cozmo_roverd.media as media
-    clock = [50.0]
-    monkeypatch.setattr(media.time, "monotonic", lambda: clock[0])
-    publisher = Publisher("rtsp://localhost:8554/cozmo", hud=True)
-    frame = Image.new("RGB", (320, 240), (30, 50, 80))
-    images = []
-    for state in ("ON_LEFT_SIDE", "ON_RIGHT_SIDE", "ON_BACK", "ON_FACE"):
-        publisher.render_frame(frame, {"orientation": state})
-        clock[0] += 0.31
-        shown = publisher.render_frame(frame, {"orientation": state})
-        images.append(shown.crop((44, 3, 144, 32)).tobytes())
-        # Original IMU and lift indicators remain untouched.
-        assert shown.crop((145, 2, 203, 33)).tobytes() == (
-            publisher.render_frame(frame, {"orientation": state})
-            .crop((145, 2, 203, 33)).tobytes())
-        clock[0] += 0.1
-    assert len(set(images)) == 4
-
-
-def test_orientation_warning_ignores_unknown_and_hud_disabled(monkeypatch):
-    import cozmo_roverd.media as media
-    clock = [100.0]
-    monkeypatch.setattr(media.time, "monotonic", lambda: clock[0])
-    frame = Image.new("RGB", (320, 240), (30, 50, 80))
-    normal = Publisher("rtsp://localhost:8554/cozmo", hud=True)
-    plain = normal.render_frame(frame, {"orientation": "ON_THREADS"})
-    clock[0] += 1
-    assert normal.render_frame(frame, {"orientation": "UNKNOWN"}).tobytes() == plain.tobytes()
-    off = Publisher("rtsp://localhost:8554/cozmo", hud=False)
-    assert off.render_frame(frame, {"orientation": "ON_BACK"}).tobytes() == frame.tobytes()
+    normal = publisher.render_frame(frame, {
+        "orientation": "ON_THREADS",
+        "lift": 60, "accel": {"x": 0, "y": 0, "z": 9.81},
+    })
+    tipped = publisher.render_frame(frame, {
+        "orientation": "ON_BACK",
+        "lift": 60, "accel": {"x": 0, "y": 0, "z": 9.81},
+    })
+    assert normal.tobytes() == tipped.tobytes()
+    assert normal.crop((145, 2, 203, 33)).tobytes() != (
+        frame.crop((145, 2, 203, 33)).tobytes())
+    assert normal.crop((44, 3, 144, 32)).tobytes() == (
+        frame.crop((44, 3, 144, 32)).tobytes())
