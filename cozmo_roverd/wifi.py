@@ -51,6 +51,8 @@ class Wifi:
            "ipv4.route-metric", "900", "ipv6.method", "disabled")
         LOG.info("Activating Cozmo-only Wi-Fi profile on %s", self.cfg.interface)
         nm("device", "set", self.cfg.interface, "managed", "yes")
+        # Disable device autoconnect: do not fall back to personal/home Wi-Fi profiles.
+        nm("device", "set", self.cfg.interface, "autoconnect", "no")
         nm("connection", "up", self.profile, "ifname", self.cfg.interface, timeout=55)
 
     def wait(self):
