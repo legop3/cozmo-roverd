@@ -40,6 +40,7 @@ class BatteryTracker:
         self.needs_charge = False
         self._contact_lost_since = None
         self._contact_started = None
+        self._last_charging_true = None
         self._last_sample = None
 
     def observe(self, voltage, flags, now=None):
@@ -70,9 +71,13 @@ class BatteryTracker:
         else:
             self.docked = False
             self._contact_started = None
-        # "Charging" includes time spent on the contacts waiting for the
-        # next charging pulse. A brief IS_CHARGING false flag isn't a disconnect.
-        self.charging = bool(self.raw_charging or self.docked)
+        # Only IS_CHARGING indicates charging, but tolerate a brief false
+        # pulse (the dock-contact flag is tracked independently).
+        if self.raw_charging:
+            self._last_charging_true = now
+        self.charging = bool(self.raw_charging or
+                             (self.docked and self._last_charging_true is not None
+                              and now - self._last_charging_true < 2.0))
         if self.percent is not None:
             self.low = self.percent <= 15
             self.critical = self.percent <= 5
