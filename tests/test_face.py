@@ -214,8 +214,8 @@ def test_operator_face_wraps_tts_and_places_voltage_in_corner():
     first = status_image(voltage=3.98, last_tts=msg, scroll=0)
     second = status_image(voltage=3.98, last_tts=msg, scroll=1)
     assert first.tobytes() != second.tobytes()
-    assert first.crop((82, 0, 128, 11)).tobytes() == (
-        second.crop((82, 0, 128, 11)).tobytes())
+    assert first.crop((96, 0, 128, 11)).tobytes() == (
+        second.crop((96, 0, 128, 11)).tobytes())
     sample = Image.new("1", (128, 32))
     draw = ImageDraw.Draw(sample)
     pages = _pages(msg, draw, (78, 128, 128))
