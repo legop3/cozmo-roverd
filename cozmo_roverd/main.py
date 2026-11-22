@@ -245,18 +245,14 @@ class Bridge:
                 except Exception as exc:
                     LOG.warning("Face status refresh failed: %s", exc)
                 last_face_at = now
-            # Both LED paths are opt-in. Hardware testing confirmed even a
-            # single LightStateSide packet can trigger a reliable-ACK stall
-            # on this robot; never jeopardize motor/camera connectivity.
-            if _env_enabled("COZMO_BACKPACK_STATUS"):
-                try:
-                    await asyncio.to_thread(self.robot.refresh_status_lights,
-                                            self.mrr_connected)
-                except Exception as exc:
-                    LOG.warning("Status lights update failed: %s", exc)
-            if (_env_enabled("COZMO_CHARGER_STATUS")
-                    and (last_telemetry_at < 0
-                         or now - last_telemetry_at >= 1.0)):
+            # One-time steady backpack colors; charger changes only on
+            # dock-contact / dock-assist transitions. Deduped in Robot.
+            # A congested send window defers updates until it clears.
+            try:
+                await asyncio.to_thread(self.robot.refresh_status_lights)
+            except Exception as exc:
+                LOG.warning("Backpack lights update failed: %s", exc)
+            if last_telemetry_at < 0 or now - last_telemetry_at >= 1.0:
                 try:
                     await asyncio.to_thread(self.robot.refresh_charger_lights)
                 except Exception as exc:
