@@ -465,8 +465,14 @@ class Robot:
                 if pending >= 8 or sender.queue.qsize() >= 8:
                     return False
             controller = getattr(self.client, "anim_controller", None)
-            if controller is not None and getattr(controller, "playing_audio", False):
-                return False
+            if controller is not None:
+                if getattr(controller, "playing_audio", False):
+                    return False
+                audio_queue = getattr(getattr(controller, "queue", None), "audio_queue", None)
+                if audio_queue is not None and len(audio_queue):
+                    return False
+                if getattr(controller, "_cozmo_audio_aborted", False):
+                    self.last_tts_error = "Speech aborted to protect Cozmo command channel"
             battery = self.battery
             image = status_image(
                 voltage=battery.voltage,
