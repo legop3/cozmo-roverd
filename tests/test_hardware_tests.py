@@ -8,6 +8,8 @@ from cozmo_roverd import hardware_tests
 def test_probe_cases_cover_stock_audio_lights_and_baselines():
     assert "baseline-idle" in hardware_tests.CASES
     assert "baseline-camera" in hardware_tests.CASES
+    assert "baseline-animation" in hardware_tests.CASES
+    assert "baseline-animation-camera" in hardware_tests.CASES
     assert "backpack-stock" in hardware_tests.CASES
     assert "backpack-side" in hardware_tests.CASES
     assert "backpack-side-camera" in hardware_tests.CASES
