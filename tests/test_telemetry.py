@@ -332,3 +332,32 @@ def test_charger_contact_stops_wheels_once_and_rearms_after_undock():
     receive(0x1000)
     assert stops == [(0, 0), (0, 0)]
     assert raises == [92.0, 92.0]
+
+
+
+def test_docked_voltage_is_retained_and_can_be_restored():
+    from cozmo_roverd.robot_packet import BatteryTracker
+    original = BatteryTracker()
+    original.observe(3.81, 0x3000)
+    original.observe(0.0, 0x3000)
+    assert original.voltage == 3.81
+    saved = original.voltage_snapshot()
+    restored = BatteryTracker()
+    assert restored.restore_voltage(saved)
+    assert restored.voltage == 3.81
+    assert restored.voltage_age_seconds() >= 0
+    restored.observe(0.0, 0x3000)
+    assert restored.voltage == 3.81
+    restored.observe(3.93, 0x3000)
+    assert restored.voltage == 3.93
+
+
+def test_docked_voltage_does_not_restore_obsolete_measurement():
+    import time
+    from cozmo_roverd.robot_packet import BatteryTracker
+    tracker = BatteryTracker()
+    assert not tracker.restore_voltage({
+        "last_battery_voltage_v": 3.95,
+        "last_battery_voltage_at": time.time() - 7200,
+    })
+    assert tracker.voltage is None
