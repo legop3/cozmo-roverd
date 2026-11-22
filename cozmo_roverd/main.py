@@ -25,6 +25,9 @@ class Bridge:
         self.state_dirty = asyncio.Event()
         self.results = asyncio.Queue(maxsize=16)
         self.mrr_connected = False
+        self.hardware_stage = "starting"
+        self.last_hardware_error = None
+        self.hardware_reconnect_attempts = 0
         self.last_state_sent = 0.0
         self.loop = asyncio.get_running_loop()
         self.wifi = Wifi(config)
@@ -231,6 +234,9 @@ class Bridge:
                     snap["battery_percent_estimated"] = self.current_state()["state"]["battery"]["percent"]
                 output = {
                     "hardware_connected": self.robot.ready,
+                    "hardware_stage": self.hardware_stage,
+                    "last_hardware_error": self.last_hardware_error,
+                    "hardware_reconnect_attempts": self.hardware_reconnect_attempts,
                     "mrr_connected": self.mrr_connected,
                     "cozmo": snap,
                     "rover_state": self.current_state()["state"],
@@ -313,8 +319,12 @@ class Bridge:
     async def _hardware(self):
         while not self.stop_event.is_set():
             try:
+                self.hardware_stage = "connecting_wifi"
                 await asyncio.to_thread(self.wifi.wait)
+                self.hardware_stage = "connecting_robot"
                 await asyncio.to_thread(self.robot.connect)
+                self.hardware_stage = "online"
+                self.last_hardware_error = None
                 LOG.info("Cozmo hardware ready")
                 self.hardware_ready.set()
                 # State updates can pause during charging, exposure changes,
@@ -344,14 +354,24 @@ class Bridge:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                LOG.warning("Cozmo hardware unavailable: %s", exc)
+                self.last_hardware_error = str(exc)[:240]
+                LOG.warning("Cozmo hardware unavailable (%s): %s", self.hardware_stage, exc)
             finally:
                 self.hardware_ready.clear()
-                # The hardware connection is gone; close() owns cleanup.
-                # Do not issue an extra drive-stop from the supervisor.
-                await asyncio.to_thread(self.robot.close)
-                # Keep the MRR session alive but immediately advertise that
-                # the underlying robot is currently unavailable.
+                self.hardware_stage = "cleaning_up"
+                # Tear down local PyCozmo without changing MRR registration.
+                try:
+                    await asyncio.wait_for(asyncio.to_thread(self.robot.close), timeout=8.0)
+                except asyncio.TimeoutError:
+                    # Do not spawn another client over one that never stopped.
+                    # Recover by letting systemd restart the bridge process;
+                    # the dead PyCozmo worker cannot be safely reused.
+                    LOG.critical("PyCozmo cleanup hung for 8s; restarting bridge process")
+                    os._exit(1)
+                except Exception:
+                    LOG.exception("PyCozmo cleanup failed")
+                self.hardware_reconnect_attempts += 1
+                self.hardware_stage = "retrying"
                 self.publish_state()
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=3)
