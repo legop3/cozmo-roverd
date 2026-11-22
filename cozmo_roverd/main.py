@@ -14,6 +14,7 @@ from .media import Publisher
 from .protocol import ack, bounded_speed, finite, hello, sensor, state
 from .robot import Robot
 from .wifi import Wifi
+from . import diagnostics
 
 LOG = logging.getLogger("cozmo-roverd")
 
@@ -44,6 +45,7 @@ class Bridge:
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
                            camera_mode=config.camera_mode)
         self.head_degrees = 10.0
+        self._diag_last_sample = 0.0
         if self.publisher:
             self.publisher.state_provider = self.hud_state
 
@@ -307,6 +309,9 @@ class Bridge:
                 msg = json.loads(raw)
                 if not isinstance(msg, dict) or not isinstance(msg.get("id"), str):
                     continue
+                rec = diagnostics.active()
+                if rec:
+                    rec.command(msg)
                 # Prevent duplicate, unsolicited commands from changing hardware state.
                 error = None
                 try:
@@ -323,6 +328,9 @@ class Bridge:
                                   msg.get("type"), error)
                     else:
                         LOG.warning("Command %s rejected: %s", msg.get("type"), error)
+                    if rec:
+                        rec.event("command_rejected", command_type=str(msg.get("type"))[:50],
+                                  error=str(error)[:160])
                 await ws.send(json.dumps(ack(msg, error)))
             except (ValueError, TypeError) as exc:
                 LOG.warning("Ignoring invalid server message: %s", exc)
@@ -337,6 +345,8 @@ class Bridge:
                         self.cfg.max_speed, self.cfg.video, self.cfg.private)))
                     await ws.send(json.dumps(self.current_state()))
                     self.mrr_connected = True
+                    if diagnostics.active():
+                        diagnostics.active().event("mrr_connected")
                     self.state_dirty.clear()
                     while not self.results.empty():
                         self.results.get_nowait()
@@ -351,6 +361,8 @@ class Bridge:
             except Exception as exc:
                 LOG.warning("MRR disconnected: %s", exc)
             self.mrr_connected = False
+            if diagnostics.active():
+                diagnostics.active().event("mrr_disconnected")
             # Losing the MRR connection does not change the last commanded
             # wheel speed. Only a subsequent drive command or an explicit
             # robot lifecycle operation should do that.
@@ -363,8 +375,12 @@ class Bridge:
         while not self.stop_event.is_set():
             try:
                 self.hardware_stage = "connecting_wifi"
+                if diagnostics.active():
+                    diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
                 await asyncio.to_thread(self.wifi.wait)
                 self.hardware_stage = "connecting_robot"
+                if diagnostics.active():
+                    diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
                 try:
                     await asyncio.wait_for(asyncio.to_thread(self.robot.connect),
                                            timeout=35.0)
@@ -373,10 +389,17 @@ class Bridge:
                     # alive. Only process isolation guarantees a clean new
                     # socket; systemd automatically restarts this service.
                     LOG.critical("PyCozmo connect stuck for 35s; restarting service")
+                    if diagnostics.active():
+                        diagnostics.active().incident(
+                            reason="connect_timeout_35s", stage=self.hardware_stage,
+                            reconnect_attempts=self.hardware_reconnect_attempts)
                     os._exit(1)
                 self.hardware_stage = "online"
                 self.last_hardware_error = None
                 LOG.info("Cozmo hardware ready")
+                if diagnostics.active():
+                    diagnostics.active().event("hardware_ready",
+                        reconnect_attempts=self.hardware_reconnect_attempts)
                 self.hardware_ready.set()
                 # State updates can pause during charging, exposure changes,
                 # camera traffic, or transient radio congestion. Do not tear
@@ -403,6 +426,17 @@ class Bridge:
                     # packet/telemetry pause as a disconnection.
                     transport = (self.robot.transport_diagnostics()
                                  if hasattr(self.robot, "transport_diagnostics") else None)
+                    rec = diagnostics.active()
+                    if rec and now - self._diag_last_sample >= 1.0:
+                        frame_at = self.publisher.last_frame_time if self.publisher else None
+                        rec.sample(
+                            stage=self.hardware_stage, transport=transport,
+                            packet_count=self.robot.packets_received,
+                            last_sensor_age=(round(now - self.robot.last_sensor, 2)
+                                             if self.robot.last_sensor else None),
+                            camera_age=(round(now - frame_at, 2) if frame_at else None),
+                            battery_voltage=self.robot.battery.voltage)
+                        self._diag_last_sample = now
                     if transport:
                         expected = transport["next_ack_expected"]
                         pending = transport["pending_reliable_packets"]
@@ -430,9 +464,20 @@ class Bridge:
             except Exception as exc:
                 self.last_hardware_error = str(exc)[:240]
                 LOG.warning("Cozmo hardware unavailable (%s): %s", self.hardware_stage, exc)
+                if diagnostics.active():
+                    now = time.monotonic()
+                    diagnostics.active().incident(
+                        reason=str(exc)[:240], stage=self.hardware_stage,
+                        reconnect_attempts=self.hardware_reconnect_attempts,
+                        last_sensor_age=(round(now - self.robot.last_sensor, 2)
+                                         if self.robot.last_sensor else None),
+                        transport=self.robot.transport_diagnostics(),
+                        video=(self.publisher.diagnostics() if self.publisher else None))
             finally:
                 self.hardware_ready.clear()
                 self.hardware_stage = "cleaning_up"
+                if diagnostics.active():
+                    diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
                 # Tear down local PyCozmo without changing MRR registration.
                 try:
                     await asyncio.wait_for(asyncio.to_thread(self.robot.close), timeout=8.0)
@@ -441,11 +486,18 @@ class Bridge:
                     # Recover by letting systemd restart the bridge process;
                     # the dead PyCozmo worker cannot be safely reused.
                     LOG.critical("PyCozmo cleanup hung for 8s; restarting bridge process")
+                    if diagnostics.active():
+                        diagnostics.active().incident(
+                            reason="cleanup_timeout_8s", stage=self.hardware_stage,
+                            reconnect_attempts=self.hardware_reconnect_attempts)
                     os._exit(1)
                 except Exception:
                     LOG.exception("PyCozmo cleanup failed")
                 self.hardware_reconnect_attempts += 1
                 self.hardware_stage = "retrying"
+                if diagnostics.active():
+                    diagnostics.active().event("hardware_stage", stage=self.hardware_stage,
+                                               reconnect_attempts=self.hardware_reconnect_attempts)
                 self.publish_state()
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=3)
@@ -477,13 +529,17 @@ def main():
         Wifi(cfg).verify()
         print("Configuration and dedicated Wi-Fi adapter OK")
         return
-    async def start():
-        bridge = Bridge(cfg)
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, bridge.stop_event.set)
-        await bridge.run()
-    asyncio.run(start())
+    diagnostics.initialize()
+    try:
+        async def start():
+            bridge = Bridge(cfg)
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, bridge.stop_event.set)
+            await bridge.run()
+        asyncio.run(start())
+    finally:
+        diagnostics.shutdown()
 
 if __name__ == "__main__":
     main()
