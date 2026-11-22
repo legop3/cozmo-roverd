@@ -1,9 +1,9 @@
 """Opt-in *physical* Cozmo fault-isolation probes using unmodified PyCozmo.
 
 Each case runs in a separate, killable process, never as a bridge command.
-Stop the production bridge first. Tests send real hardware commands and can
-still cause a physical Cozmo firmware hang; no unit test can establish that
-these commands work on a particular robot.
+The runner stops and restores the production bridge automatically. Tests send
+real hardware commands and can still cause a physical Cozmo firmware hang.
+Results and diagnoses print directly in the terminal, with full logs retained.
 """
 from __future__ import annotations
 
@@ -26,9 +26,120 @@ from .wifi import Wifi
 
 CASES = (
     "baseline-idle", "baseline-camera",
+    "baseline-animation", "baseline-animation-camera",
     "backpack-stock", "backpack-side", "backpack-side-camera",
     "charger", "audio-idle", "audio-camera",
 )
+
+DEFAULT_SUITE = (
+    "baseline-camera", "baseline-animation-camera",
+    "backpack-side-camera", "audio-idle", "audio-camera",
+)
+SERVICE = "cozmo-roverd.service"
+
+
+def _service_active():
+    return subprocess.run(
+        ["systemctl", "is-active", "--quiet", SERVICE],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        check=False).returncode == 0
+
+
+def _service_action(action):
+    result = subprocess.run(["systemctl", action, SERVICE],
+                            capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise RuntimeError(
+            f"Cannot {action} {SERVICE}: "
+            f"{result.stderr.strip() or result.stdout.strip()}")
+
+
+def _summarize(directory, returncode):
+    """Generate an operator-readable verdict from the actual worker records."""
+    path = directory / "measurements.jsonl"
+    if not path.exists():
+        return {"status": "FAIL", "reason": "No measurements (worker failed before opening log)",
+                "returncode": returncode}
+    records = []
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass  # Include previous complete records if process was killed mid-write.
+    last = records[-1] if records else {}
+    issue_names = {
+        "stalled": "ACK progress stopped; reliable send window stalled",
+        "audio_not_reported_played": "Robot reported no audio playback",
+        "outstanding_commands_at_end": "Commands still waiting for ACKs",
+        "test_exception": "Hardware test raised an exception",
+        "parent_killed_hung_worker": "Worker hung and was killed by watchdog",
+        "cleanup_error": "Cleanup failed",
+        "command_issued": "Test stopped immediately after sending the command",
+    }
+    issue = next((e for e in reversed(records)
+                  if e.get("event") in issue_names), None)
+    skipped = next((e for e in reversed(records)
+                    if str(e.get("action", "")).startswith("SKIPPED")), None)
+    sample = next((e for e in reversed(records)
+                   if isinstance(e.get("transport"), dict)), {})
+    start = next((e for e in records if e.get("event") == "pre_command_transport"), {})
+    initial = start.get("transport", {})
+    transport = sample.get("transport", {})
+    if returncode == 0 and any(e.get("event") == "test_finished" for e in records):
+        status, reason = "PASS", "Completed without detected ACK stall"
+    elif returncode == 2 or skipped is not None:
+        status, reason = "SKIP", (skipped or {}).get("action", "Not applicable")
+    else:
+        status = "FAIL"
+        reason = (issue_names[issue["event"]] if issue else
+                  last.get("message", "Incomplete run / unexpected worker exit"))
+        if issue and issue.get("message"):
+            reason += ": " + str(issue["message"])[:160]
+    result = {"status": status, "reason": reason,
+              "returncode": returncode,
+              "pending": transport.get("pending_reliable_packets"),
+              "queued": transport.get("queued_app_commands"),
+              "ack_before": initial.get("next_ack_expected"),
+              "ack_after": transport.get("next_ack_expected"),
+              "received_frames": transport.get("received_frames"),
+              "audio_frames": (transport.get("audio_frames_reported_played", 0)
+                               - initial.get("audio_frames_reported_played", 0))}
+    return result
+
+
+def _print_summary(case, result, directory):
+    print(f"  {result['status']}: {case} — {result['reason']}", flush=True)
+    if result.get("pending") is not None:
+        print(f"     ACK {result['ack_before']} -> {result['ack_after']} | "
+              f"pending {result['pending']} | queued {result['queued']} | "
+              f"received frames {result['received_frames']} | "
+              f"audio frames {result['audio_frames']}", flush=True)
+    print(f"     Detailed evidence: {directory}", flush=True)
+
+
+def _run_case(case, args, suite_dir):
+    directory = suite_dir / case
+    directory.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, "-m", "cozmo_roverd.hardware_tests", "--_worker",
+               "--case", case, "--config", args.config,
+               "--duration", str(args.duration), "--output-dir", str(directory)]
+    print(f"\nTesting {case}...", flush=True)
+    try:
+        # Stream logs only into files. Summarize the failure in the terminal.
+        with (directory / "worker-console.log").open("w", encoding="utf-8") as stream:
+            result = subprocess.run(command, timeout=args.duration + 90,
+                                    stdout=stream, stderr=subprocess.STDOUT,
+                                    check=False)
+        returncode = result.returncode
+    except subprocess.TimeoutExpired:
+        with (directory / "measurements.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"event": "parent_killed_hung_worker",
+                                     "case": case}) + "\n")
+        returncode = 124
+    summary = _summarize(directory, returncode)
+    _print_summary(case, summary, directory)
+    return summary
 
 
 def _snapshot(cli):
@@ -133,7 +244,7 @@ def _worker(config_path, case, duration, output_dir):
 
     write("test_started", pycozmo_module=pycozmo.__file__)
     try:
-        if subprocess.run(["systemctl", "is-active", "--quiet", "cozmo-roverd.service"]).returncode == 0:
+        if _service_active():
             raise RuntimeError("Production cozmo-roverd.service is running; stop it before testing")
         cfg = load(config_path)
         write("connecting_wifi", interface=cfg.interface)
@@ -213,43 +324,70 @@ def _worker(config_path, case, duration, output_dir):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case", choices=CASES, required=True)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--case", choices=CASES, help="Run one hardware test")
+    selection.add_argument("--suite", action="store_true",
+                           help="Run the relevant baselines, lighting and audio comparisons")
     parser.add_argument("--config", default="/etc/cozmo-roverd.toml")
     parser.add_argument("--duration", type=int, default=15)
     parser.add_argument("--output-dir", default="/var/log/cozmo-roverd/hardware-tests")
     parser.add_argument("--i-understand-risk", action="store_true",
-                        help="Explicit opt-in: actual LED/audio packets may hang the robot")
+                        help="Required: audio/light tests can hang the physical robot")
     parser.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if not 3 <= args.duration <= 120:
         parser.error("--duration must be 3..120 seconds")
     if not args._worker and not args.i_understand_risk:
-        parser.error("Requires --i-understand-risk; these tests send real robot commands")
-    if not args._worker and subprocess.run(
-            ["systemctl", "is-active", "--quiet", "cozmo-roverd.service"]).returncode == 0:
-        parser.error("Stop cozmo-roverd.service before running isolated hardware tests")
+        parser.error("Requires --i-understand-risk: tests send real robot packets")
     if args._worker:
+        if args.case is None:
+            parser.error("Internal worker needs --case")
         return _worker(args.config, args.case, args.duration, args.output_dir)
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    directory = Path(args.output_dir) / (run_id + "-" + args.case)
-    directory.mkdir(parents=True, exist_ok=False)
-    command = [
-        sys.executable, "-m", "cozmo_roverd.hardware_tests",
-        "--_worker", "--case", args.case, "--config", args.config,
-        "--duration", str(args.duration), "--output-dir", str(directory),
-    ]
-    print("Running isolated", args.case, "test; output:", directory, flush=True)
+
+    cases = (args.case,) if args.case else DEFAULT_SUITE
+    root = Path(args.output_dir)
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    suite_dir = root / (run_id + "-diagnostics")
+    suite_dir.mkdir(parents=True, exist_ok=False)
+
+    service_was_running = _service_active()
+    results = {}
     try:
-        # Even a blocked PyCozmo stop() cannot hang the parent/test suite.
-        proc = subprocess.run(command, timeout=args.duration + 90)
-        return proc.returncode
-    except subprocess.TimeoutExpired:
-        with (directory / "measurements.jsonl").open("a") as fd:
-            fd.write(json.dumps({"event": "parent_killed_hung_worker",
-                                 "case": args.case}) + "\n")
-        print("Hardware-test worker timed out and was killed; inspect:", directory,
-              file=sys.stderr)
-        return 124
+        if service_was_running:
+            print(f"Stopping {SERVICE} temporarily...", flush=True)
+            _service_action("stop")
+            if _service_active():
+                raise RuntimeError("Rover service is still running; refusing to share robot")
+        print("Cozmo diagnostic tests (real hardware)", flush=True)
+        print(f"Log directory: {suite_dir}", flush=True)
+        for case in cases:
+            results[case] = _run_case(case, args, suite_dir)
+        print("\n=== COZMO HARDWARE RESULTS ===", flush=True)
+        for case, outcome in results.items():
+            print(f"{outcome['status']:4} {case:27} {outcome['reason']}", flush=True)
+        if "baseline-animation-camera" in results and "audio-camera" in results:
+            b = results["baseline-animation-camera"]["status"]
+            a = results["audio-camera"]["status"]
+            if b == "PASS" and a == "FAIL":
+                print("INTERPRETATION: animation+camera is stable; audio introduces a failure.",
+                      flush=True)
+            elif b == "FAIL":
+                print("INTERPRETATION: animation+camera fails without audio; "
+                      "do not attribute its failure solely to audio.", flush=True)
+        if "backpack-side-camera" in results:
+            print("LIGHTS: " + ("side packet ACKed in this test" if
+                  results["backpack-side-camera"]["status"] == "PASS" else
+                  "side-light test did not establish a stable ACKed result"), flush=True)
+        print(f"Evidence kept: {suite_dir}", flush=True)
+        return 1 if any(x["status"] == "FAIL" for x in results.values()) else 0
+    finally:
+        if service_was_running:
+            print(f"Restoring {SERVICE}...", flush=True)
+            try:
+                _service_action("start")
+                print("Rover service restarted.", flush=True)
+            except Exception as exc:
+                print(f"ERROR restarting rover: {exc}", file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":
