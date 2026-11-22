@@ -94,6 +94,8 @@ class Robot:
         self._face_scroll = 0
         self._face_last_content = None
         self._face_sent_at = 0.0
+        self.face_last_encoded_bytes = None
+        self.face_last_error = None
 
     def connect(self):
         import pycozmo
@@ -436,6 +438,35 @@ class Robot:
                 last_tts=self.last_tts, audio_error=self.last_tts_error,
                 scroll=self._face_scroll,
             )
+            # Cozmo silently discards an oversized UDP engine frame.
+            # A complicated generated bitmap can exceed the 1037-byte
+            # protocol payload limit once RLE-compressed, causing a blank
+            # face and an unacknowledged packet in the reliable window.
+            from pycozmo.image_encoder import ImageEncoder
+            from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+            encoded = bytes(ImageEncoder(image).encode())
+            # 4 bytes packet header + 2 bytes DisplayImage array length.
+            max_image_size = MAX_FRAME_PAYLOAD_SIZE - 6
+            if len(encoded) > max_image_size:
+                from PIL import ImageDraw
+                LOG.warning("Face bitmap encodes to %d bytes (max %d); "
+                            "using compact status image", len(encoded), max_image_size)
+                # Keep useful battery and last speech text visible in a
+                # sparse fallback that uses far less of the protocol frame.
+                image = Image.new("1", (128, 32), 0)
+                draw = ImageDraw.Draw(image)
+                voltage = (f"{battery.voltage:.2f}V"
+                           if battery.voltage is not None else "--.--V")
+                draw.rectangle((1, 1, 126, 11), outline=1)
+                draw.text((5, 1), "BAT " + voltage, fill=1)
+                draw.line((1, 15, 126, 15), fill=1)
+                draw.text((3, 19), self.last_tts[:19] if self.last_tts else "READY",
+                          fill=1)
+                encoded = bytes(ImageEncoder(image).encode())
+                if len(encoded) > max_image_size:
+                    self.face_last_error = "Face bitmap exceeds protocol frame limit"
+                    return False
+            self.face_last_encoded_bytes = len(encoded)
             content = image.tobytes()
             self._face_scroll += 1
             if content == self._face_last_content:
@@ -444,6 +475,7 @@ class Robot:
             self.face_frames_sent += 1
             self._face_sent_at = time.monotonic()
             self._face_last_content = content
+            self.face_last_error = None
             return True
 
     def speak(self, text, *, speed=1.0):
