@@ -100,8 +100,17 @@ def _limit_animation_idle_traffic(cli):
             # image keyframes to accumulate and the face to stay blank.
             # One small silence packet per second is sufficient for the
             # static dashboard and avoids PyCozmo's default 30 Hz flood.
-            self.cli.conn.send(protocol_encoder.OutputSilence())
-            self._cozmo_last_idle_silence_at = time.monotonic()
+            # Even the tiny silence packet must not pile up when Cozmo
+            # has stopped acknowledging reliable commands.
+            can_send_silence = True
+            if sender is not None:
+                with sender.lock:
+                    pending = ((sender.window.next_seq - sender.window.expected_seq)
+                               % sender.window.max_seq)
+                can_send_silence = pending == 0 and sender.queue.empty()
+            if can_send_silence:
+                self.cli.conn.send(protocol_encoder.OutputSilence())
+                self._cozmo_last_idle_silence_at = time.monotonic()
         if (image_pkt is None and self.procedural_face_enabled
                 and not self.playing_animation and not self.image_displayed):
             image_pkt = self._get_face_image()
