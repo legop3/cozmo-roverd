@@ -56,8 +56,17 @@ class Wifi:
         nm("connection", "up", self.profile, "ifname", self.cfg.interface, timeout=55)
 
     def wait(self):
+        """Re-use an existing Cozmo association; don't bounce a working link.
+
+        NetworkManager 'connection up' causes a new association even when
+        the adapter is already attached. Reissuing it on every PyCozmo
+        recovery can itself prevent the robot from reconnecting.
+        """
         while True:
             try:
+                if self.active():
+                    LOG.info("Reusing active Cozmo Wi-Fi association on %s", self.cfg.interface)
+                    return
                 self.connect()
                 return
             except Exception as exc:
