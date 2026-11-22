@@ -141,7 +141,8 @@ def test_mrr_grace_period_and_recovery_reset():
 def test_mrr_availability_watcher_expires_only_after_grace():
     async def run():
         bridge = disconnected_bridge()
-        bridge._hardware_offline_since = 100.0
+        import time
+        bridge._hardware_offline_since = time.monotonic()
         # Initially under grace, cancellation must not expire registration.
         watching = asyncio.create_task(bridge._watch_mrr_hardware())
         await asyncio.sleep(0.01)
