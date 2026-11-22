@@ -17,12 +17,14 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import wave
 
 from .config import load
 from .diagnostics import Recorder
 from .wifi import Wifi
+from .wire_diagnostics import WireRecorder, observe_socket, send_thread_exception_trace
 
 CASES = (
     "baseline-idle", "baseline-camera",
@@ -76,6 +78,8 @@ def _summarize(directory, returncode):
         "parent_killed_hung_worker": "Worker hung and was killed by watchdog",
         "cleanup_error": "Cleanup failed",
         "command_issued": "Test stopped immediately after sending the command",
+        "connect_attempt_failed": "Robot did not become ready on this connection attempt",
+        "connect_retries_exhausted": "Robot connection failed after retries",
     }
     issue = next((e for e in reversed(records)
                   if e.get("event") in issue_names), None)
@@ -86,8 +90,11 @@ def _summarize(directory, returncode):
     start = next((e for e in records if e.get("event") == "pre_command_transport"), {})
     initial = start.get("transport", {})
     transport = sample.get("transport", {})
+    reached_robot = any(e.get("event") == "robot_ready" for e in records)
     if returncode == 0 and any(e.get("event") == "test_finished" for e in records):
         status, reason = "PASS", "Completed without detected ACK stall"
+    elif not reached_robot:
+        status, reason = "INCONCLUSIVE", "Robot never became ready (not a feature test)"
     elif returncode == 2 or skipped is not None:
         status, reason = "SKIP", (skipped or {}).get("action", "Not applicable")
     else:
@@ -132,7 +139,8 @@ def _print_summary(case, result, directory):
     print(f"Outcome: {result['status']} — {result['reason']} (exit {result['returncode']})")
     print("Events:")
     interesting = {
-        "test_started", "connecting_wifi", "robot_ready",
+        "test_started", "connecting_wifi", "connect_attempt", "connect_attempt_failed",
+        "connect_retries_exhausted", "robot_ready",
         "pre_command_transport", "pre_command_stable", "command_about_to_send",
         "command_issued", "stalled", "audio_not_reported_played",
         "outstanding_commands_at_end", "test_exception",
@@ -239,6 +247,47 @@ def _print_summary(case, result, directory):
                   f"id={p.get('id', '?')} bytes={p.get('bytes', '?')}")
     elif result["status"] == "FAIL":
         print("Packet trace: no parsed outgoing packet metadata available.")
+    wire = _read_records(directory / "wire-frames.jsonl")
+    if wire:
+        tx = [r for r in wire if r.get("direction") == "tx"]
+        rx = [r for r in wire if r.get("direction") == "rx"]
+        problems = [r for r in wire if r.get("problem")]
+        exceptions = [r for r in wire if r.get("kind") in
+                      ("send_thread_exception", "socket_send_error")]
+        repeated = 0
+        seen = set()
+        for r in tx:
+            key = (r.get("first_seq"), r.get("last_seq"))
+            if r.get("kind") == "ENGINE" and key in seen:
+                repeated += 1
+            elif r.get("kind") == "ENGINE":
+                seen.add(key)
+        print(f"Actual UDP frames: tx={len(tx)} rx={len(rx)} "
+              f"duplicate tx sequence ranges={repeated}; "
+              f"header/payload problems={len(problems)}; "
+              f"sender exceptions={len(exceptions)}")
+        if problems:
+            print("FIRST WIRE MISMATCHES:")
+            for r in problems[:12]:
+                print("  " + json.dumps(r, separators=(",", ":")))
+        if exceptions:
+            print("SEND THREAD ERRORS:")
+            for r in exceptions[:12]:
+                print("  " + json.dumps(r, separators=(",", ":")))
+        print("LAST 16 OUTBOUND UDP FRAME HEADERS (actual socket sends):")
+        for r in tx[-16:]:
+            print(f"  {r.get('utc','?')} {r.get('kind','?')} "
+                  f"seq={r.get('first_seq','?')}..{r.get('last_seq','?')} "
+                  f"ack={r.get('ack','?')} bytes={r.get('bytes','?')} "
+                  f"packets={r.get('packets',[])}"
+                  + (f" PROBLEM={r['problem']}" if r.get("problem") else ""))
+        print("LAST 8 INBOUND UDP FRAME HEADERS:")
+        for r in rx[-8:]:
+            print(f"  {r.get('utc','?')} {r.get('kind','?')} "
+                  f"seq={r.get('first_seq','?')}..{r.get('last_seq','?')} "
+                  f"ack={r.get('ack','?')} bytes={r.get('bytes','?')}")
+    else:
+        print("Actual UDP-frame trace unavailable (no frames recorded).")
     print(f"Full records: {directory}", flush=True)
 
 
@@ -356,7 +405,9 @@ def _worker(config_path, case, duration, output_dir):
     test_dir.mkdir(parents=True, exist_ok=True)
     report = test_dir / "measurements.jsonl"
     recorder = Recorder(test_dir)
+    wire = WireRecorder(test_dir)
     cli = None
+    original_thread_trace = threading.gettrace()
 
     def write(event, **fields):
         with report.open("a", encoding="utf-8") as fd:
@@ -374,11 +425,35 @@ def _worker(config_path, case, duration, output_dir):
         write("connecting_wifi", interface=cfg.interface)
         Wifi(cfg).wait()
         animations = case.startswith("audio") or "animation" in case
-        cli = pycozmo.Client(
-            enable_animations=animations, enable_procedural_face=False)
-        cli.start()
-        cli.connect()
-        cli.wait_for_robot(timeout=12)
+        # Each connection attempt gets a fresh client/socket. A handshake
+        # timeout is not evidence of an audio or lighting failure.
+        # The original bridge service stays stopped for all attempts.
+        for attempt in range(1, 4):
+            write("connect_attempt", attempt=attempt)
+            cli = pycozmo.Client(
+                enable_animations=animations, enable_procedural_face=False)
+            observe_socket(cli, wire)
+            threading.settrace(send_thread_exception_trace(wire))
+            try:
+                cli.start()
+                cli.connect()
+                cli.wait_for_robot(timeout=12)
+                break
+            except Exception as exc:
+                write("connect_attempt_failed", attempt=attempt,
+                      exception_type=type(exc).__name__, message=str(exc))
+                try:
+                    cli.stop()
+                except Exception as close_exc:
+                    write("failed_connect_cleanup_error", attempt=attempt,
+                          message=str(close_exc))
+                cli = None
+                if attempt == 3:
+                    write("connect_retries_exhausted", attempts=attempt)
+                    recorder.incident(reason="robot_handshake_failed_3_times",
+                                      stage=case)
+                    return 6
+                time.sleep(2)
         # Enable video only in explicit camera conditions, so failed tests
         # isolate the influence of concurrent camera streaming.
         if case.endswith("-camera"):
@@ -443,6 +518,8 @@ def _worker(config_path, case, duration, output_dir):
                 write("cleanup_done")
             except Exception as exc:
                 write("cleanup_error", message=str(exc))
+        threading.settrace(original_thread_trace)
+        wire.close()
         recorder.close()
 
 
