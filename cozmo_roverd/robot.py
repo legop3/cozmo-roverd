@@ -590,7 +590,7 @@ class Robot:
             self._face_sent_at = 0.0
 
     def refresh_face(self):
-        """Update robot-local diagnostics once per second, not per camera frame."""
+        """Refresh the Cozmo face dashboard, observing bandwidth limits."""
         with self.lock:
             if self.client is None or not self.ready:
                 return False
@@ -628,15 +628,16 @@ class Robot:
                 last_tts=self.last_tts, audio_error=self.last_tts_error,
                 scroll=self._face_scroll,
             )
-            # A legal UDP packet can still overrun Cozmo's much smaller
-            # animation *keyframe* buffer. Logs show keyframes of 280-370
-            # bytes being rejected even with 69-298 bytes remaining.
-            # Prefer the full graphic only when compact enough; otherwise
-            # switch to a designed minimal bitmap. Never enqueue a known
-            # oversized frame and jam the reliable command channel.
+            # Use the full-width dashboard whenever the encoded image fits
+            # in a single protocol frame. The former arbitrary 160-byte
+            # limit silently replaced it with a tiny battery-only icon at
+            # the left edge, making the screen look broken. Cozmo's
+            # animation-buffer warnings describe its *available* space at
+            # that instant, not a 160-byte maximum image format.
+            # Sending is already deferred during TTS and transport congestion.
             from pycozmo.image_encoder import ImageEncoder
             from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-            max_image_size = min(160, MAX_FRAME_PAYLOAD_SIZE - 6)
+            max_image_size = MAX_FRAME_PAYLOAD_SIZE - 6
             encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 image = compact_status_image(
