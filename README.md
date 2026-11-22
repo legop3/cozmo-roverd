@@ -72,23 +72,21 @@ To examine the latest failure, use `sudo tail -n 1 /var/log/cozmo-roverd/inciden
 
 MRR's **Cozmo** peripheral now includes **Auto exposure** (momentary button: clicking enables native AE immediately) and **Manual exposure (ms)** (1–67 slider: dragging switches to minimum sensor gain with a specific exposure). The existing lift slider remains unchanged. These controls use MRR's existing supported peripheral schema; no MRR server modification is needed. Exposure modes persist across hardware reconnects within a bridge session. The Fedora diagnostic JSON reports `camera_exposure.mode` and `camera_exposure.manual_ms`. An ACK means the command was accepted for transmission, **not** proof the sensor exposure changed; verify with the live image.
 
-## Isolated physical audio and light diagnostics
+## Real-hardware audio and lighting diagnostics
 
-The real-hardware probe runs **outside the production bridge**, with a fresh, unmodified PyCozmo client in a separate child process for each case. No lights or audio are enabled during normal driving. Running these tests **can hang or disconnect Cozmo**, so the user must explicitly opt in. Do not run while the production service is active.
+The diagnostic suite runs as one command, **stops the rover service if it is running, restores it afterward**, and prints PASS/FAIL results, ACK-window progression, queue depth, received frame counts, and audio playback counters to the terminal. The tests use stock PyCozmo in isolated worker processes. The full detailed evidence remains on disk for later comparisons.
 
-After installing/updating the bridge and preparing Cozmo's Wi-Fi, stop the rover and run cases individually:
+From your existing checkout on the Fedora host (after `git pull`), run:
 
 ```sh
-sudo systemctl stop cozmo-roverd.service
-sudo /opt/cozmo-roverd/.venv/bin/python -m cozmo_roverd.hardware_tests --case baseline-camera --i-understand-risk
-sudo /opt/cozmo-roverd/.venv/bin/python -m cozmo_roverd.hardware_tests --case backpack-side-camera --i-understand-risk
-sudo /opt/cozmo-roverd/.venv/bin/python -m cozmo_roverd.hardware_tests --case audio-camera --i-understand-risk
-sudo systemctl start cozmo-roverd.service
+sudo env PYTHONPATH="$PWD" /opt/cozmo-roverd/.venv/bin/python -m cozmo_roverd.hardware_tests --suite --i-understand-risk
 ```
 
-Available cases: `baseline-idle` (no camera/animation), `baseline-camera`, `baseline-animation` (stock animation traffic without audio), `baseline-animation-camera`, `backpack-stock` (upstream `set_all_backpack_lights`), `backpack-side`, `backpack-side-camera`, `charger` (only if detected), `audio-idle` (upstream `play_audio`, 0.28-second quiet generated WAV), and `audio-camera`. The baseline and paired camera/no-camera cases distinguish a bad individual packet from interference from continuous camera/animation traffic.
+**Using `PYTHONPATH="$PWD"` deliberately runs the current checkout** rather than a potentially outdated copy installed into the Python virtual environment. The runner detects and temporarily stops `cozmo-roverd.service` so it does not compete for the robot. It restores the original running service after testing, including if a test fails. If the service was already stopped, it leaves it stopped.
 
-**Each test runs in its own killable process**, samples reliable ACK-window sequence/queue counters four times per second, and records PyCozmo protocol messages and the actual playback-frame count. A sustained ACK stall writes an incident snapshot and aborts that case. The parent kills a worker that hangs during Wi-Fi connection or teardown. Results are retained under `/var/log/cozmo-roverd/hardware-tests/<timestamp>-<case>/`: `measurements.jsonl`, `incidents.jsonl`, and `protocol.log`. These are actual physical experiments, not tests that claim to prove hardware behavior using mocks. The test runner and packet formats also have automated unit tests, but **the real-world LED/audio result cannot be established until it is run on the robot**.
+The suite runs five comparisons: camera baseline, stock animation+camera baseline, side LEDs+camera, stock audio without camera, and stock audio+camera. Use `--case CASE` instead of `--suite` to run just one, e.g. `--case baseline-animation-camera`. Other optional cases: `baseline-idle`, `baseline-animation`, `backpack-stock`, `backpack-side`, and `charger`.
+
+These are genuine physical commands, and **they may hang the robot's firmware**. Each worker has a watchdog and persists the last available measurements. Results and full protocol metadata traces are retained in `/var/log/cozmo-roverd/hardware-tests/<timestamp>-diagnostics/`. The runner does not require opening or transferring these files to see the results.
 
 ## TTS safety: hardware speaker disabled
 
