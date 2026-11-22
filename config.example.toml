@@ -3,6 +3,7 @@
 name = "cozmo"
 description = "Cozmo"
 color = "#3ba8ff"
+private = false
 server_url = "ws://YOUR-MRR-SERVER:8080/rover"
 max_speed = 100
 watchdog_seconds = 0.65
