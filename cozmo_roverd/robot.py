@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 import math
+import queue
 import threading
 import time
 from PIL import Image, ImageDraw
@@ -51,6 +52,14 @@ class Robot:
         self.ready = False
         self.battery = BatteryTracker()
         self.packets_received = 0
+        self._state_queue = queue.Queue(maxsize=1)
+        self._state_worker = None
+        self._state_stop = threading.Event()
+        self.state_packets_coalesced = 0
+        self._camera_analysis_queue = queue.Queue(maxsize=1)
+        self._camera_analysis_worker = None
+        self._camera_analysis_stop = threading.Event()
+        self.camera_analysis_skipped = 0
         self.last_packet_error = None
         self.packet_status = {}
         self.last_tts = ""
@@ -101,6 +110,9 @@ class Robot:
             # after PyCozmo's own handler so its high-level state is current.
             cli.add_handler(pycozmo.protocol_encoder.RobotState,
                             lambda _client, pkt: self._packet(cli, pkt))
+            # Start bounded consumers before enabling the camera. The raw
+            # protocol callback must never perform motor I/O or rich decoding.
+            self._start_packet_workers()
             cli.enable_camera(enable=True, color=True)
             # Do not enable speaker playback or alter camera streaming
             # in this stable driver. The last requested TTS remains visible.
@@ -133,6 +145,7 @@ class Robot:
             self.on_state()
             LOG.info("Cozmo connected")
         except Exception:
+            self._stop_packet_workers()
             # On a failed handshake the robot may already be absent. Do not
             # enqueue a protocol Disconnect into an unacknowledged socket.
             # Reclaim local PyCozmo threads and let the supervisor retry.
@@ -154,11 +167,76 @@ class Robot:
         # Pickup is telemetry only, not a driving permission check.
         self.picked_up = value
 
+    def _start_packet_workers(self):
+        self._state_stop.clear()
+        self._camera_analysis_stop.clear()
+        self._state_worker = threading.Thread(
+            target=self._state_worker_loop, name="cozmo-state", daemon=True)
+        self._camera_analysis_worker = threading.Thread(
+            target=self._camera_analysis_loop, name="cozmo-camera-analysis", daemon=True)
+        self._state_worker.start()
+        self._camera_analysis_worker.start()
+
+    @staticmethod
+    def _put_latest(q, item):
+        try:
+            q.put_nowait(item)
+            return False
+        except queue.Full:
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                q.put_nowait(item)
+            except queue.Full:
+                pass
+            return True
+
+    def _state_worker_loop(self):
+        while not self._state_stop.is_set():
+            try:
+                cli, pkt = self._state_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if not self._state_stop.is_set():
+                self._process_packet(cli, pkt)
+
+    def _camera_analysis_loop(self):
+        while not self._camera_analysis_stop.is_set():
+            try:
+                image = self._camera_analysis_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if not self._camera_analysis_stop.is_set():
+                try:
+                    self.observe_camera_brightness(image)
+                except Exception:
+                    LOG.exception("Camera brightness sampling failed")
+
+    def queue_camera_analysis(self, image):
+        """Never analyze image pixels in the camera event callback."""
+        if self._camera_analysis_worker is not None and self._camera_analysis_worker.is_alive():
+            if self._put_latest(self._camera_analysis_queue, image):
+                self.camera_analysis_skipped += 1
+        else:
+            # Unit/test harnesses without worker threads can opt in directly.
+            return False
+        return True
+
     def _packet(self, cli, pkt):
-        # No network I/O in the PyCozmo receive thread.
+        """Keep PyCozmo's receive callback bounded and nonblocking."""
         self.packets_received += 1
+        self.last_sensor = time.monotonic()
+        if self._state_worker is not None and self._state_worker.is_alive():
+            if self._put_latest(self._state_queue, (cli, pkt)):
+                self.state_packets_coalesced += 1
+        else:
+            # Test-only direct packet processing with no active connection.
+            self._process_packet(cli, pkt)
+
+    def _process_packet(self, cli, pkt):
         now = time.monotonic()
-        self.last_sensor = now
         try:
             data = snapshot_packet(pkt)
             battery = self.battery.observe(
@@ -216,6 +294,21 @@ class Robot:
             self.last_packet_error = str(exc)[:160]
             LOG.exception("Cozmo RobotState packet handling failed")
         # Always keep the packet receive counter available for diagnostics.
+
+    def _stop_packet_workers(self):
+        self._state_stop.set()
+        self._camera_analysis_stop.set()
+        for worker in (self._state_worker, self._camera_analysis_worker):
+            if worker is not None and worker is not threading.current_thread():
+                worker.join(timeout=2)
+        self._state_worker = None
+        self._camera_analysis_worker = None
+        for q in (self._state_queue, self._camera_analysis_queue):
+            while True:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
 
     def is_healthy(self):
         if not self.ready:
@@ -949,9 +1042,12 @@ class Robot:
             self.charging = self.battery.charging
             self.cliff = None
         if cli is None:
+            self._stop_packet_workers()
             return
         LOG.info("Closing local PyCozmo client for reconnection")
         try:
             cli.stop()
         except Exception:
             LOG.exception("Could not close PyCozmo client")
+        finally:
+            self._stop_packet_workers()
