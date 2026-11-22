@@ -41,7 +41,12 @@ class Bridge:
 
     def current_state(self):
         battery = self.robot.battery
-        if battery.stale() or not self.robot.ready:
+        # Battery voltage and charger flags are measurements, not a heartbeat.
+        # Cozmo can quiet its RobotState stream when it settles on the dock.
+        # Keep the last measured values rather than clearing MRR's battery
+        # panel after three seconds. Freshness is reported independently
+        # in /api/telemetry, never hidden by replacing data with null.
+        if battery.voltage is None and battery.docked is None:
             return state(charging=None, docked=None,
                          headlight=self.robot.headlight, voltage=None,
                          driving=self.robot.ready,
@@ -197,6 +202,8 @@ class Bridge:
                     "packets_received": self.robot.packets_received,
                     "last_packet_error": self.robot.last_packet_error,
                     "battery_tracker": self.robot.battery.diagnostic(),
+                    "telemetry_stale": self.robot.battery.stale(),
+                    "telemetry_age_seconds": self.robot.battery.age_seconds(),
                 }
                 tmp = target.with_suffix(".tmp")
                 tmp.write_text(json.dumps(output))
@@ -269,8 +276,10 @@ class Bridge:
                 LOG.info("Cozmo hardware ready")
                 self.hardware_ready.set()
                 while not self.stop_event.is_set():
-                    if not self.wifi.active() or not self.robot.is_healthy():
-                        raise RuntimeError("Cozmo Wi-Fi or state stream lost")
+                    if not self.wifi.active():
+                        raise RuntimeError("Cozmo Wi-Fi link lost")
+                    if not self.robot.is_healthy():
+                        raise RuntimeError("Cozmo state stream lost while off charger")
                     await asyncio.sleep(0.1)
             except asyncio.CancelledError:
                 raise
