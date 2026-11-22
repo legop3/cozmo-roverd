@@ -93,6 +93,7 @@ def test_result_summary_reports_exact_failure_and_transport_counters(tmp_path):
 
 
 def test_one_command_runner_stops_and_restores_existing_service(monkeypatch, tmp_path):
+    monkeypatch.setattr(hardware_tests, "_pycozmo_transport_patched", lambda: True)
     calls = []
     monkeypatch.setattr(hardware_tests, "_service_active", lambda: True if not calls else False)
     monkeypatch.setattr(hardware_tests, "_service_action", lambda action: calls.append(action))
