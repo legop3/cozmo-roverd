@@ -137,10 +137,12 @@ class Bridge:
             payload = msg.get("tts")
             if not isinstance(payload, dict):
                 raise ValueError("tts payload missing")
-            if payload.get("speak") is True:
-                text = payload.get("text", "")
-                if not isinstance(text, str):
-                    raise ValueError("TTS text must be a string")
+            text = payload.get("text", "")
+            if not isinstance(text, str):
+                raise ValueError("TTS text must be a string")
+            # Display the most recent TTS text even when playback is disabled.
+            self.robot.note_tts(text)
+            if payload.get("speak", True) is not False:
                 speed = finite(payload.get("speed", 1.0))
                 self.robot.speak(text, speed=speed)
         elif cmd == "headlight":
@@ -157,13 +159,6 @@ class Bridge:
                 self.robot.lift(value)
             elif control == "light" and type(value) is bool:
                 self.robot.backpack(value)
-            elif control == "volume" and type(value) is int and 0 <= value <= 100:
-                self.robot.volume(value)
-            elif control == "clear_face" and type(value) is bool:
-                if value:
-                    self.robot.clear_face()
-            elif control == "face" and isinstance(value, str) and len(value) <= 80:
-                self.robot.face(value)
             else:
                 raise ValueError("unsupported peripheral value")
         else:
