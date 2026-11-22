@@ -1,6 +1,9 @@
 """PyCozmo hardware access; isolate robot callbacks from the asyncio WebSocket."""
 from __future__ import annotations
 import logging
+import subprocess
+import tempfile
+from pathlib import Path
 import math
 import threading
 import time
@@ -171,6 +174,33 @@ class Robot:
         with self.lock:
             if self.client is None: raise RuntimeError("Cozmo disconnected")
             self.client.clear_screen()
+
+    def speak(self, text, *, speed=1.0):
+        """Generate offline speech locally and play through Cozmo's speaker."""
+        message = str(text).strip()[:512]
+        if not message:
+            raise ValueError("TTS text is empty")
+        speed = max(0.5, min(2.0, float(speed)))
+        # PyCozmo accepts 22050-Hz signed 16-bit PCM, not arbitrary WAV.
+        with tempfile.TemporaryDirectory(prefix="cozmo-speech-") as directory:
+            raw = str(Path(directory) / "raw.wav")
+            output = str(Path(directory) / "cozmo.wav")
+            try:
+                subprocess.run(["espeak-ng", "-s", str(round(175 * speed)),
+                                "-w", raw, message],
+                               check=True, capture_output=True, timeout=20)
+                subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                                "-y", "-i", raw, "-ar", "22050", "-ac", "1",
+                                "-c:a", "pcm_s16le", output],
+                               check=True, capture_output=True, timeout=20)
+            except FileNotFoundError as exc:
+                raise RuntimeError("Install espeak-ng and ffmpeg for Cozmo TTS") from exc
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                raise RuntimeError("Offline speech generation failed") from exc
+            with self.lock:
+                if self.client is None:
+                    raise RuntimeError("Cozmo disconnected")
+                self.client.play_audio(output)
 
     def face(self, text):
         image = Image.new("1", (128, 32), color=0)
