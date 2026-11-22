@@ -459,3 +459,46 @@ def test_tts_limits_firmware_playback_buffer_even_when_network_ack_is_fast():
     controller.num_audio_frames_played = 101
     controller._run_frame()  # c after firmware reports progress
     assert sent == ["a", "b", "c"]
+
+
+
+def test_tts_defers_screen_keyframe_instead_of_transmitting_both_together():
+    from collections import deque
+    from threading import Lock
+    from types import SimpleNamespace as NS
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+
+    sent = []
+    class Q:
+        def __init__(self):
+            self.lock = Lock()
+            self.audio_queue = deque(["audio-frame"])
+            self.image_queue = deque(["face-keyframe"])
+        def get(self):
+            with self.lock:
+                audio = self.audio_queue.popleft() if self.audio_queue else None
+                image = self.image_queue.popleft() if self.image_queue else None
+                return audio, image, None
+    q = Q()
+    controller = NS(queue=q, animations_enabled=True, playing_audio=False,
+                    procedural_face_enabled=False, playing_animation=False,
+                    image_displayed=True, last_image_pkt=None)
+    cli = NS(anim_controller=controller,
+             conn=NS(send=sent.append, post_event=lambda *a: None))
+    _limit_animation_idle_traffic(cli)
+    controller._run_frame()
+    assert sent == ["audio-frame"]
+    assert list(q.image_queue) == ["face-keyframe"]
+    controller._run_frame()
+    assert sent[-1] == "face-keyframe"
+
+
+def test_tts_played_counter_is_read_from_animation_controller():
+    from types import SimpleNamespace as NS
+    robot = robot_with_face()
+    from threading import Lock
+    robot.client.anim_controller = NS(
+        num_audio_frames_played=57,
+        queue=NS(lock=Lock(), audio_queue=[]),
+    )
+    assert robot.speaker_diagnostics()["robot_reported_audio_frames"] == 57
