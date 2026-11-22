@@ -248,6 +248,7 @@ class Bridge:
                     "last_tts_played_at": self.robot.last_tts_played_at,
                     "face_frames_sent": self.robot.face_frames_sent,
                     "speaker": self.robot.speaker_diagnostics(),
+                    "transport": self.robot.transport_diagnostics(),
                     "last_packet_error": self.robot.last_packet_error,
                     "battery_tracker": self.robot.battery.diagnostic(),
                     "max_speed_config_mmps": self.cfg.max_speed,
@@ -349,6 +350,8 @@ class Bridge:
                 # repeated loss before reactivating the Wi-Fi profile.
                 wifi_misses = 0
                 last_wifi_check = 0.0
+                stalled_ack_since = None
+                previous_expected_seq = None
                 while not self.stop_event.is_set():
                     now = time.monotonic()
                     if now - last_wifi_check >= 2.0:
@@ -359,6 +362,23 @@ class Bridge:
                             if wifi_misses >= 3:
                                 raise RuntimeError("Cozmo Wi-Fi association lost (3 checks)")
                         last_wifi_check = now
+                    # A full reliable send window can stall wheel commands
+                    # while the camera continues arriving. Watch for a real
+                    # lack of ACK progress, rather than treating every brief
+                    # packet/telemetry pause as a disconnection.
+                    transport = self.robot.transport_diagnostics()
+                    if transport:
+                        expected = transport["next_ack_expected"]
+                        pending = transport["pending_reliable_packets"]
+                        if pending < 12 or expected != previous_expected_seq:
+                            stalled_ack_since = None
+                        elif stalled_ack_since is None:
+                            stalled_ack_since = now
+                        elif now - stalled_ack_since >= 12.0:
+                            raise RuntimeError(
+                                f"Cozmo reliable command channel stalled: "
+                                f"{pending} packets pending without ACK progress")
+                        previous_expected_seq = expected
                     # A prolonged silence indicates a stuck PyCozmo session,
                     # not a brief telemetry pause. Keep the Wi-Fi association
                     # and reconnect the client only after this grace period.
