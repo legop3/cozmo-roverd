@@ -204,6 +204,7 @@ async function refreshTelemetry() {
     const pose = c.pose || {};
     const wheels = c.wheel_speeds_mmps || {};
     const vid = response.video || {};
+    const audio = response.speaker || {};
     const cards = $("telemetry-cards");
     cards.replaceChildren(
       telemetryCard("Battery & charger", [
@@ -227,6 +228,14 @@ async function refreshTelemetry() {
         ["Pitch", displayMetric(pose.pitch_deg, "°")],
         ["Orientation", displayMetric(c.orientation)],
         ["Pose frame", displayMetric(pose.frame_id)],
+      ]),
+      telemetryCard("Face & speech", [
+        ["Last TTS", displayMetric(audio.last_message || "—")],
+        ["TTS error", displayMetric(audio.last_error)],
+        ["Audio frames queued for last TTS", displayMetric(audio.last_queued_frames)],
+        ["Speaker audio frames reported", displayMetric(audio.robot_reported_audio_frames)],
+        ["Queued audio frames remaining", displayMetric(audio.queued_frames_remaining)],
+        ["Face screen updates", displayMetric(response.face_frames_sent)],
       ]),
       telemetryCard("Video & connectivity", [
         ["Cozmo connected", displayMetric(response.hardware_connected)],
