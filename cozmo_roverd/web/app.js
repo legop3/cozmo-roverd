@@ -200,6 +200,11 @@ async function refreshTelemetry() {
     const c = response.cozmo || {};
     const st = response.rover_state || {};
     const battery = st.battery || {};
+    const tracked = response.battery_tracker || {};
+    const voltage = tracked.voltage_v ?? c.battery_voltage_v;
+    const voltageAge = tracked.voltage_age_seconds;
+    const voltageLabel = voltageAge == null ? "Battery voltage" :
+      (voltageAge >= 5 ? "Last measured voltage" : "Battery voltage");
     const pose = c.pose || {};
     const wheels = c.wheel_speeds_mmps || {};
     const vid = response.video || {};
@@ -209,7 +214,8 @@ async function refreshTelemetry() {
     cards.replaceChildren(
       telemetryCard("Battery & charger", [
         ["Estimated charge", displayMetric(battery.percent, "%")],
-        ["Battery voltage", displayMetric(c.battery_voltage_v, " V")],
+        [voltageLabel, displayMetric(voltage, " V")],
+        ["Voltage sample age", voltageAge == null ? "—" : displayMetric(Math.round(voltageAge), " s")],
         ["On charging contacts", displayMetric(c.on_charger)],
         ["Actively charging", displayMetric(c.charging)],
         ["Needs charge", displayMetric(battery.needsCharge)],
