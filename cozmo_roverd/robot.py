@@ -687,43 +687,66 @@ class Robot:
             with self.lock:
                 if self.client is None or not self.ready:
                     raise RuntimeError("Cozmo disconnected")
-                controller = self.client.anim_controller
+                cli = self.client
+                controller = cli.anim_controller
+                audio_q = getattr(controller.queue, "audio_queue", None)
+                if (controller.playing_audio or
+                        (audio_q is not None and len(audio_q))):
+                    raise RuntimeError("Cozmo speech already playing")
                 controller.enable_animations(True)
                 controller._cozmo_audio_aborted = False
                 controller._cozmo_audio_abort_reason = None
                 controller._cozmo_audio_blocked_at = None
                 controller._cozmo_audio_frames_submitted = 0
                 controller._cozmo_audio_backpressure_ticks = 0
-                # Preserve the last display contents, but don't enqueue
-                # another face frame merely because TTS was requested.
                 controller._cozmo_audio_played_baseline = getattr(
                     controller, "num_audio_frames_played", None)
                 controller._cozmo_keyframe_consumed = controller._cozmo_keyframes_received
                 controller._cozmo_tts_requested_at = time.monotonic()
-                # Explicitly use the same 30-FPS output-audio queue that the
-                # built-in PyCozmo playback uses, with a verified nonempty WAV.
-                # PyCozmo's reference audio player runs without a camera.
-                # Cozmo's camera is a continuous high-rate UDP stream, and
-                # the failure occurs exactly as a large OutputAudio begins.
-                # Temporarily turn camera streaming off *for speech only*;
-                # automatically restore it on completion or audio abort.
-                # This isolates half-duplex Wi-Fi contention without
-                # modifying or suspending motor/head commands.
-                camera_pause = getattr(self.client, "enable_camera", None)
-                if callable(camera_pause):
-                    camera_pause(enable=False, color=True)
-                    controller._cozmo_camera_paused_for_speech = True
-                    controller._cozmo_resume_camera = (
-                        lambda client=self.client: client.enable_camera(
-                            enable=True, color=True))
-                try:
+
+            # Keep this work outside the robot command lock: the entire
+            # point is allowing drives and other control input to continue.
+            camera_pause = getattr(cli, "enable_camera", None)
+            if callable(camera_pause):
+                camera_pause(enable=False, color=True)
+                controller._cozmo_camera_paused_for_speech = True
+                controller._cozmo_resume_camera = (
+                    lambda client=cli: client.enable_camera(enable=True, color=True))
+                # A pause command merely queued for sending does not stop
+                # the incoming JPEG stream. Wait briefly for its ACK, then
+                # give the last camera fragment time to arrive. If Wi-Fi is
+                # congested, skip speech rather than forcing an audio packet.
+                sender = getattr(getattr(cli, "conn", None), "send_thread", None)
+                if sender is not None:
+                    deadline = time.monotonic() + 1.0
+                    cleared = False
+                    while time.monotonic() < deadline:
+                        with sender.lock:
+                            outstanding = (
+                                (sender.window.next_seq -
+                                 sender.window.expected_seq) %
+                                sender.window.max_seq)
+                        if outstanding == 0 and sender.queue.empty():
+                            cleared = True
+                            break
+                        time.sleep(0.025)
+                    if not cleared:
+                        controller._cozmo_resume_video()
+                        raise RuntimeError(
+                            "Cozmo speaker unavailable: camera pause not "
+                            "acknowledged; protecting the command channel")
+                    time.sleep(0.10)
+            try:
+                with self.lock:
+                    if self.client is not cli or not self.ready:
+                        raise RuntimeError("Cozmo disconnected during speech setup")
                     controller.play_audio(frames)
-                except Exception:
-                    controller._cozmo_resume_video()
-                    raise
-                self.last_tts_frames = len(frames)
-                self.last_tts_played_at = time.time()
-                self.last_tts_error = None
+                    self.last_tts_frames = len(frames)
+                    self.last_tts_played_at = time.time()
+                    self.last_tts_error = None
+            except Exception:
+                controller._cozmo_resume_video()
+                raise
             LOG.info("Queued %d Cozmo speaker frames for TTS", len(frames))
         except (OSError, subprocess.CalledProcessError,
                 subprocess.TimeoutExpired, ValueError, RuntimeError) as exc:
