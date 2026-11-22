@@ -361,3 +361,21 @@ def test_docked_voltage_does_not_restore_obsolete_measurement():
         "last_battery_voltage_at": time.time() - 7200,
     })
     assert tracker.voltage is None
+
+
+
+def test_mrr_sensor_keeps_last_measured_voltage_while_docked_and_silent():
+    from cozmo_roverd.main import Bridge
+    from cozmo_roverd.robot_packet import BatteryTracker
+    tracker = BatteryTracker()
+    tracker.observe(3.92, 0x3000)
+    bridge = object.__new__(Bridge)
+    bridge.robot = NS(battery=tracker, latest={})
+    reading = bridge.current_sensor()["sensors"]
+    assert reading["voltageMv"] == 3920
+    assert reading["chargingSources"]["homeBase"] is True
+    # A missing or invalid raw packet value must not erase it.
+    bridge.robot.latest = {"battery_voltage_v": None, "on_charger": True}
+    assert bridge.current_sensor()["sensors"]["voltageMv"] == 3920
+    tracker.observe(0.0, 0x3000)
+    assert bridge.current_sensor()["sensors"]["voltageMv"] == 3920
