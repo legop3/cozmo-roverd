@@ -60,7 +60,7 @@ class Robot:
                             lambda _client, pkt: self._packet(cli, pkt))
             cli.enable_camera(enable=True, color=True)
             cli.set_volume(50000)
-            cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=True))
+            cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
             self.configure_camera(cli)
             with self.lock:
                 self.client = cli
@@ -78,8 +78,8 @@ class Robot:
         self.on_state()
 
     def _cliff(self, value):
+        # Cliff sensing remains telemetry-only; it must not change motor commands.
         self.cliff = value
-        if value: self.stop_drive()
 
     def _picked_up(self, value):
         self.picked_up = value
@@ -149,9 +149,9 @@ class Robot:
     def drive(self, left, right):
         with self.lock:
             if self.client is None: raise RuntimeError("Cozmo disconnected")
-            if self.cliff or self.picked_up:
+            if self.picked_up:
                 self.stop_drive()
-                raise RuntimeError("Motion blocked by cliff/pickup sensor")
+                raise RuntimeError("Motion blocked by pickup sensor")
             if self.on_charger and not self.undock_active and (left or right):
                 raise RuntimeError("Use undock to leave charging contacts")
             if self.dock_assist:
