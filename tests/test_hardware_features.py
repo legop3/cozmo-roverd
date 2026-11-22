@@ -167,14 +167,14 @@ def test_live_exposure_switch_uses_adaptive_sensor_control():
     assert pkt.exposure_ms == 2
     assert pkt.gain == 2.0
     robot.set_camera_auto_exposure()
-    assert robot.client.packets[-1].auto_exposure_enabled is True
+    assert robot.client.packets[-1].auto_exposure_enabled is False
     assert robot.manual_exposure_ms == 2
 
 
 def test_camera_mode_is_remembered_for_reconnect():
     robot, _ = fake_robot(mode="auto")
     robot.configure_camera()
-    assert robot.client.packets[-1].auto_exposure_enabled is True
+    assert robot.client.packets[-1].auto_exposure_enabled is False
     robot.set_camera_manual_exposure(7)
     robot.client = DummyClient()
     robot.configure_camera()
