@@ -618,3 +618,61 @@ def test_wire_decoded_face_diagnostics_show_more_than_a_dot():
     assert robot.face_encoded_on_pixels is not None
     assert robot.face_encoded_on_pixels >= 30
     assert robot.face_decoded_columns >= 8
+
+
+
+def test_tts_transport_stall_disables_further_speaker_attempts_but_keeps_last_message():
+    import pytest
+    robot = robot_with_face()
+    robot.mark_speech_unstable("Audio ACKs stopped")
+    robot.note_tts("I still want this text visible")
+    assert robot.last_tts == "I still want this text visible"
+    assert robot._tts_transport_faulted
+    with pytest.raises(RuntimeError, match="speaker disabled"):
+        robot.speak("No repeat attempt")
+    assert len(robot.client.images) >= 1
+
+
+def test_camera_pause_must_be_acknowledged_before_sending_audio(monkeypatch):
+    from pathlib import Path
+    from subprocess import CompletedProcess
+    from threading import Lock
+    from queue import Queue
+    from types import SimpleNamespace as NS
+    from unittest.mock import patch
+    import pycozmo
+    import cozmo_roverd.robot as robot_module
+
+    robot = robot_with_face()
+    camera_events = []
+    played = []
+    sender = NS(lock=Lock(),
+                window=NS(next_seq=12, expected_seq=2, max_seq=65534),
+                queue=Queue())
+    controller = NS(
+        playing_audio=False,
+        queue=NS(audio_queue=[]),
+        enable_animations=lambda x: None,
+        play_audio=lambda frames: played.extend(frames))
+    robot.client = NS(
+        anim_controller=controller,
+        conn=NS(send_thread=sender),
+        enable_camera=lambda **kw: camera_events.append(kw))
+    def fake_subprocess(args, **kwargs):
+        p = args[args.index("-w")+1] if "-w" in args else args[-1]
+        Path(p).write_bytes(b"RIFF" + bytes(100))
+        return CompletedProcess(args, 0)
+    monkeypatch.setattr(robot_module.subprocess, "run", fake_subprocess)
+    monkeypatch.setattr(pycozmo.audio, "load_wav", lambda p: ["one audio packet"])
+    controller._cozmo_resume_video = lambda: camera_events.append(
+        {"enable": True, "color": True})
+    # Avoid a real one-second sleep: simulate a clock advancing past the
+    # congestion deadline while the ACK window remains stuck.
+    times = iter((0.0, 0.1, 1.2))
+    with patch("cozmo_roverd.robot.time.monotonic", side_effect=lambda: next(times)):
+        import pytest
+        with pytest.raises(RuntimeError, match="camera pause not acknowledged"):
+            robot.speak("hello")
+    assert played == []
+    assert camera_events[0] == {"enable": False, "color": True}
+    assert camera_events[-1] == {"enable": True, "color": True}
