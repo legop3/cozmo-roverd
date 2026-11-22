@@ -579,3 +579,42 @@ def test_wire_encoded_face_is_not_a_single_pixel():
                     for x in range(128))
         assert count >= 30
         assert width >= 8
+
+
+
+def test_face_animation_clock_warms_up_after_a_new_image_despite_small_drive_backlog():
+    import time
+    from queue import Queue
+    from threading import Lock
+    from types import SimpleNamespace as NS
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+    from pycozmo.protocol_encoder import OutputSilence
+
+    sent = []
+    window = NS(next_seq=4, expected_seq=2, max_seq=65534)
+    sender = NS(lock=Lock(), window=window, queue=Queue())
+    ctl = NS(queue=NS(get=lambda: (None, None, None)),
+             animations_enabled=True, playing_audio=False,
+             image_displayed=True, playing_animation=False,
+             procedural_face_enabled=False, last_image_pkt="image")
+    cli = NS(anim_controller=ctl,
+             conn=NS(send=sent.append, send_thread=sender,
+                     CONNECTED=3, state=3, post_event=lambda *a: None))
+    _limit_animation_idle_traffic(cli)
+    ctl._cozmo_last_image_at = time.monotonic()
+    ctl._cozmo_last_idle_silence_at = time.monotonic() - .2
+    ctl._cozmo_image_refresh_at = time.monotonic()
+    ctl._run_frame()
+    assert len(sent) == 1
+    assert isinstance(sent[0], OutputSilence)
+    ctl._run_frame()
+    assert len(sent) == 1  # still bounded at 10 Hz
+
+
+def test_wire_decoded_face_diagnostics_show_more_than_a_dot():
+    robot = robot_with_face()
+    robot.battery.voltage = 3.98
+    robot.note_tts("This is the latest TTS message")
+    assert robot.face_encoded_on_pixels is not None
+    assert robot.face_encoded_on_pixels >= 30
+    assert robot.face_decoded_columns >= 8
