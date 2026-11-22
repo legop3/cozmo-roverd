@@ -6,7 +6,10 @@ def test_hello_registers_custom_rover():
     assert h["type"] == "hello"
     assert h["peripherals"][0]["id"] == "cozmo"
     assert h["cameraServo"]["enabled"]
-    assert h["private"] == {"enabled": False}
+    assert h["private"]["enabled"] is False
+    assert h["private"]["safety"]["cliffEnabled"] is False
+    assert h["private"]["safety"]["virtualWallEnabled"] is False
+    assert h["private"]["safety"]["speedLimitEnabled"] is False
     assert hello("cozmo", "Cozmo", "#ffffff", 100, private=True)["private"]["enabled"] is True
 
 def test_state_contains_required_leaves():
@@ -33,3 +36,8 @@ def test_sensor_does_not_fake_battery_percent():
 
 def test_ack_rejection():
     assert ack({"id": "1"}, "no") == {"type": "ack", "id": "1", "status": "error", "error": "no"}
+
+
+def test_docked_state_never_declares_movement_locked():
+    s = state(docked=True, charging=True)["state"]
+    assert s["dockingStatus"]["movementLocked"] is False
