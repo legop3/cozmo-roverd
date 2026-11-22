@@ -86,7 +86,9 @@ sudo env PYTHONPATH="$PWD" /opt/cozmo-roverd/.venv/bin/python -m cozmo_roverd.ha
 
 The suite runs five comparisons: camera baseline, stock animation+camera baseline, side LEDs+camera, stock audio without camera, and stock audio+camera. Use `--case CASE` instead of `--suite` to run just one, e.g. `--case baseline-animation-camera`. Other optional cases: `baseline-idle`, `baseline-animation`, `backpack-stock`, `backpack-side`, and `charger`.
 
-These are genuine physical commands, and **they may hang the robot's firmware**. Each worker has a watchdog and persists the last available measurements. Results and full protocol metadata traces are retained in `/var/log/cozmo-roverd/hardware-tests/<timestamp>-diagnostics/`. The runner does not require opening or transferring these files to see the results.
+These are genuine physical commands, and **they may hang the robot's firmware**. Each worker has a watchdog and persists the last available measurements. Each case makes up to three fresh PyCozmo connections for transient handshake timeouts; a case that never connects is explicitly **INCONCLUSIVE**, never counted as evidence of a feature failure.
+
+In addition to the existing command and playback counters, the isolated test records **actual socket-level UDP frame headers** (transmit/receive direction, timestamps, sequence first/last, ACK number, packet types/lengths, and repeated sequence ranges), checks declared sequence spans against the number of reliable packets in each frame, and observes exceptions otherwise swallowed by PyCozmo's `SendThread.run`. Its observer forwards original socket bytes unchanged; it does not change `_send_packets`, ACK handling, retransmissions, or production transport. The terminal output prints the first malformed frames, send-thread exceptions, final outbound/inbound UDP frame headers and the ACK/queue timeline. Only metadata is retained, not image or audio payloads. Detailed results remain in `/var/log/cozmo-roverd/hardware-tests/<timestamp>-diagnostics/` including `wire-frames.jsonl`. The runner does not require opening or transferring these files to see the evidence.
 
 ## TTS safety: hardware speaker disabled
 
