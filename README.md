@@ -57,11 +57,17 @@ The bridge patches the PyCozmo send thread **before starting its connection** to
 
 ## Speech playback and command-channel stability
 
-TTS is synthesized with eSpeak NG, converted to 22,050 Hz 16-bit mono WAVE, encoded into PyCozmo's 744-sample U-law audio chunks, and streamed at the robot's **native 30 Hz animation cadence**. This is the same delivery timing as PyCozmo's WAV playback example. The previous implementation tried requiring a network acknowledgement and firmware `Keyframe` event before each chunk, which broke continuous playback and often prevented speech from starting.
+PyCozmo's reference player accepts 22,050 Hz 16-bit mono WAVE and converts it into 744-byte, 8-bit μ-law `OutputAudio` packets, transmitted on its 30 Hz animation timer. The bridge generates the same WAVE with eSpeak NG and FFmpeg. **Speech generation is handled on a background thread**, so eSpeak/FFmpeg cannot stall incoming drive and servo commands on the MRR WebSocket.
 
-The bridge retains a local fix for a PyCozmo UDP frame-splitting bug and prevents audio from saturating its reliable command window: speech pauses when six or more packets are outstanding or three application packets are queued. If the backlog remains congested for 1.5 seconds, only the remaining speech is discarded; motor/head commands are not gated by TTS. During active speech, face bitmap traffic is deferred. Idle face refresh and silence traffic remain low rate.
+The reference PyCozmo audio example does not stream camera video concurrently. The bridge therefore tests a less congested path: it temporarily sends `EnableCamera(false)`, waits up to one second for the reliable transport to acknowledge the camera pause, then sends speech at 30 Hz. Camera streaming is restored immediately when speech completes or is aborted. **Video will temporarily pause while the robot speaks.** If the camera command is not acknowledged, the bridge skips the audio rather than risk stalling controls. Motor/head commands continue normally while the background speech worker is preparing playback. A separate patch fixes PyCozmo's incorrect packet sequence boundaries when its send thread splits large UDP frames.
 
-The dashboard reports the last speech message, queued/submitted audio chunks, robot-reported audio playback count, the reliable transport backlog, aborted speech and its reason. `Keyframe` events are counted for diagnostics only, not required to advance speech. **Hardware playback is not guaranteed until tested on a physical Cozmo.**
+Audio is paused if six or more reliable packets are unacknowledged or three application packets are queued. If that persists for 1.5 seconds, speech is aborted and camera streaming restored. If TTS is associated with a transport stall requiring reconnection, the speaker is disabled **for the rest of that service session** to prevent repeated robot crashes. The latest TTS message continues to display; restart the service to retry experimental speaker output.
+
+The dashboard distinguishes audio frames queued, audio frames submitted, robot-reported playback frames, camera paused/restored state, failure reason and speaker fail-safe status. These changes are a controlled hardware diagnostic; audible speech still requires verification on the actual Cozmo.
+
+## Face image diagnostics
+
+The face displays only the measured battery voltage and most recent TTS message. The bridge now decodes its own PyCozmo RLE-encoded display payload and reports the **number of lit pixels and occupied columns**. If those numbers are substantial but the robot only shows one dot, the failure occurs after encoding—likely in Cozmo's display/animation transport—not in text rendering. After sending a fresh image, the animation clock briefly runs at up to 10 Hz to help the firmware consume the image, then drops to 1 Hz, and is suppressed during serious transport congestion.
 
 ## Recovering an interrupted Cozmo connection
 
