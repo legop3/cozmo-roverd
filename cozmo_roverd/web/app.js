@@ -235,6 +235,8 @@ async function refreshTelemetry() {
         ["TTS error", displayMetric(audio.last_error)],
         ["Audio frames queued for last TTS", displayMetric(audio.last_queued_frames)],
         ["Audio frames submitted to robot", displayMetric(audio.frames_submitted_to_transport)],
+        ["Camera paused for TTS", displayMetric(audio.camera_paused_for_speech)],
+        ["Camera restored after TTS", displayMetric(audio.camera_restores_after_speech)],
         ["Speaker audio frames reported", displayMetric(audio.robot_reported_audio_frames)],
         ["Queued audio frames remaining", displayMetric(audio.queued_frames_remaining)],
         ["Speech playback aborted", displayMetric(audio.aborted_due_to_congestion)],
@@ -244,6 +246,8 @@ async function refreshTelemetry() {
         ["Firmware keyframe pacing active", displayMetric(audio.keyframe_gating_enabled)],
         ["Face screen updates", displayMetric(response.face_frames_sent)],
         ["Last encoded face image", displayMetric(response.face_last_encoded_bytes, " bytes")],
+        ["Wire-decoded face pixels lit", displayMetric(response.face_encoded_on_pixels)],
+        ["Wire-decoded columns occupied", displayMetric(response.face_decoded_columns)],
         ["Face display error", displayMetric(response.face_last_error)],
       ]),
       telemetryCard("Video & connectivity", [
