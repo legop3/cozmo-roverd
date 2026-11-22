@@ -38,8 +38,10 @@ def battery_percent(voltage):
     return 100
 
 
-def state(*, charging=None, docked=None, voltage=None, headlight=False, driving=True) -> dict:
+def state(*, charging=None, docked=None, voltage=None, headlight=False, driving=True, battery=None) -> dict:
     percent = battery_percent(voltage)
+    if battery is None:
+        battery = {"percent": percent, "charging": charging, "low": percent <= 15 if percent is not None else None, "critical": percent <= 5 if percent is not None else None, "needsCharge": percent <= 15 if percent is not None else None}
     phase = "charging" if charging else "docked" if docked else "idle" if docked is False else "unknown"
     return {
         "type": "roverState", "state": {
@@ -47,20 +49,19 @@ def state(*, charging=None, docked=None, voltage=None, headlight=False, driving=
             "docked": docked,
             "dockingStatus": {"phase": phase, "movementLocked": False,
                               "cameraLocked": False, "error": None},
-            "battery": {"percent": percent, "charging": charging,
-                        "low": percent <= 15 if percent is not None else None,
-                        "critical": percent <= 5 if percent is not None else None,
-                        "needsCharge": percent <= 15 if percent is not None else None},
+            "battery": battery,
             "headlightOn": headlight, "laserOn": None
         }
     }
 
-def sensor(*, voltage=None, cliff=None, left=None, right=None) -> dict:
+def sensor(*, voltage=None, cliff=None, left=None, right=None, on_charger=None) -> dict:
     sensors = {}
     if voltage is not None:
         sensors["voltageMv"] = int(voltage * 1000)
-    if cliff is not None:
-        sensors["cliffLeft"] = bool(cliff)
+    # Cozmo's global cliff flag is not specifically its left sensor.
+    # Do not manufacture directional cliff readings.
+    if on_charger is not None:
+        sensors["chargingSources"] = {"homeBase": bool(on_charger), "internalCharger": False, "raw": 2 if on_charger else 0}
     if left is not None and right is not None:
         sensors["wheelSpeedsMmPerSecond"] = {"left": left, "right": right, "center": (left + right) / 2}
     return {"type": "sensor", "ts": int(time.time() * 1000), "sensors": sensors}
