@@ -26,6 +26,7 @@ class Publisher:
         self.last_frame_time = None
         self.last_error = None
         self.device = None
+        self._ffmpeg_log_file = None
 
     def _test_encoder(self, encoder, *, device=None):
         # A listed FFmpeg encoder is not necessarily usable. Test a single
@@ -177,7 +178,7 @@ class Publisher:
 
     def _run(self):
         while self.running.is_set():
-            command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin"]
+            command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
             if self.device:
                 command += ["-vaapi_device", self.device]
             command += ["-fflags", "nobuffer", "-use_wallclock_as_timestamps", "1", "-f", "rawvideo", "-pixel_format", "rgb24",
@@ -195,8 +196,15 @@ class Publisher:
                 env = os.environ.copy()
                 if self.device:
                     env.setdefault("LIBVA_DRIVER_NAME", "i965")
+                logpath = Path("/run/cozmo-roverd/ffmpeg.log")
+                logpath.parent.mkdir(parents=True, exist_ok=True)
+                # Each retry overwrites the preceding FFmpeg errors. The
+                # service journal stays readable, and local diagnostics
+                # retain the most recent encoder/RTSP failure.
+                self._ffmpeg_log_file = logpath.open("wb")
                 self.process = subprocess.Popen(command, stdin=subprocess.PIPE,
-                                                stdout=subprocess.DEVNULL, env=env)
+                                                stdout=subprocess.DEVNULL,
+                                                stderr=self._ffmpeg_log_file, env=env)
                 while self.running.is_set() and self.process.poll() is None:
                     try:
                         image = self.frames.get(timeout=0.5)
@@ -221,6 +229,7 @@ class Publisher:
                 LOG.warning("Cannot start video publisher: %s", exc)
             finally:
                 self._terminate()
+                self._ffmpeg_log_file = None
             # Retry the publisher, but remain responsive to shutdown.
             for _ in range(30):
                 if not self.running.is_set(): break
@@ -239,6 +248,12 @@ class Publisher:
         except subprocess.TimeoutExpired:
             p.kill()
             p.wait()
+        if self._ffmpeg_log_file is not None:
+            self._ffmpeg_log_file.close()
+            self._ffmpeg_log_file = None
+        if p.returncode and self.running.is_set():
+            self.last_error = ("FFmpeg exited with status "
+                               + str(p.returncode) + "; see /run/cozmo-roverd/ffmpeg.log")
 
     def stop(self):
         self.running.clear()
