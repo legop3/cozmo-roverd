@@ -167,6 +167,7 @@ def public_config(path: str) -> dict:
         "name": rover.get("name", "cozmo"),
         "description": rover.get("description", "Cozmo"),
         "color": rover.get("color", "#3ba8ff"),
+        "private": rover.get("private", False),
         "server_url": rover.get("server_url", ""),
         "interface": wifi.get("interface", ""),
         "ssid": wifi.get("ssid", ""),
@@ -184,7 +185,7 @@ def public_config(path: str) -> dict:
 def validate_payload(payload: dict, current: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Invalid configuration")
-    allowed = {"name", "description", "color", "server_url", "interface", "ssid", "password",
+    allowed = {"name", "description", "color", "private", "server_url", "interface", "ssid", "password",
                "max_speed", "watchdog_seconds", "video", "fps", "rtsp_url"}
     if set(payload) - allowed:
         raise ValueError("Unknown configuration field")
@@ -220,6 +221,9 @@ def validate_payload(payload: dict, current: dict) -> dict:
         raise ValueError("MRR URL must end in /rover and begin with ws:// or wss://")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("Do not include credentials, query strings or fragments in MRR URL")
+    private = payload.get("private", False)
+    if type(private) is not bool:
+        raise ValueError("Private rover option must be on or off")
     max_speed = payload.get("max_speed")
     fps = payload.get("fps")
     watchdog = payload.get("watchdog_seconds")
@@ -237,7 +241,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
         target = urlsplit(rtsp)
         if target.scheme != "rtsp" or not target.hostname or target.username or target.password:
             raise ValueError("RTSP override must be rtsp://host:port/path (no credentials)")
-    return {"rover": {"name": name, "description": desc, "color": color,
+    return {"rover": {"name": name, "description": desc, "color": color, "private": private,
                       "server_url": url, "max_speed": max_speed,
                       "watchdog_seconds": watchdog},
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
