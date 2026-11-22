@@ -93,6 +93,7 @@ class Bridge:
         pass
 
     def handle_frame(self, image):
+        self.robot.observe_camera_brightness(image)
         if self.publisher:
             self.publisher.submit(image)
 
@@ -245,6 +246,12 @@ class Bridge:
                 except Exception as exc:
                     LOG.warning("Face status refresh failed: %s", exc)
                 last_face_at = now
+            # Update sensor gain/shutter in the normal worker, never from the
+            # camera receive thread. No digital video brightness processing.
+            try:
+                await asyncio.to_thread(self.robot.refresh_auto_camera_exposure)
+            except Exception as exc:
+                LOG.warning("Automatic camera exposure update failed: %s", exc)
             # One-time steady backpack colors; charger changes only on
             # dock-contact / dock-assist transitions. Deduped in Robot.
             # A congested send window defers updates until it clears.
@@ -292,7 +299,9 @@ class Bridge:
                     "max_speed_config_mmps": self.cfg.max_speed,
                     "commanded_wheels_mmps": {"left": self.robot.commanded_wheels[0],
                                               "right": self.robot.commanded_wheels[1]},
-                    "camera_exposure": {"mode": self.robot.camera_mode, "manual_ms": self.robot.manual_exposure_ms},
+                    "camera_exposure": {"mode": self.robot.camera_mode, "manual_ms": self.robot.manual_exposure_ms,
+                                        "auto_gain": self.robot._auto_gain, "auto_exposure_ms": self.robot._auto_exposure_ms,
+                                        "measured_brightness": self.robot._auto_measured_brightness},
                     "camera_fov": {"horizontal_deg": self.robot.latest.get("camera", {}).get("fov_x_deg"),
                                    "vertical_deg": self.robot.latest.get("camera", {}).get("fov_y_deg")},
                     "telemetry_stale": self.robot.battery.stale(),
