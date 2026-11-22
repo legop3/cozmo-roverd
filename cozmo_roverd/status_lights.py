@@ -26,9 +26,11 @@ def light_states(*, robot_online: bool, mrr_online: bool,
             transition_on_frames=8, transition_off_frames=8,
         )
 
-    # Side facing LEDs: local robot transport vs remote MRR registration.
-    left = solid((0, 230, 45)) if robot_online else pulse((255, 85, 0))
-    right = solid((0, 230, 45)) if mrr_online else pulse((255, 110, 0), 12, 18)
+    # The OUTER two Cozmo backpack LEDs are red-only (no green/blue die).
+    # A green RGB command therefore leaves them completely dark. Use red
+    # channel only: steady = healthy, pulsing = attempting/reconnecting.
+    left = solid((255, 0, 0)) if robot_online else pulse((255, 0, 0), 18, 18)
+    right = solid((255, 0, 0)) if mrr_online else pulse((255, 0, 0), 12, 18)
 
     if docked is True:
         # Charge state isn't always reported while docked; unknown stays cyan.
