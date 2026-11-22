@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import signal
+import threading
 import time
 from pathlib import Path
 import websockets
@@ -36,6 +37,7 @@ class Bridge:
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
                            camera_mode=config.camera_mode)
         self.head_degrees = 10.0
+        self._tts_synthesis_lock = threading.Lock()
         if self.publisher:
             self.publisher.state_provider = self.hud_state
 
@@ -147,7 +149,30 @@ class Bridge:
             self.robot.note_tts(text)
             if payload.get("speak", True) is not False:
                 speed = finite(payload.get("speed", 1.0))
-                self.robot.speak(text, speed=speed)
+                # eSpeak and FFmpeg are subprocesses. Running them on
+                # the WebSocket receive worker prevented new drive/servo
+                # commands being handled until synthesis completed.
+                # Start only one synthesis operation at a time; the
+                # asynchronous error result and robot diagnostics report
+                # failures without freezing control input.
+                if not self._tts_synthesis_lock.acquire(blocking=False):
+                    raise RuntimeError("Cozmo TTS synthesis already in progress")
+                command_id = msg["id"]
+                def speak_background():
+                    try:
+                        self.robot.speak(text, speed=speed)
+                    except Exception as exc:
+                        LOG.warning("Cozmo background speech failed: %s", exc)
+                        self.report_result(command_id, exc)
+                    finally:
+                        self._tts_synthesis_lock.release()
+                try:
+                    threading.Thread(
+                        target=speak_background, name="cozmo-tts",
+                        daemon=True).start()
+                except Exception:
+                    self._tts_synthesis_lock.release()
+                    raise
         elif cmd == "headlight":
             payload = msg.get("headlight")
             action = payload.get("action") if isinstance(payload, dict) else None
