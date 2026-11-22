@@ -70,7 +70,7 @@ def test_tts_generates_wav_and_queues_verified_audio_frames(monkeypatch):
         if "-w" in args:
             Path(args[args.index("-w") + 1]).write_bytes(b"RIFF" + bytes(100))
         else:
-            Path(args[args.index("-y") + 1]).write_bytes(b"RIFF" + bytes(100))
+            Path(args[-1]).write_bytes(b"RIFF" + bytes(100))
         return CompletedProcess(args, 0, "", "")
     monkeypatch.setattr(robot_module.subprocess, "run", fake_subprocess)
     monkeypatch.setattr(pycozmo.audio, "load_wav", lambda path: ["audio-1", "audio-2"])
