@@ -100,6 +100,7 @@ function configFromUI() {
     name: field("rover-name").trim(),
     description: field("description").trim(),
     color: state.color,
+    private: $("private").checked,
     server_url: field("server-url").trim(),
     interface: field("adapter-select"),
     ssid: field("ssid"),
@@ -115,6 +116,7 @@ function applyConfig(config, options) {
   state.config = config;
   state.colors = options.colors || [];
   state.color = config.color;
+  $("private").checked = !!config.private;
   $("rover-name").value = config.name;
   $("description").value = config.description;
   $("server-url").value = config.server_url;
