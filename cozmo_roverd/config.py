@@ -20,6 +20,7 @@ class Config:
     private: bool = False
     rtsp_url: str = ""
     fps: int = 15
+    hud: bool = True
 
 def load(path: str) -> Config:
     data = tomllib.loads(Path(path).read_text())
@@ -36,7 +37,10 @@ def load(path: str) -> Config:
         private=rover.get("private", False),
         rtsp_url=str(media.get("rtsp_url", "")),
         fps=int(media.get("fps", 15)),
+        hud=media.get("hud", True),
     )
+    if type(c.hud) is not bool:
+        raise ValueError("media.hud must be a boolean")
     if type(c.private) is not bool:
         raise ValueError("rover.private must be a boolean")
     url = urlsplit(c.server_url)
