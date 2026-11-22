@@ -60,7 +60,7 @@ def test_exposure_preset_sent_to_camera():
     assert robot.client.packets[-1].auto_exposure_enabled is True
 
 
-def test_undock_reverses_until_charger_contact_clears():
+def test_undock_drives_forward_until_charger_contact_clears():
     robot, changes = fake_robot()
     robot.on_charger = True
     done = Event()
@@ -72,7 +72,7 @@ def test_undock_reverses_until_charger_contact_clears():
     deadline = time.monotonic() + 1
     while not robot.client.drives and time.monotonic() < deadline:
         time.sleep(0.01)
-    assert robot.client.drives[0] == (-200, -200)
+    assert robot.client.drives[0] == (200, 200)
     robot.on_charger = False
     assert done.wait(2)
     assert robot.client.drives[-1] == (0, 0)
@@ -98,3 +98,10 @@ def test_cliff_alert_does_not_stop_motors_or_block_drive():
     robot.drive(140, -140)
     assert robot.client.drives[-1] == (140, -140)
     assert robot.moving is True
+
+
+def test_commanded_speed_is_recorded_at_full_pyc_maximum():
+    robot, _ = fake_robot()
+    robot.drive(200, 200)
+    assert robot.client.drives[-1] == (200, 200)
+    assert robot.commanded_wheels == (200, 200)
