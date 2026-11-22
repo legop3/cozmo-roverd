@@ -218,3 +218,24 @@ def test_original_imu_and_lift_gauges_remain_without_orientation_warning():
         frame.crop((145, 2, 203, 33)).tobytes())
     assert normal.crop((44, 3, 144, 32)).tobytes() == (
         frame.crop((44, 3, 144, 32)).tobytes())
+
+
+def test_disconnected_slate_shows_mrr_grace_countdown():
+    publisher = Publisher("rtsp://localhost:8554/cozmo")
+    early = publisher._offline_frame({
+        "connected": False, "hardware_stage": "retrying",
+        "mrr_offline_remaining_seconds": 600})
+    later = publisher._offline_frame({
+        "connected": False, "hardware_stage": "retrying",
+        "mrr_offline_remaining_seconds": 61})
+    expired = publisher._offline_frame({
+        "connected": False, "hardware_stage": "retrying",
+        "mrr_offline_remaining_seconds": 0})
+    assert early.size == later.size == expired.size == (320, 240)
+    assert len({early.tobytes(), later.tobytes(), expired.tobytes()}) == 3
+    # The existing reconnection title remains and the normal HUD is untouched.
+    assert early.getpixel((10, 10)) == (12, 17, 23)
+    no_timer = publisher._offline_frame({
+        "connected": False, "hardware_stage": "retrying"})
+    assert no_timer.crop((80, 150, 240, 170)).tobytes() != (
+        early.crop((80, 150, 240, 170)).tobytes())
