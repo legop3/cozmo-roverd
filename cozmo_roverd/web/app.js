@@ -229,6 +229,8 @@ async function refreshTelemetry() {
       telemetryCard("Video & connectivity", [
         ["Cozmo connected", displayMetric(response.hardware_connected)],
         ["MRR connected", displayMetric(response.mrr_connected)],
+        ["RobotState packets", displayMetric(response.packets_received)],
+        ["Last packet error", displayMetric(response.last_packet_error)],
         ["Encoder", displayMetric(vid.encoder)],
         ["RTSP publisher running", displayMetric(vid.publisher_running)],
         ["Latest frame age", displayMetric(vid.last_frame_age_sec, " s")],
