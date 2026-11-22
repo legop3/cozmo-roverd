@@ -2,6 +2,7 @@
 from __future__ import annotations
 import logging
 import queue
+import time
 import subprocess
 import threading
 from PIL import Image
@@ -15,8 +16,17 @@ class Publisher:
         self.worker: threading.Thread | None = None
         self.process: subprocess.Popen | None = None
         self.last_frame = None
+        self.encoder = None
 
     def start(self):
+        probe = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                               capture_output=True, text=True, check=True)
+        if "libx264" in probe.stdout:
+            self.encoder = "libx264"
+        elif "libopenh264" in probe.stdout:
+            self.encoder = "libopenh264"
+        else:
+            raise RuntimeError("No H.264 encoder in FFmpeg (install openh264 or full ffmpeg)")
         self.running.set()
         self.worker = threading.Thread(target=self._run, name="rtsp-publisher", daemon=True)
         self.worker.start()
@@ -36,8 +46,8 @@ class Publisher:
             command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
                        "-fflags", "nobuffer", "-f", "rawvideo", "-pixel_format", "rgb24",
                        "-video_size", "320x240", "-framerate", str(self.fps),
-                       "-i", "pipe:0", "-an", "-c:v", "libx264", "-preset", "ultrafast",
-                       "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-g", str(self.fps),
+                       "-i", "pipe:0", "-an", "-c:v", self.encoder,
+                       "-pix_fmt", "yuv420p", "-g", str(self.fps),
                        "-bf", "0", "-f", "rtsp", "-rtsp_transport", "tcp", self.url]
             try:
                 self.process = subprocess.Popen(command, stdin=subprocess.PIPE,
@@ -54,12 +64,10 @@ class Publisher:
                 LOG.warning("Cannot start video publisher: %s", exc)
             finally:
                 self._terminate()
-            if self.running.wait(0.0):
-                # Sleep interruptibly without blocking stop.
-                import time
-                for _ in range(30):
-                    if not self.running.is_set(): break
-                    time.sleep(0.1)
+            # Retry the publisher, but remain responsive to shutdown.
+            for _ in range(30):
+                if not self.running.is_set(): break
+                time.sleep(0.1)
 
     def _terminate(self):
         p = self.process
