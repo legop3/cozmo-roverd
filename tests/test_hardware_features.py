@@ -28,6 +28,9 @@ class DummyClient:
     def set_head_angle(self, angle):
         self.heads.append(angle)
 
+    def set_lift_height(self, height):
+        self.lifts.append(height)
+
 
 def fake_robot(mode="bright"):
     changes = []
@@ -70,6 +73,8 @@ def test_undock_drives_forward_until_charger_contact_clears():
         results.append((identifier, error))
         done.set()
     robot.start_undock("u1", True, complete)
+    assert robot.client.heads == [0.0]
+    assert robot.client.lifts == [32.0]
     deadline = time.monotonic() + 1
     while not robot.client.drives and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -180,3 +185,26 @@ def test_camera_mode_is_remembered_for_reconnect():
     robot.configure_camera()
     assert robot.client.packets[-1].auto_exposure_enabled is False
     assert robot.client.packets[-1].exposure_ms == 7
+
+
+def test_dock_assist_raises_lift_fully():
+    import math
+    robot, _ = fake_robot()
+    robot.on_charger = False
+    robot.assist_docking()
+    assert robot.dock_assist is True
+    assert robot.client.lifts == [92.0]
+    assert robot.client.heads == [math.radians(-25)]
+    assert robot.client.drives == [(0, 0)]
+
+
+def test_undock_without_backoff_levels_head_and_lowers_lift():
+    robot, _ = fake_robot()
+    robot.on_charger = True
+    completed = Event()
+    outcomes = []
+    robot.start_undock("u2", False, lambda ident, err: (outcomes.append((ident, err)), completed.set()))
+    assert completed.wait(2)
+    assert robot.client.heads == [0.0]
+    assert robot.client.lifts == [32.0]
+    assert outcomes == [("u2", None)]
