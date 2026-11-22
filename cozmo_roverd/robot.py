@@ -458,6 +458,12 @@ class Robot:
             if len(encoded) > max_image_size:
                 image = compact_status_image(
                     voltage=battery.voltage, percent=battery.percent,
+                    charging=battery.charging, last_tts=self.last_tts,
+                    scroll=self._face_scroll, message_limit=8)
+                encoded = bytes(ImageEncoder(image).encode())
+            if len(encoded) > max_image_size:
+                image = compact_status_image(
+                    voltage=battery.voltage, percent=battery.percent,
                     charging=battery.charging, battery_only=True)
                 encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
