@@ -516,9 +516,20 @@ class Bridge:
                     # A prolonged silence indicates a stuck PyCozmo session,
                     # not a brief telemetry pause. Keep the Wi-Fi association
                     # and reconnect the client only after this grace period.
-                    if self.robot.last_sensor and not self.robot.battery.docked and (
-                        now - self.robot.last_sensor > 45.0):
-                        raise RuntimeError("No Cozmo RobotState for 45 seconds; restarting PyCozmo only")
+                    # A live camera stream proves PyCozmo is still receiving
+                    # traffic. Some firmware/charger states pause RobotState
+                    # while camera frames continue; do not disconnect a
+                    # working camera/control link solely for that silence.
+                    camera_recent = (
+                        self.publisher is not None
+                        and self.publisher.last_frame_time is not None
+                        and now - self.publisher.last_frame_time < 5.0)
+                    if (self.robot.last_sensor and not self.robot.battery.docked
+                            and not camera_recent
+                            and now - self.robot.last_sensor > 45.0):
+                        raise RuntimeError(
+                            "No Cozmo RobotState for 45 seconds and no recent camera frames; "
+                            "restarting PyCozmo only")
                     await asyncio.sleep(0.25)
             except asyncio.CancelledError:
                 raise
