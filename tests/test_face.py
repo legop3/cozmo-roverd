@@ -481,3 +481,101 @@ def test_tts_stops_temporarily_when_send_queue_has_three_commands():
     sender_queue.get_nowait()
     controller._run_frame()
     assert sent == ["audio"]
+
+
+
+def test_camera_stream_pauses_during_tts_and_restores_when_audio_finishes(monkeypatch):
+    from pathlib import Path
+    from subprocess import CompletedProcess
+    from collections import deque
+    from threading import Lock
+    from types import SimpleNamespace as NS
+    import pycozmo
+    import cozmo_roverd.robot as robot_module
+
+    robot = robot_with_face()
+    camera_events = []
+    packets = []
+    class AudioQueue:
+        def __init__(self):
+            self.lock = Lock()
+            self.audio_queue = deque()
+            self.image_queue = deque()
+        def put_audio(self, audio):
+            with self.lock:
+                self.audio_queue.extend(audio)
+        def get(self):
+            with self.lock:
+                return (self.audio_queue.popleft() if self.audio_queue else None,
+                        self.image_queue.popleft() if self.image_queue else None,
+                        None)
+    queue = AudioQueue()
+    ctl = NS(queue=queue, enable_animations=lambda yes: None,
+             animations_enabled=True, playing_audio=False,
+             image_displayed=False, playing_animation=False,
+             procedural_face_enabled=False)
+    client = NS(anim_controller=ctl,
+                conn=NS(send=packets.append,
+                        post_event=lambda *a: None),
+                enable_camera=lambda **kw: camera_events.append(kw))
+    robot.client = client
+    robot.ready = True
+    robot_module._limit_animation_idle_traffic(client)
+    ctl.play_audio = queue.put_audio
+    def fake_subprocess(args, **kwargs):
+        p = args[args.index("-w")+1] if "-w" in args else args[-1]
+        Path(p).write_bytes(b"RIFF" + bytes(100))
+        return CompletedProcess(args, 0)
+    monkeypatch.setattr(robot_module.subprocess, "run", fake_subprocess)
+    monkeypatch.setattr(pycozmo.audio, "load_wav", lambda path: ["audio1", "audio2"])
+
+    robot.speak("Hello", speed=1.0)
+    assert camera_events == [{"enable": False, "color": True}]
+    assert ctl._cozmo_camera_paused_for_speech
+    for _ in range(3):
+        ctl._run_frame()
+    assert packets[:2] == ["audio1", "audio2"]
+    assert isinstance(packets[2], pycozmo.protocol_encoder.OutputSilence)
+    assert camera_events[-1] == {"enable": True, "color": True}
+    assert not ctl._cozmo_camera_paused_for_speech
+    assert ctl._cozmo_tts_camera_restores == 1
+
+
+def test_camera_recovers_when_speech_aborts_due_to_transport_congestion():
+    from collections import deque
+    from threading import Lock
+    from queue import Queue
+    from types import SimpleNamespace as NS
+    from unittest.mock import patch
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+
+    camera_events = []
+    queue = NS(lock=Lock(), audio_queue=deque(["audio"]))
+    ctl = NS(queue=queue, animations_enabled=True,
+             playing_audio=False, image_displayed=False)
+    sender = NS(lock=Lock(), window=NS(next_seq=8, expected_seq=0,
+                                      max_seq=65534), queue=Queue())
+    cli = NS(anim_controller=ctl, conn=NS(send=lambda pkt: None,
+              send_thread=sender, post_event=lambda *a: None))
+    _limit_animation_idle_traffic(cli)
+    ctl._cozmo_resume_camera = lambda: camera_events.append("restored")
+    ctl._cozmo_camera_paused_for_speech = True
+    with patch("cozmo_roverd.robot.time.monotonic", side_effect=[10., 12.]):
+        ctl._run_frame()
+        ctl._run_frame()
+    assert camera_events == ["restored"]
+    assert ctl._cozmo_audio_aborted
+    assert not ctl._cozmo_camera_paused_for_speech
+
+
+def test_wire_encoded_face_is_not_a_single_pixel():
+    from pycozmo.image_encoder import ImageEncoder, ImageDecoder
+    for voltage, speech in ((3.75, "NO TTS YET"), (4.05, "Hello Cozmo"),
+                            (None, "A longer TTS message is here")):
+        img = status_image(voltage=voltage, last_tts=speech)
+        decoded = ImageDecoder(bytes(ImageEncoder(img).encode())).decode()
+        count = sum(bool(px) for px in decoded)
+        width = sum(any(decoded[y*128+x] for y in range(32))
+                    for x in range(128))
+        assert count >= 30
+        assert width >= 8
