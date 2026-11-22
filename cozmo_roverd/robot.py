@@ -77,6 +77,22 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_keyframe_consumed = 0
     controller._cozmo_keyframe_gating = False  # diagnostic; gate disabled for normal audio
     controller._cozmo_tts_requested_at = 0.0
+    controller._cozmo_resume_camera = None
+    controller._cozmo_camera_paused_for_speech = False
+    controller._cozmo_tts_camera_restores = 0
+
+    def resume_video(self):
+        callback = self._cozmo_resume_camera
+        self._cozmo_resume_camera = None
+        self._cozmo_camera_paused_for_speech = False
+        if callback is not None:
+            try:
+                callback()
+                self._cozmo_tts_camera_restores += 1
+            except Exception:
+                LOG.exception("Failed to resume Cozmo camera after speech")
+
+    controller._cozmo_resume_video = types.MethodType(resume_video, controller)
 
     if callable(getattr(cli, "add_handler", None)):
         # Track firmware KEYFRAME events for diagnosing audio issues.
@@ -122,6 +138,7 @@ def _limit_animation_idle_traffic(cli):
                 q.audio_queue.clear()
             self.playing_audio = False
             self._cozmo_audio_aborted = True
+            self._cozmo_resume_video()
             self._cozmo_audio_abort_reason = (
                 f"transport congested: {pending} unacknowledged, {queued} queued")
             self._cozmo_audio_blocked_at = None
@@ -145,6 +162,7 @@ def _limit_animation_idle_traffic(cli):
             self.cli.conn.send(protocol_encoder.OutputSilence())
             self._cozmo_last_idle_silence_at = now
             self.cli.conn.post_event(event.EvtAudioCompleted, self.cli)
+            self._cozmo_resume_video()
         elif (self.image_displayed and now - self._cozmo_last_idle_silence_at >= 1.0
               and pending == 0 and queued == 0
               and getattr(self.cli.conn, "state", None) ==
@@ -522,6 +540,8 @@ class Robot:
                 "backpressure_ticks": getattr(cli.anim_controller, "_cozmo_audio_backpressure_ticks", 0) if cli else None,
                 "frames_submitted_to_transport": getattr(cli.anim_controller, "_cozmo_audio_frames_submitted", 0) if cli else None,
                 "playback_counter_at_speech_start": getattr(cli.anim_controller, "_cozmo_audio_played_baseline", None) if cli else None,
+                "camera_paused_for_speech": getattr(cli.anim_controller, "_cozmo_camera_paused_for_speech", False) if cli else None,
+                "camera_restores_after_speech": getattr(cli.anim_controller, "_cozmo_tts_camera_restores", 0) if cli else None,
                 "firmware_keyframes_received": getattr(cli.anim_controller, "_cozmo_keyframes_received", None) if cli else None,
                 "keyframe_gating_enabled": getattr(cli.anim_controller, "_cozmo_keyframe_gating", None) if cli else None,
             }
@@ -662,7 +682,25 @@ class Robot:
                 controller._cozmo_tts_requested_at = time.monotonic()
                 # Explicitly use the same 30-FPS output-audio queue that the
                 # built-in PyCozmo playback uses, with a verified nonempty WAV.
-                controller.play_audio(frames)
+                # PyCozmo's reference audio player runs without a camera.
+                # Cozmo's camera is a continuous high-rate UDP stream, and
+                # the failure occurs exactly as a large OutputAudio begins.
+                # Temporarily turn camera streaming off *for speech only*;
+                # automatically restore it on completion or audio abort.
+                # This isolates half-duplex Wi-Fi contention without
+                # modifying or suspending motor/head commands.
+                camera_pause = getattr(self.client, "enable_camera", None)
+                if callable(camera_pause):
+                    camera_pause(enable=False, color=True)
+                    controller._cozmo_camera_paused_for_speech = True
+                    controller._cozmo_resume_camera = (
+                        lambda client=self.client: client.enable_camera(
+                            enable=True, color=True))
+                try:
+                    controller.play_audio(frames)
+                except Exception:
+                    controller._cozmo_resume_video()
+                    raise
                 self.last_tts_frames = len(frames)
                 self.last_tts_played_at = time.time()
                 self.last_tts_error = None
