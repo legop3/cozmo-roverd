@@ -1,73 +1,80 @@
-"""Cozmo's face shows only battery voltage and the most recent TTS text.
+"""Only the battery voltage and last TTS message on Cozmo's 128x32 face.
 
-Render a 128x32 1-bit image for PyCozmo. No motion, docking, charging,
-battery percentage, decorations, or other robot-observable status.
+Draw at the native 1-bit pixel resolution. Previous 4x supersampling made
+Pillow's fallback bitmap font shrink to a few pixels when DejaVu was absent
+from a headless Fedora server. Both font paths must produce legible output.
 """
 from __future__ import annotations
 
 import math
 from PIL import Image, ImageDraw, ImageFont
 
-WIDTH, HEIGHT, SCALE = 128, 32, 4
+WIDTH, HEIGHT = 128, 32
+
+_FONT_CHOICES = (
+    "DejaVuSansMono.ttf",
+    "DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSansMono.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf",
+)
 
 
 def _font(size):
-    for name in ("DejaVuSansMono.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"):
+    for name in _FONT_CHOICES:
         try:
-            return ImageFont.truetype(name, size * SCALE)
-        except OSError:
+            return ImageFont.truetype(name, size)
+        except (OSError, ValueError):
             continue
+    # Pillow's built-in bitmap font is ~8 pixels high. That is fine for a
+    # native 128x32 image; it must NEVER be downsampled from 4x afterward.
     return ImageFont.load_default()
 
 
 _VOLTAGE_FONT = _font(15)
-_MESSAGE_FONT = _font(10)
+_MESSAGE_FONT = _font(11)
 
 
-def _text_strip(text, font, width, height, scroll):
-    """Draw text into a clipped viewport, scrolling only when necessary."""
-    dest = Image.new("L", (width, height), 0)
-    draw = ImageDraw.Draw(dest)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = max(1, bbox[2] - bbox[0])
-    y = max(0, (height - (bbox[3] - bbox[1])) // 2) - bbox[1]
-    if text_width <= width:
-        draw.text((max(0, (width - text_width) // 2), y), text, font=font, fill=255)
+def _strip(text, font, width, height, scroll=0):
+    im = Image.new("1", (width, height), 0)
+    d = ImageDraw.Draw(im)
+    bb = d.textbbox((0, 0), text, font=font)
+    txt_width = max(1, bb[2] - bb[0])
+    txt_height = max(1, bb[3] - bb[1])
+    y = (height - txt_height) // 2 - bb[1]
+    if txt_width <= width:
+        d.text(((width - txt_width) // 2, y), text, fill=1, font=font)
     else:
-        gap = 16 * SCALE
-        period = text_width + gap
-        track = Image.new("L", (period * 2 + width, height), 0)
+        gap = 16
+        period = txt_width + gap
+        track = Image.new("1", (period * 2 + width, height), 0)
         td = ImageDraw.Draw(track)
-        td.text((0, y), text, font=font, fill=255)
-        td.text((period, y), text, font=font, fill=255)
-        offset = (scroll * 4 * SCALE) % period
-        dest = track.crop((offset, 0, offset + width, height))
-    return dest
+        td.text((0, y), text, fill=1, font=font)
+        td.text((period, y), text, fill=1, font=font)
+        # Advance by 2 native pixels per update for readable motion.
+        left = (scroll * 2) % period
+        im = track.crop((left, 0, left + width, height))
+    return im
 
 
 def status_image(*, voltage=None, last_tts="", scroll=0, **_unused):
-    """Return the simple voltage + latest-message display."""
+    """Render voltage over the persistent latest speech text, no other UI."""
     try:
-        v = float(voltage)
-        voltage_text = f"{v:.2f} V" if math.isfinite(v) else "--.-- V"
+        val = float(voltage)
+        voltage_text = f"{val:.2f} V" if math.isfinite(val) else "--.-- V"
     except (ValueError, TypeError, OverflowError):
         voltage_text = "--.-- V"
-
-    message = " ".join(str(last_tts or "").split()) or "NO TTS YET"
-    canvas = Image.new("L", (WIDTH * SCALE, HEIGHT * SCALE), 0)
-    voltage_strip = _text_strip(voltage_text, _VOLTAGE_FONT,
-                                WIDTH * SCALE, 19 * SCALE, 0)
-    message_strip = _text_strip(message, _MESSAGE_FONT,
-                                WIDTH * SCALE, 12 * SCALE, scroll)
-    canvas.paste(voltage_strip, (0, 0))
-    canvas.paste(message_strip, (0, 20 * SCALE))
-    reduced = canvas.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
-    return reduced.point(lambda px: 255 if px >= 100 else 0, mode="1")
+    msg = " ".join(str(last_tts or "").split()) or "NO TTS YET"
+    face = Image.new("1", (WIDTH, HEIGHT), 0)
+    face.paste(_strip(voltage_text, _VOLTAGE_FONT, WIDTH, 18), (0, 0))
+    face.paste(_strip(msg, _MESSAGE_FONT, WIDTH, 13, scroll), (0, 19))
+    return face
 
 
 def compact_status_image(*, voltage=None, last_tts="", scroll=0,
                          battery_only=False, message_limit=14, **_unused):
-    """Smaller text fallback if a full image cannot fit one UDP packet."""
+    """Protocol-size fallback, still native-resolution and always legible."""
     if battery_only:
         last_tts = ""
     elif message_limit:
