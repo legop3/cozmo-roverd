@@ -12,6 +12,8 @@ jobs:
           python-version: '3.12'
       - name: Install
         run: python -m pip install '.[test]'
+      - name: Install corrected pycozmo transport
+        run: bash scripts/install-patched-pycozmo.sh "$(command -v python)"
       - name: Compile
         run: python -m compileall -q cozmo_roverd
       - name: Unit tests
