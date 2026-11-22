@@ -39,7 +39,7 @@ class BatteryTracker:
         self.critical = None
         self.needs_charge = False
         self._contact_lost_since = None
-        self._last_contact = None
+        self._contact_started = None
         self._last_sample = None
 
     def observe(self, voltage, flags, now=None):
@@ -57,7 +57,8 @@ class BatteryTracker:
         self.raw_charging = bool(flags & CHARGING)
         contact = self.raw_docked or self.raw_charging
         if contact:
-            self._last_contact = now
+            if self._contact_started is None:
+                self._contact_started = now
             self._contact_lost_since = None
             self.docked = True
         elif self.docked:
@@ -65,8 +66,10 @@ class BatteryTracker:
                 self._contact_lost_since = now
             elif now - self._contact_lost_since >= 0.5:
                 self.docked = False
+                self._contact_started = None
         else:
             self.docked = False
+            self._contact_started = None
         # "Charging" includes time spent on the contacts waiting for the
         # next charging pulse. A brief IS_CHARGING false flag isn't a disconnect.
         self.charging = bool(self.raw_charging or self.docked)
@@ -78,7 +81,7 @@ class BatteryTracker:
             elif self.docked and self.percent >= 30:
                 # Do not release the need-to-charge latch on a single high
                 # reading. Releasing it requires sustained dock contact below.
-                if self._last_contact is not None and now - self._last_contact >= 120:
+                if self._contact_started is not None and now - self._contact_started >= 120:
                     self.needs_charge = False
         return self
 
