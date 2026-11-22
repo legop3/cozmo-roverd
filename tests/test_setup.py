@@ -142,3 +142,23 @@ def test_setup_service_can_write_etc_config():
     contents = unit.read_text()
     assert "ProtectSystem=full" not in contents
     assert "ProtectSystem=strict" not in contents
+
+
+def test_250_mmps_speed_and_top_center_hud_config_round_trip(tmp_path):
+    from cozmo_roverd.config import load
+    data = {
+        "name": "cozmo", "description": "Cozmo", "color": "#3ba8ff",
+        "server_url": "ws://localhost:8080/rover",
+        "interface": "wlan1", "ssid": "Cozmo_ABC", "password": "password123",
+        "max_speed": 250, "video": True, "fps": 15,
+        "camera_mode": "bright", "hud": True, "rtsp_url": "", "private": False,
+    }
+    with patch.object(setup, "interfaces", return_value=[
+            {"name": "wlan1", "selectable": True}]):
+        rendered = setup.validate_payload(data, {})
+        target = tmp_path / "rover.toml"
+        setup.write_config(str(target), rendered)
+        final = load(str(target))
+        assert final.max_speed == 250
+        assert final.hud is True
+        assert rendered["media"]["hud"] is True
