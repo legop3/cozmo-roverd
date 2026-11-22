@@ -135,10 +135,20 @@ function applyConfig(config, options) {
 async function loadInterfaces(preferred) {
   const result = await api("/api/interfaces");
   state.interfaces = result.interfaces;
+  const blocked = !result.radio.enabled;
+  const alert = $("radio-alert");
+  alert.hidden = !blocked && !result.interfaces.some(x => x.unavailable);
+  if (!alert.hidden) {
+    $("radio-explanation").textContent = result.radio.hard_blocked
+      ? "Wi-Fi is physically blocked. Turn on the laptop Wi-Fi switch or wireless function key, then refresh."
+      : blocked ? "Wi-Fi radio is disabled. Enable it here to make the adapters available for scanning."
+      : "The Wi-Fi adapters are detected but unavailable. Check for an RF-kill switch, driver, or firmware problem.";
+    $("enable-wifi").hidden = result.radio.hard_blocked || result.radio.enabled;
+  }
   const eligible = result.interfaces.filter(x => x.selectable);
   selectOptions($("adapter-select"),
     result.interfaces.map(d => ({
-      value:d.name, label:`${d.name} — ${d.connection && d.connection !== "--" ? d.connection : d.state}${d.is_uplink ? " (in use for internet — protected)" : ""}`,
+      value:d.name, label:`${d.name} — ${d.connection && d.connection !== "--" ? d.connection : d.state_label}${d.is_uplink ? " (in use for internet — protected)" : ""}`,
       disabled:!d.selectable
     })),
     preferred || (eligible.length === 1 ? eligible[0].name : ""), "Select a Wi-Fi adapter…");
@@ -211,6 +221,11 @@ function setupListeners() {
   $("video").addEventListener("change", () => $("fps").disabled = !$("video").checked);
   $("refresh-adapters").addEventListener("click", () =>
     busy($("refresh-adapters"), () => loadInterfaces(field("adapter-select")), "Checking…"));
+  $("enable-wifi").addEventListener("click", () => busy($("enable-wifi"), async () => {
+    const result = await api("/api/enable-wifi", {});
+    show(result.radio.enabled ? "Wi-Fi enabled. You can scan for Cozmo now." : "Wi-Fi could not be enabled. Check the hardware wireless switch.", !result.radio.enabled);
+    await loadInterfaces(field("adapter-select"));
+  }, "Enabling…"));
   $("scan").addEventListener("click", scan);
   $("reveal").addEventListener("click", () => {
     const p = $("password");
