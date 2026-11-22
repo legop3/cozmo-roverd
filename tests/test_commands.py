@@ -1,4 +1,5 @@
 import pytest
+import threading
 from cozmo_roverd.main import Bridge
 
 class FakeRobot:
@@ -32,6 +33,7 @@ def bridge():
     b.cfg = type("Config", (), {"max_speed": 100})()
     b.robot = FakeRobot()
     b.head_degrees = 10
+    b._reconnect_requested = threading.Event()
     b.report_result = lambda command_id, error=None: b.robot.calls.append(("result", command_id, error))
     return b
 
@@ -110,18 +112,21 @@ def test_manual_face_and_volume_controls_are_removed(bridge):
                 "id": "cozmo", "control": control, "value": value}})
 
 
-def test_mrr_camera_exposure_controls_apply_immediately(bridge):
+def test_reconnect_button_only_requests_supervisor_reconnect(bridge):
     bridge.execute({"type": "peripheral", "peripheral": {
-        "id": "cozmo", "control": "camera_auto_exposure", "value": True}})
-    bridge.execute({"type": "peripheral", "peripheral": {
-        "id": "cozmo", "control": "camera_auto_exposure", "value": False}})
-    bridge.execute({"type": "peripheral", "peripheral": {
-        "id": "cozmo", "control": "camera_manual_exposure", "value": 3}})
-    assert bridge.robot.calls == [("camera_auto",), ("camera_manual", 3)]
-    for value in (True, False, 0, 68, 1.5, "3"):
+        "id": "cozmo", "control": "reconnect", "value": True}})
+    assert bridge._reconnect_requested.is_set()
+    # The command worker never touches the existing client directly.
+    assert bridge.robot.calls == []
+    bridge._reconnect_requested.clear()
+    for control, value in (
+        ("reconnect", False), ("reconnect", 1), ("reconnect", None),
+        ("camera_auto_exposure", True), ("camera_manual_exposure", 20),
+    ):
         with pytest.raises(ValueError, match="unsupported peripheral"):
             bridge.execute({"type": "peripheral", "peripheral": {
-                "id": "cozmo", "control": "camera_manual_exposure", "value": value}})
+                "id": "cozmo", "control": control, "value": value}})
+    assert not bridge._reconnect_requested.is_set()
 
 
 def test_rover_state_is_sent_only_if_changed():
