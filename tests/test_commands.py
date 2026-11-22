@@ -124,35 +124,38 @@ def test_mrr_camera_exposure_controls_apply_immediately(bridge):
                 "id": "cozmo", "control": "camera_manual_exposure", "value": value}})
 
 
-@pytest.mark.asyncio
-async def test_rover_state_is_sent_only_if_changed():
+def test_rover_state_is_sent_only_if_changed():
     import asyncio
-    import json
-    from types import SimpleNamespace as NS
+    async def run():
+        import asyncio
+        import json
+        from types import SimpleNamespace as NS
 
-    class Socket:
-        def __init__(self):
-            self.messages = []
-        async def send(self, value):
-            self.messages.append(json.loads(value))
+        class Socket:
+            def __init__(self):
+                self.messages = []
+            async def send(self, value):
+                self.messages.append(json.loads(value))
 
-    b = object.__new__(Bridge)
-    b.stop_event = asyncio.Event()
-    b.state_dirty = asyncio.Event()
-    b.hardware_ready = asyncio.Event()
-    b.results = asyncio.Queue()
-    state = {"type": "roverState", "state": {"docked": False, "battery": {"percent": 50}}}
-    b.current_state = lambda: state
-    ws = Socket()
-    task = asyncio.create_task(b._send(ws, initial_state=state))
-    await asyncio.sleep(0.12)
-    assert ws.messages == []
-    b.state_dirty.set()
-    await asyncio.sleep(0.12)
-    assert ws.messages == []
-    state = {"type": "roverState", "state": {"docked": True, "battery": {"percent": 50}}}
-    b.state_dirty.set()
-    await asyncio.sleep(0.12)
-    assert ws.messages == [state]
-    b.stop_event.set()
-    await task
+        b = object.__new__(Bridge)
+        b.stop_event = asyncio.Event()
+        b.state_dirty = asyncio.Event()
+        b.hardware_ready = asyncio.Event()
+        b.results = asyncio.Queue()
+        state = {"type": "roverState", "state": {"docked": False, "battery": {"percent": 50}}}
+        b.current_state = lambda: state
+        ws = Socket()
+        task = asyncio.create_task(b._send(ws, initial_state=state))
+        await asyncio.sleep(0.12)
+        assert ws.messages == []
+        b.state_dirty.set()
+        await asyncio.sleep(0.12)
+        assert ws.messages == []
+        state = {"type": "roverState", "state": {"docked": True, "battery": {"percent": 50}}}
+        b.state_dirty.set()
+        await asyncio.sleep(0.12)
+        assert ws.messages == [state]
+        b.stop_event.set()
+        await task
+
+    asyncio.run(run())
