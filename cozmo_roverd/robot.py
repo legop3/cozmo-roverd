@@ -411,12 +411,17 @@ class Robot:
                 if backoff:
                     # Cozmo's lift positioning is asynchronous. Give it a
                     # bounded moment to lower before moving off the dock.
-                    deadline = time.monotonic() + 2.0
+                    started = time.monotonic()
+                    deadline = started + 2.0
                     while time.monotonic() < deadline:
                         if self._undock_cancel.is_set():
                             raise RuntimeError("undock interrupted")
                         height = self.latest.get("lift_height_mm")
                         if height is not None and height <= 38:
+                            break
+                        # When docked Cozmo can stop reporting pose/lift.
+                        # Don't hang for two seconds on absent telemetry.
+                        if height is None and time.monotonic() - started >= 0.35:
                             break
                         time.sleep(0.05)
                     if self._undock_cancel.is_set():
@@ -438,6 +443,14 @@ class Robot:
                 with self.lock:
                     self.undock_active = False
                     self.docking_phase = None
+                    # If undocking failed and Cozmo is still on the charger,
+                    # restore the parked posture rather than leaving the lift
+                    # down indefinitely.
+                    if error and self.on_charger is True and self.client is not None:
+                        try:
+                            self.lift(100)
+                        except Exception:
+                            LOG.exception("Could not restore lift after failed undock")
                 self.on_state()
                 completed(command_id, error)
 
