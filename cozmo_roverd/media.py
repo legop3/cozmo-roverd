@@ -222,41 +222,39 @@ class Publisher:
 
     @staticmethod
     def _recovery_status(data, *, had_video=False):
-        """Describe the actual supervisor state, not an assumed camera outage."""
+        """Translate the current hardware supervisor stage to a concise step."""
         stage = data.get("hardware_stage", "starting")
         online = data.get("connected", False)
-        if stage == "connecting_wifi":
-            title, detail = "CONNECTING TO COZMO", "Waiting for robot Wi-Fi"
-        elif stage == "connecting_robot":
-            title, detail = "CONNECTING TO COZMO", "Establishing robot session"
-        elif stage == "cleaning_up":
-            title, detail = "COZMO RECONNECTING", "Resetting robot connection"
-        elif stage == "retrying":
-            title, detail = "COZMO RECONNECTING", "Retrying robot connection"
-        elif online or stage == "online":
-            title = "CAMERA RECONNECTING" if had_video else "WAITING FOR CAMERA"
-            detail = "Robot connected; waiting for live frames"
-        elif had_video:
-            title, detail = "COZMO RECONNECTING", "Restoring robot connection"
-        else:
-            title, detail = "CONNECTING TO COZMO", "Starting robot connection"
-        return title, detail
+        if online or stage == "online":
+            return ("CAMERA RECONNECTING" if had_video else "WAITING FOR CAMERA",
+                    "Waiting for camera frames")
+        title = "COZMO RECONNECTING" if had_video else "CONNECTING TO COZMO"
+        steps = {
+            "starting": "Starting connection",
+            "connecting_wifi": "Connecting to robot Wi-Fi",
+            "connecting_robot": "Connecting to robot",
+            "cleaning_up": "Closing old connection",
+            "retrying": "Waiting to retry",
+        }
+        return title, steps.get(stage, "Connecting to robot")
 
     def _offline_frame(self, data=None):
-        """Simple, animated reconnecting message while RTSP stays live."""
+        """Show what reconnect is actually doing, keeping RTSP alive."""
         st = data or {}
         image = Image.new("RGB", (320, 240), (12, 17, 23))
         draw = ImageDraw.Draw(image)
-        title, _ = self._recovery_status(st, had_video=self.frame_count > 0)
-        # The viewer is already on MRR: no duplicate MRR status, counters,
-        # diagnostics, labels or dashboard-like panels in the video.
+        title, step = self._recovery_status(st, had_video=self.frame_count > 0)
         dots = "." * (1 + int(time.monotonic() * 1.5) % 3)
-        message = title + dots
-        bbox = draw.textbbox((0, 0), message)
-        width = bbox[2] - bbox[0]
-        height = bbox[3] - bbox[1]
-        draw.text(((320 - width) // 2, (240 - height) // 2 - bbox[1]),
-                  message, fill=(235, 243, 245))
+        # Keep only two centered lines: reconnection and its live stage.
+        # No MRR information, counters, panels, or error dumps.
+        for message, y, color in (
+            (title + dots, 105, (235, 243, 245)),
+            (step, 128, (160, 185, 196)),
+        ):
+            bbox = draw.textbbox((0, 0), message)
+            width = bbox[2] - bbox[0]
+            draw.text(((320 - width) // 2, y - bbox[1]),
+                      message, fill=color)
         return image
 
     def _run(self):
