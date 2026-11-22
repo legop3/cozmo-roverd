@@ -14,7 +14,8 @@ class Config:
     password: str
     description: str = "Anki Cozmo"
     color: str = "#3ba8ff"
-    max_speed: int = 100
+    max_speed: int = 200
+    camera_mode: str = "bright"
     video: bool = True
     private: bool = False
     rtsp_url: str = ""
@@ -29,7 +30,8 @@ def load(path: str) -> Config:
         password=str(wifi.get("password", "")),
         description=str(rover.get("description", "Anki Cozmo")),
         color=str(rover.get("color", "#3ba8ff")),
-        max_speed=int(rover.get("max_speed", 100)),
+        max_speed=int(rover.get("max_speed", 200)),
+        camera_mode=str(media.get("camera_mode", "bright")),
         video=bool(media.get("enabled", True)),
         private=rover.get("private", False),
         rtsp_url=str(media.get("rtsp_url", "")),
@@ -44,8 +46,10 @@ def load(path: str) -> Config:
         raise ValueError("rover.name must be 1-64 characters without '/'")
     if not c.interface or "/" in c.interface:
         raise ValueError("wifi.interface must be a dedicated Wi-Fi device name")
-    if not 1 <= c.max_speed <= 220 or not 1 <= c.fps <= 15:
+    if not 1 <= c.max_speed <= 200 or not 1 <= c.fps <= 15:
         raise ValueError("Invalid speed or fps")
+    if c.camera_mode not in ("auto", "bright", "lowlight"):
+        raise ValueError("Invalid camera mode")
     if c.video and c.rtsp_url and urlsplit(c.rtsp_url).scheme != "rtsp":
         raise ValueError("media.rtsp_url must be an RTSP URL")
     return c
