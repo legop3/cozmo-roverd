@@ -26,7 +26,6 @@ class Robot:
         self.headlight = False
         self.voltage = None
         self.last_sensor = 0.0
-        self.last_drive = 0.0
         self.moving = False
         self.ready = False
         self.battery = BatteryTracker()
@@ -130,13 +129,6 @@ class Robot:
                 raise RuntimeError("Motion blocked by cliff/pickup sensor")
             self.client.drive_wheels(left, right)
             self.moving = left != 0 or right != 0
-            self.last_drive = time.monotonic()
-
-    def watchdog(self, seconds):
-        with self.lock:
-            if self.moving and time.monotonic() - self.last_drive > seconds:
-                LOG.warning("Drive watchdog expired; stopping")
-                self.stop_drive()
 
     def head(self, degrees):
         with self.lock:
