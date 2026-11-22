@@ -171,6 +171,80 @@ async function scan() {
     show(result.networks.length ? `Found ${result.networks.length} nearby networks.` : "No Wi-Fi networks found.");
   }, "Scanning…");
 }
+function displayMetric(value, unit = "") {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value) + unit;
+}
+function telemetryCard(title, details) {
+  const card = document.createElement("div");
+  card.className = "switch-row";
+  card.style.alignItems = "start";
+  const inner = document.createElement("div");
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  inner.append(heading);
+  for (const [label, value] of details) {
+    const line = document.createElement("p");
+    line.className = "hint";
+    line.textContent = label + ": " + value;
+    inner.append(line);
+  }
+  card.append(inner);
+  return card;
+}
+async function refreshTelemetry() {
+  try {
+    const response = await api("/api/telemetry");
+    const c = response.cozmo || {};
+    const st = response.rover_state || {};
+    const battery = st.battery || {};
+    const pose = c.pose || {};
+    const wheels = c.wheel_speeds_mmps || {};
+    const vid = response.video || {};
+    const cards = $("telemetry-cards");
+    cards.replaceChildren(
+      telemetryCard("Battery & charger", [
+        ["Estimated charge", displayMetric(battery.percent, "%")],
+        ["Battery voltage", displayMetric(c.battery_voltage_v, " V")],
+        ["On charging contacts", displayMetric(c.on_charger)],
+        ["Actively charging", displayMetric(c.charging)],
+        ["Needs charge", displayMetric(battery.needsCharge)],
+      ]),
+      telemetryCard("Wheels, head & lift", [
+        ["Left wheel", displayMetric(wheels.left, " mm/s")],
+        ["Right wheel", displayMetric(wheels.right, " mm/s")],
+        ["Head angle", displayMetric(c.head_angle_deg, "°")],
+        ["Lift height", displayMetric(c.lift_height_mm, " mm")],
+        ["Picked up", displayMetric(c.picked_up)],
+        ["Cliff detected", displayMetric(c.cliff_detected)],
+      ]),
+      telemetryCard("Position & orientation", [
+        ["X / Y", displayMetric(pose.x_mm, " mm") + " / " + displayMetric(pose.y_mm, " mm")],
+        ["Heading", displayMetric(pose.heading_deg, "°")],
+        ["Pitch", displayMetric(pose.pitch_deg, "°")],
+        ["Orientation", displayMetric(c.orientation)],
+        ["Pose frame", displayMetric(pose.frame_id)],
+      ]),
+      telemetryCard("Video & connectivity", [
+        ["Cozmo connected", displayMetric(response.hardware_connected)],
+        ["MRR connected", displayMetric(response.mrr_connected)],
+        ["Encoder", displayMetric(vid.encoder)],
+        ["RTSP publisher running", displayMetric(vid.publisher_running)],
+        ["Latest frame age", displayMetric(vid.last_frame_age_sec, " s")],
+        ["Frames dropped locally", displayMetric(vid.frames_dropped)],
+      ]),
+    );
+    $("telemetry-raw").textContent = JSON.stringify(response, null, 2);
+    const age = c.timestamp_ms === undefined ? null : Math.max(0, (Date.now() - c.timestamp_ms) / 1000).toFixed(1);
+    $("telemetry-age").textContent = c.timestamp_ms ?
+      "Hardware sample " + age + "s ago · battery % is voltage-estimated" :
+      "No Cozmo state received yet";
+  } catch (e) {
+    $("telemetry-age").textContent = "Telemetry unavailable";
+    $("telemetry-raw").textContent = e.message;
+  }
+}
 async function refreshStatus() {
   try {
     const result = await api("/api/status");
@@ -267,6 +341,8 @@ async function initialize() {
     $("save-subtitle").textContent = config.configured ? "Adjust settings or reconnect whenever you like." : "Choose an adapter, scan, enter Wi-Fi password, and specify MRR.";
   } catch(e) { show(e.message, true); }
   await refreshStatus();
+  await refreshTelemetry();
   setInterval(refreshStatus, 7000);
+  setInterval(refreshTelemetry, 1500);
 }
 document.addEventListener("DOMContentLoaded", initialize);
