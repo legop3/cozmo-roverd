@@ -122,7 +122,7 @@ def test_charger_detection_completes_assist_and_stops_once():
     robot, _ = fake_robot()
     robot.dock_assist = True
     robot.drive(120, 120)
-    assert robot.client.drives[-1] == (70, 70)
+    assert robot.client.drives[-1] == (50, 50)
     from cozmo_roverd.robot_packet import BatteryTracker
     robot.battery = BatteryTracker()
     packet = NS(
@@ -151,13 +151,13 @@ def test_pickup_and_docked_status_never_block_direct_driving():
     robot.cliff = True
     robot.dock_assist = True
     robot.drive(250, -250)
-    assert robot.client.drives[-1] == (70, -70)
-    assert robot.commanded_wheels == (70, -70)
+    assert robot.client.drives[-1] == (50, -50)
+    assert robot.commanded_wheels == (50, -50)
     assert robot.client.last_acceleration["lwheel_acc"] == 10000.0
     assert robot.client.last_acceleration["rwheel_acc"] == 10000.0
     robot._picked_up(True)
     robot._cliff(True)
-    assert robot.client.drives[-1] == (70, -70)
+    assert robot.client.drives[-1] == (50, -50)
 
 
 def test_live_exposure_switch_uses_adaptive_sensor_control():
@@ -338,14 +338,14 @@ def test_scripted_undock_still_lowers_lift_only_once():
     assert robot.client.lifts == [32.0]
 
 
-def test_dock_assist_caps_both_wheels_to_70_without_changing_normal_drive():
+def test_dock_assist_caps_both_wheels_to_50_without_changing_normal_drive():
     robot, _ = fake_robot()
     robot.drive(180, -120)
     assert robot.client.drives[-1] == (180, -120)
     robot.assist_docking()
     robot.drive(250, -250)
-    assert robot.client.drives[-1] == (70, -70)
-    assert robot.commanded_wheels == (70, -70)
+    assert robot.client.drives[-1] == (50, -50)
+    assert robot.commanded_wheels == (50, -50)
     robot.drive(-12, 5)
     assert robot.client.drives[-1] == (-12, 5)
     robot.cancel_docking()
