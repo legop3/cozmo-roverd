@@ -118,21 +118,26 @@ def test_lift_gauge_handles_missing_and_out_of_range_telemetry():
 
 def test_recovery_titles_reflect_actual_robot_supervisor_stage():
     publisher = Publisher("rtsp://localhost:8554/cozmo", hud=False)
-    for stage, expected in (
-        ("connecting_wifi", "CONNECTING TO COZMO"),
-        ("connecting_robot", "CONNECTING TO COZMO"),
-        ("cleaning_up", "COZMO RECONNECTING"),
-        ("retrying", "COZMO RECONNECTING"),
-        ("online", "WAITING FOR CAMERA"),
+    for stage, expected_step in (
+        ("starting", "Starting connection"),
+        ("connecting_wifi", "Connecting to robot Wi-Fi"),
+        ("connecting_robot", "Connecting to robot"),
+        ("cleaning_up", "Closing old connection"),
+        ("retrying", "Waiting to retry"),
     ):
-        title, _ = publisher._recovery_status(
-            {"connected": stage == "online", "hardware_stage": stage},
-            had_video=False)
-        assert title == expected
+        title, detail = publisher._recovery_status(
+            {"connected": False, "hardware_stage": stage}, had_video=True)
+        assert title == "COZMO RECONNECTING"
+        assert detail == expected_step
+    title, detail = publisher._recovery_status(
+        {"connected": False, "hardware_stage": "connecting_wifi"},
+        had_video=False)
+    assert title == "CONNECTING TO COZMO"
+    assert detail == "Connecting to robot Wi-Fi"
     title, detail = publisher._recovery_status(
         {"connected": True, "hardware_stage": "online"}, had_video=True)
     assert title == "CAMERA RECONNECTING"
-    assert "waiting for live frames" in detail
+    assert detail == "Waiting for camera frames"
 
 
 def test_recovery_slate_depends_on_supervisor_and_ignores_hud_toggle():
