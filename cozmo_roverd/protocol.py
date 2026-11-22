@@ -40,32 +40,42 @@ def battery_percent(voltage):
     return 100
 
 
-def state(*, charging=None, docked=None, voltage=None, headlight=False, driving=True, battery=None) -> dict:
+def state(*, charging=None, docked=None, voltage=None, headlight=False, driving=True, battery=None, dock_assist=False, docking_phase=None) -> dict:
     percent = battery_percent(voltage)
     if battery is None:
         battery = {"percent": percent, "charging": charging, "low": percent <= 15 if percent is not None else None, "critical": percent <= 5 if percent is not None else None, "needsCharge": percent <= 15 if percent is not None else None}
-    phase = "charging" if charging else "docked" if docked else "idle" if docked is False else "unknown"
+    phase = docking_phase or ("charging" if charging else "docked" if docked else "idle" if docked is False else "unknown")
     return {
         "type": "roverState", "state": {
-            "drivingMode": driving, "dockAssist": None, "docking": None,
+            "drivingMode": driving, "dockAssist": dock_assist, "docking": bool(dock_assist),
             "docked": docked,
-            "dockingStatus": {"phase": phase, "movementLocked": False,
-                              "cameraLocked": False, "error": None},
+            "dockingStatus": {"phase": phase, "movementLocked": phase == "undocking" or bool(docked),
+                              "cameraLocked": bool(dock_assist), "error": None},
             "battery": battery,
             "headlightOn": headlight, "laserOn": None
         }
     }
 
-def sensor(*, voltage=None, cliff=None, left=None, right=None, on_charger=None) -> dict:
+def sensor(*, voltage=None, cliff=None, left=None, right=None, on_charger=None, cliff_raw=None) -> dict:
     sensors = {}
     if voltage is not None:
-        sensors["voltageMv"] = int(voltage * 1000)
-    # Cozmo's global cliff flag is not specifically its left sensor.
-    # Do not manufacture directional cliff readings.
+        sensors["voltageMv"] = round(voltage * 1000)
+    # The physical Cozmo cliff detector is a single front/underside sensor.
+    # MRR's Roomba-shaped schema has no generic "any cliff" field: publish
+    # its detector as one frontal cliff, never fabricate four sensors.
+    if cliff is not None:
+        sensors["cliffFrontLeft"] = bool(cliff)
+    if cliff_raw is not None and len(cliff_raw) == 4:
+        # Raw samples belong to one sensor, not four separate directions.
+        # Retain the four originals in the bridge telemetry JSON.
+        sensors["cliffFrontLeftSignal"] = sum(cliff_raw) / 4
     if on_charger is not None:
-        sensors["chargingSources"] = {"homeBase": bool(on_charger), "internalCharger": False, "raw": 2 if on_charger else 0}
+        sensors["chargingSources"] = {"homeBase": bool(on_charger),
+                                       "internalCharger": False,
+                                       "raw": 2 if on_charger else 0}
     if left is not None and right is not None:
-        sensors["wheelSpeedsMmPerSecond"] = {"left": left, "right": right, "center": (left + right) / 2}
+        sensors["wheelSpeedsMmPerSecond"] = {
+            "left": left, "right": right, "center": (left + right) / 2}
     return {"type": "sensor", "ts": int(time.time() * 1000), "sensors": sensors}
 
 def bounded_speed(v, maximum):
