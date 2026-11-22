@@ -98,9 +98,9 @@ def test_radio_status_reports_disabled_and_hard_block():
     from subprocess import CompletedProcess
     def fake_run(*args, **kwargs):
         if args[:3] == ("nmcli", "radio", "wifi"):
-            return CompletedProcess(args, 0, "disabled\\n", "")
+            return CompletedProcess(args, 0, "disabled\n", "")
         if args[:2] == ("rfkill", "list"):
-            return CompletedProcess(args, 0, "Soft blocked: yes\\nHard blocked: yes\\n", "")
+            return CompletedProcess(args, 0, "Soft blocked: yes\nHard blocked: yes\n", "")
         raise AssertionError(args)
     with patch.object(setup, "run", side_effect=fake_run):
         status = setup.radio_status()
@@ -116,7 +116,7 @@ def test_enable_wifi_calls_networkmanager():
     def fake_run(*args, **kwargs):
         calls.append(args)
         if args[:3] == ("nmcli", "radio", "wifi") and len(args) == 3:
-            return CompletedProcess(args, 0, "enabled\\n", "")
+            return CompletedProcess(args, 0, "enabled\n", "")
         return CompletedProcess(args, 0, "", "")
     with patch.object(setup, "run", side_effect=fake_run):
         assert setup.enable_wifi()["enabled"]
@@ -127,7 +127,7 @@ def test_unavailable_adapter_not_mistaken_for_uplink(tmp_path):
     from subprocess import CompletedProcess
     with patch.object(setup.Path, "iterdir", return_value=[tmp_path / "wlan1"]):
         with patch.object(setup, "default_route_devices", return_value=set()):
-            with patch.object(setup, "run", return_value=CompletedProcess([], 0, "wifi\\n20 (unavailable)\\n--\\n", "")):
+            with patch.object(setup, "run", return_value=CompletedProcess([], 0, "wifi\n20 (unavailable)\n--\n", "")):
                 devices = setup.interfaces()
     assert devices[0]["unavailable"]
     assert devices[0]["selectable"]
