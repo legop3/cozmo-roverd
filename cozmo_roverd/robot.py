@@ -237,6 +237,8 @@ class Robot:
         self._face_sent_at = 0.0
         self.face_last_encoded_bytes = None
         self.face_last_error = None
+        self.face_encoded_on_pixels = None
+        self.face_decoded_columns = None
 
     def connect(self):
         import pycozmo
@@ -626,6 +628,24 @@ class Robot:
                 self.face_last_error = (
                     f"Cannot fit face keyframe into {max_image_size} bytes "
                     f"(smallest generated image is {len(encoded)})")
+                LOG.warning("%s", self.face_last_error)
+                return False
+            # Confirm the actual PyCozmo wire encoder retains the entire
+            # 128-column bitmap. The robot showing a single dot despite
+            # a full rendered image points to animation transport rather
+            # than font/layout, and these counts separate those failures.
+            from pycozmo.image_encoder import ImageDecoder
+            decoded = ImageDecoder(encoded).decode()
+            foreground = sum(bool(px) for px in decoded)
+            columns = sum(
+                any(decoded[y * 128 + x] for y in range(32))
+                for x in range(128))
+            self.face_encoded_on_pixels = foreground
+            self.face_decoded_columns = columns
+            if foreground == 0 or columns < 8:
+                self.face_last_error = (
+                    f"Encoded bitmap unexpectedly sparse: {foreground} pixels, "
+                    f"{columns} occupied columns")
                 LOG.warning("%s", self.face_last_error)
                 return False
             self.face_last_encoded_bytes = len(encoded)
