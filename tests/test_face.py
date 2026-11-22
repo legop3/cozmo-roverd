@@ -116,3 +116,64 @@ def test_generated_face_has_no_content_outside_128x32_canvas():
         scroll=100)
     assert image.getbbox() is not None
     assert len(image.tobytes()) == 128 * 32 // 8
+
+
+
+def test_image_encoding_matches_generated_128x32_face():
+    from pycozmo.image_encoder import ImageEncoder, ImageDecoder
+    for kwargs in (
+        {"voltage": 3.95, "percent": 64, "charging": True, "docked": True,
+         "wheels": (0, 0), "last_tts": "Hello from Cozmo", "scroll": 0},
+        {"voltage": 3.2, "percent": 5, "charging": False, "cliff": True,
+         "picked_up": True, "wheels": (250, -250),
+         "last_tts": "Long text message across the display", "scroll": 19},
+        {},
+    ):
+        frame = status_image(**kwargs)
+        encoded = bytes(ImageEncoder(frame).encode())
+        assert encoded, "Bitmap generated an empty wire packet"
+        decoded = ImageDecoder(encoded).decode()
+        assert len(decoded) == 128 * 32
+        for y in range(32):
+            for x in range(128):
+                assert bool(decoded[y * 128 + x]) == bool(frame.getpixel((x, y)))
+
+
+def test_lean_animation_sender_does_not_flood_idle_robot(monkeypatch):
+    import time
+    from types import SimpleNamespace as NS
+    from collections import deque
+    import pycozmo
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+
+    sent = []
+    events = []
+    audio = deque()
+    images = deque()
+    class Queue:
+        def get(self):
+            return (audio.popleft() if audio else None,
+                    images.popleft() if images else None, None)
+    controller = NS(queue=Queue(), animations_enabled=True,
+                    playing_audio=False, procedural_face_enabled=False,
+                    playing_animation=False, image_displayed=True,
+                    last_image_pkt="last-image")
+    client = NS(anim_controller=controller,
+                conn=NS(send=sent.append, post_event=lambda *a: events.append(a)))
+    _limit_animation_idle_traffic(client)
+    # 100 animation ticks should not send 100 images or 100 silence packets.
+    controller._cozmo_image_refresh_at = time.monotonic()
+    for _ in range(100):
+        controller._run_frame()
+    assert sent == []
+    images.append("new-image")
+    controller._run_frame()
+    assert sent == ["new-image"]
+    audio.extend(["audio-1", "audio-2"])
+    controller._run_frame()
+    controller._run_frame()
+    controller._run_frame()
+    controller._run_frame()
+    assert sent[1:3] == ["audio-1", "audio-2"]
+    assert sum(isinstance(pkt, pycozmo.protocol_encoder.OutputSilence) for pkt in sent) == 1
+    assert len(events) == 1
