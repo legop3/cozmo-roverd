@@ -18,6 +18,8 @@ ProtectHome=true
 ProtectSystem=full
 ReadWritePaths=/var/log /run
 PrivateTmp=true
+RuntimeDirectory=cozmo-roverd
+RuntimeDirectoryMode=0755
 
 [Install]
 WantedBy=multi-user.target
