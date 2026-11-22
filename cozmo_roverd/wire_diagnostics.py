@@ -117,7 +117,13 @@ class WireRecorder:
             stream.flush()
 
     def close(self):
-        self.queue.put(self.stop_signal)
+        # The queue is bounded to protect robot threads, but shutdown must
+        # never deadlock when the file writer cannot keep up.
+        try:
+            self.queue.put_nowait(self.stop_signal)
+        except Full:
+            self.dropped += 1
+            return
         self.thread.join(timeout=10)
 
 
