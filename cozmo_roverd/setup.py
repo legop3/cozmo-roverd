@@ -53,6 +53,30 @@ def default_route_devices() -> set[str]:
     return result
 
 
+def radio_status() -> dict:
+    radio = run("nmcli", "radio", "wifi")
+    text = radio.stdout.strip().lower()
+    rf = run("rfkill", "list", "wifi")
+    lines = rf.stdout.lower()
+    return {
+        "enabled": text == "enabled",
+        "state": text or "unknown",
+        "hard_blocked": "hard blocked: yes" in lines,
+        "soft_blocked": "soft blocked: yes" in lines,
+    }
+
+
+def enable_wifi() -> dict:
+    info = radio_status()
+    if info["hard_blocked"]:
+        raise ValueError("Wi-Fi is blocked by a physical switch or laptop hotkey. Unlock it on the computer.")
+    p = run("nmcli", "radio", "wifi", "on")
+    if p.returncode:
+        raise RuntimeError(p.stderr.strip() or "Could not enable Wi-Fi")
+    # A radio can take a moment to transition to usable state.
+    return radio_status()
+
+
 def interfaces() -> list[dict]:
     devices = []
     uplinks = default_route_devices()
@@ -71,7 +95,10 @@ def interfaces() -> list[dict]:
         status = lines[1].strip() if len(lines) > 1 else "unknown"
         conn = lines[2].strip() if len(lines) > 2 else ""
         devices.append({"name": name, "state": status, "connection": conn,
-                        "is_uplink": name in uplinks, "selectable": name not in uplinks})
+                        "is_uplink": name in uplinks, "selectable": name not in uplinks,
+                        "unavailable": status.startswith("20"), "state_label":
+                            "Wi-Fi unavailable" if status.startswith("20") else
+                            "Ready to scan" if status.startswith("30") else status})
     return devices
 
 
@@ -333,7 +360,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"config": public_config(self.config_path),
                                      "options": {"speeds": SPEEDS, "fps": FPS, "watchdog": WATCHDOG, "colors": COLORS}})
             elif self.path == "/api/interfaces":
-                self.send_json(200, {"interfaces": interfaces()})
+                self.send_json(200, {"interfaces": interfaces(), "radio": radio_status()})
             elif self.path == "/api/status":
                 d = public_config(self.config_path)
                 self.send_json(200, {"service": service_status(),
@@ -357,7 +384,9 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError("Expected JSON object")
-            if self.path == "/api/scan":
+            if self.path == "/api/enable-wifi":
+                self.send_json(200, {"radio": enable_wifi()})
+            elif self.path == "/api/scan":
                 self.send_json(200, {"networks": wifi_scan(data.get("interface", ""))})
             elif self.path == "/api/probe":
                 self.send_json(200, server_probe(str(data.get("url", ""))))
