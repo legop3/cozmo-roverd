@@ -125,7 +125,7 @@
         <div class="field wide"><div class="switch-row"><div><strong>Live camera</strong><p class="hint">Stream Cozmo's camera to MRR over H.264 RTSP.</p></div><input type="checkbox" id="video" checked aria-label="Enable live camera"></div></div>
         <div class="field wide"><div class="switch-row"><div><strong>In-video telemetry HUD</strong><p class="hint">Compact top-center tilt compass: accelerometer roll/pitch bubble, heading pointer and small battery readouts. Drawn before encoding with no extra video buffer.</p></div><input type="checkbox" id="hud" checked aria-label="Overlay live telemetry on camera"></div></div>
         <div class="field"><label for="fps">Camera frame rate</label><select id="fps"></select></div>
-        <div class="field"><label for="camera-mode">Camera exposure</label><select id="camera-mode"><option value="auto">Automatic</option><option value="bright">Bright</option><option value="lowlight">Low light (higher exposure)</option></select><p class="hint">Controls Cozmo's camera gain and exposure directly.</p></div>
+        <div class="field"><strong>Camera exposure: Automatic</strong><p class="hint">Sensor gain and shutter adjust automatically for sunlight and dim rooms.</p></div>
       </div>
       <details><summary>Advanced video settings</summary><div class="field" style="margin-top:16px"><label for="rtsp-url">Custom RTSP publish URL (optional)</label><input id="rtsp-url" spellcheck="false" placeholder="Auto: rtsp://MRR-HOST:8554/cozmo"><p class="hint">Leave blank to use your MRR server hostname and default RTSP port 8554.</p></div></details>
     </section>
