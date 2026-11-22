@@ -56,6 +56,8 @@ class VoltageFuelGauge:
         self._loaded = None
         self.rest_confirmed = False
         self._rest_low_since = None
+        self._loaded_low_since = None
+        self._loaded_critical_since = None
         self.low_confirmed = False
         self.critical_confirmed = False
 
@@ -144,9 +146,10 @@ class VoltageFuelGauge:
                         self._rest_low_since = now
                     if now - self._rest_low_since >= 25.0:
                         self.low_confirmed = True
-                elif self.rest_voltage >= 3.40:
+                elif self.rest_voltage >= 3.60:
                     self._rest_low_since = None
                     self.low_confirmed = False
+                    self.critical_confirmed = False
                 # Critical is distinct from low; never flag critical just
                 # because the estimated SOC curve is at its low end.
                 if self.rest_voltage < 3.10 and self.low_confirmed:
@@ -154,6 +157,28 @@ class VoltageFuelGauge:
                 elif self.rest_voltage >= 3.25:
                     self.critical_confirmed = False
         elif mode == "moving":
+            # A dying battery may cut out while driving, never reaching rest.
+            # Confirm sustained *measured* low terminal voltage as well:
+            # this separate, faster safety warning does not alter the
+            # voltage-based SOC estimate or learn motor sag from one sample.
+            # 3.45V is a conservative under-load alert, not a cell cutoff.
+            if voltage < 3.45:
+                if self._loaded_low_since is None:
+                    self._loaded_low_since = now
+                if now - self._loaded_low_since >= 8.0:
+                    self.low_confirmed = True
+            elif voltage >= 3.60:
+                self._loaded_low_since = None
+            else:
+                self._loaded_low_since = None
+            if voltage < 3.20:
+                if self._loaded_critical_since is None:
+                    self._loaded_critical_since = now
+                if now - self._loaded_critical_since >= 2.0:
+                    self.critical_confirmed = True
+                    self.low_confirmed = True
+            else:
+                self._loaded_critical_since = None
             if prior != "moving":
                 self._motion_since = now
                 # Capture the rested baseline for optional sag learning.
@@ -176,6 +201,8 @@ class VoltageFuelGauge:
         else:
             self._rest_since = None
             self._motion_since = None
+            self._loaded_low_since = None
+            self._loaded_critical_since = None
             self._pre_motion_voltage = None
             if charging:
                 if self._charge_started is None:
@@ -199,6 +226,9 @@ class VoltageFuelGauge:
                     self.soc = max(self.soc, 98.0)
                     self._last_full_detected = self._charge_started
 
+        if mode != "moving":
+            self._loaded_low_since = None
+            self._loaded_critical_since = None
         if not docked and not charging:
             self._charge_started = None
             self._last_charge_seen = None
@@ -216,4 +246,6 @@ class VoltageFuelGauge:
             "rest_confirmed": self.rest_confirmed,
             "low_confirmed": self.low_confirmed,
             "critical_confirmed": self.critical_confirmed,
+            "loaded_low_pending_s": (round(self._last_at - self._loaded_low_since, 1)
+                                    if self._loaded_low_since is not None else None),
         }
