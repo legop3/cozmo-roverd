@@ -14,14 +14,13 @@ from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 def _limit_animation_idle_traffic(cli):
-    """Keep audio frames at native cadence; do not flood Cozmo while idle.
+    """Pace Cozmo speech by ACK and firmware playback, not a blind 30 Hz flood.
 
-    PyCozmo's default AnimationController sends OutputSilence and the most
-    recently displayed image on *every* 30 Hz animation tick. With camera
-    packets already streaming that is a substantial constant transmit load,
-    and can contribute to transport congestion or firmware buffer starvation.
-    Drive it with its normal timer/queue but send only changed images, one
-    ending silence packet after speech, and a screen keepalive every 10 s.
+    PyCozmo's stock animation timer emits OutputSilence and the last display
+    bitmap at 30 Hz while idle, and emits audio at 30 Hz without checking
+    Cozmo's reliable send window. Keep the normal animation queue/timer but
+    send TTS only when acknowledged and not ahead of firmware playback.
+    Send sparse idle silence for the face clock and guard bitmap keepalives.
     """
     import types
     from pycozmo import event, protocol_encoder
