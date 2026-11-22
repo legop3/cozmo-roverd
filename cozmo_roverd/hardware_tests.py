@@ -93,8 +93,9 @@ def _summarize(directory, returncode):
     reached_robot = any(e.get("event") == "robot_ready" for e in records)
     if returncode == 0 and any(e.get("event") == "test_finished" for e in records):
         status, reason = "PASS", "Completed without detected ACK stall"
-    elif not reached_robot:
-        status, reason = "INCONCLUSIVE", "Robot never became ready (not a feature test)"
+    elif (not reached_robot and any(e.get("event") ==
+             "connect_retries_exhausted" for e in records)):
+        status, reason = "INCONCLUSIVE", "3 connection attempts failed; feature was never tested"
     elif returncode == 2 or skipped is not None:
         status, reason = "SKIP", (skipped or {}).get("action", "Not applicable")
     else:
@@ -442,12 +443,15 @@ def _worker(config_path, case, duration, output_dir):
             except Exception as exc:
                 write("connect_attempt_failed", attempt=attempt,
                       exception_type=type(exc).__name__, message=str(exc))
+                retryable = type(exc).__name__ in ("ConnectionTimeout", "Timeout")
                 try:
                     cli.stop()
                 except Exception as close_exc:
                     write("failed_connect_cleanup_error", attempt=attempt,
                           message=str(close_exc))
                 cli = None
+                if not retryable:
+                    raise
                 if attempt == 3:
                     write("connect_retries_exhausted", attempts=attempt)
                     recorder.incident(reason="robot_handshake_failed_3_times",
@@ -573,14 +577,19 @@ def main(argv=None):
                 print("INTERPRETATION: animation+camera is stable; audio introduces a failure.",
                       flush=True)
             elif b == "FAIL":
-                print("INTERPRETATION: animation+camera fails without audio; "
-                      "do not attribute its failure solely to audio.", flush=True)
+                print("INTERPRETATION: animation+camera fails after connecting, "
+                      "so audio is not the only failing condition.", flush=True)
+            elif b == "INCONCLUSIVE":
+                print("INTERPRETATION: animation-only control never reached the "
+                      "robot; no conclusion about whether audio causes the stall.",
+                      flush=True)
         if "backpack-side-camera" in results:
             print("LIGHTS: " + ("side packet ACKed in this test" if
                   results["backpack-side-camera"]["status"] == "PASS" else
                   "side-light test did not establish a stable ACKed result"), flush=True)
         print(f"Evidence kept: {suite_dir}", flush=True)
-        return 1 if any(x["status"] == "FAIL" for x in results.values()) else 0
+        return 1 if any(x["status"] in ("FAIL", "INCONCLUSIVE")
+                        for x in results.values()) else 0
     finally:
         if service_was_running:
             print(f"Restoring {SERVICE}...", flush=True)
