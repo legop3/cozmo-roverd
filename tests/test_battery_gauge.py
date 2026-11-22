@@ -112,3 +112,97 @@ def test_low_voltage_recovery_requires_rest_not_one_motor_spike():
     assert g.low_confirmed is True
     tick(g, 3.95, 73, 250)
     assert g.low_confirmed is False
+
+
+# End-to-end Cozmo battery tracker -> MRR needsCharge transition tests.
+from cozmo_roverd.robot_packet import (
+    BatteryTracker, CHARGING, ON_CHARGER, MOVING,
+    RECOVERY_WITH_VOLTAGE_SECONDS, RECOVERY_NO_VOLTAGE_SECONDS,
+)
+
+
+def _low_battery_tracker():
+    battery = BatteryTracker()
+    for t in range(160):
+        battery.observe(3.18, 0, now=float(t))
+    assert battery.low is True
+    assert battery.needs_charge is True
+    return battery
+
+
+def test_recharge_unlocks_without_waiting_for_estimated_soc():
+    b = _low_battery_tracker()
+    start_pct = b.percent
+    for t in range(160, 160 + RECOVERY_WITH_VOLTAGE_SECONDS + 2):
+        b.observe(3.82, ON_CHARGER | CHARGING, now=float(t))
+    assert not b.needs_charge
+    assert b.percent is not None
+    assert b.gauge.low_confirmed is False
+    # Old low-battery latch must not immediately relock on undocking.
+    b.observe(3.80, MOVING, now=float(t + 1), moving=True)
+    assert b.needs_charge is False
+
+
+def test_docked_but_not_charging_never_earns_unlock():
+    b = _low_battery_tracker()
+    for t in range(160, 160 + RECOVERY_NO_VOLTAGE_SECONDS + 30):
+        b.observe(4.10, ON_CHARGER, now=float(t))
+    assert b.needs_charge
+    assert b.diagnostic()["recovery_charge_seconds"] == 0
+
+
+def test_missing_docked_voltage_still_recovers_after_long_confirmed_charge():
+    b = _low_battery_tracker()
+    for t in range(160, 160 + RECOVERY_NO_VOLTAGE_SECONDS + 2):
+        b.observe(0.0, ON_CHARGER | CHARGING, now=float(t))
+    assert b.needs_charge is False
+    assert b.percent is not None
+
+
+def test_short_charging_does_not_clear_low_battery_lock():
+    b = _low_battery_tracker()
+    for t in range(160, 160 + RECOVERY_WITH_VOLTAGE_SECONDS - 5):
+        b.observe(3.80, ON_CHARGER | CHARGING, now=float(t))
+    assert b.needs_charge
+    assert b.gauge.low_confirmed
+
+
+def test_charger_disconnect_resets_recovery_credit():
+    b = _low_battery_tracker()
+    for t in range(160, 160 + 500):
+        b.observe(3.80, ON_CHARGER | CHARGING, now=float(t))
+    for t in range(660, 695):
+        b.observe(3.70, 0, now=float(t))
+    assert b.diagnostic()["recovery_charge_seconds"] == 0
+    for t in range(695, 695 + 410):
+        b.observe(3.80, ON_CHARGER | CHARGING, now=float(t))
+    assert b.needs_charge  # cannot combine two separated charges
+
+
+def test_stale_robotstate_does_not_credit_missing_charging_time():
+    b = _low_battery_tracker()
+    for t in range(160, 510):
+        b.observe(3.80, ON_CHARGER | CHARGING, now=float(t))
+    b.observe(3.80, ON_CHARGER | CHARGING, now=2000.0)
+    assert b.diagnostic()["recovery_charge_seconds"] == 0
+    assert b.needs_charge
+
+
+def test_recent_dangerously_low_voltage_blocks_timed_unlock():
+    b = _low_battery_tracker()
+    for t in range(160, 160 + RECOVERY_NO_VOLTAGE_SECONDS + 20):
+        b.observe(3.20, ON_CHARGER | CHARGING, now=float(t))
+    assert b.needs_charge
+
+
+def test_short_charger_pause_keeps_credit_but_does_not_earn_more():
+    b = _low_battery_tracker()
+    for t in range(160, 160 + 600):
+        b.observe(3.80, ON_CHARGER | CHARGING, now=float(t))
+    credit = b.diagnostic()["recovery_charge_seconds"]
+    for t in range(760, 790):
+        b.observe(3.80, ON_CHARGER, now=float(t))
+    assert b.diagnostic()["recovery_charge_seconds"] == credit
+    for t in range(790, 790 + 305):
+        b.observe(3.80, ON_CHARGER | CHARGING, now=float(t))
+    assert b.needs_charge is False
