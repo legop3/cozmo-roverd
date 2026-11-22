@@ -87,6 +87,16 @@ class Bridge:
                 raise ValueError("raw pulse servo control not available")
             self.head_degrees = max(-25, min(44, target))
             self.robot.head(self.head_degrees)
+        elif cmd == "tts":
+            payload = msg.get("tts")
+            if not isinstance(payload, dict):
+                raise ValueError("tts payload missing")
+            if payload.get("speak") is True:
+                text = payload.get("text", "")
+                if not isinstance(text, str):
+                    raise ValueError("TTS text must be a string")
+                speed = finite(payload.get("speed", 1.0))
+                self.robot.speak(text, speed=speed)
         elif cmd == "headlight":
             payload = msg.get("headlight")
             action = payload.get("action") if isinstance(payload, dict) else None
