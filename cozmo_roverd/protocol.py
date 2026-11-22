@@ -14,7 +14,7 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
                         "pin": 0, "freqHz": 50, "cycleLen": 4096},
         "headlight": {"enabled": True, "initialOn": False},
         "laser": {"enabled": False},
-        "audio": {"ttsEnabled": False},
+        "audio": {"ttsEnabled": True, "defaultEngine": "espeak", "defaultVoice": "en-us"},
         "horn": {"enabled": False},
         "media": {"rtspPort": 8554, "video": {"enabled": video, "profile": "custom"}},
         "peripherals": [{"id": "cozmo", "name": "Cozmo", "controls": [
