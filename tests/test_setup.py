@@ -12,7 +12,7 @@ def test_private_rover_saved_and_validated(tmp_path):
         "name":"cozmo", "description":"Cozmo", "color":"#3ba8ff",
         "server_url":"ws://localhost:8080/rover", "interface":"wlan1",
         "ssid":"Cozmo_ABC", "password":"password123",
-        "max_speed":100, "watchdog_seconds":0.65,
+        "max_speed":100,
         "video":True, "fps":15, "rtsp_url":"", "private":True,
     }
     with patch.object(setup, "interfaces", return_value=[
@@ -46,7 +46,7 @@ def test_render_is_parseable_and_atomic(tmp_path):
     data = {
         "rover":{"name":"cozmo", "description":"Cozmo", "color":"#3ba8ff",
                  "server_url":"ws://localhost:8080/rover", "max_speed":100,
-                 "watchdog_seconds":0.65},
+                 },
         "wifi":{"interface":"wlan1", "ssid":"Cozmo_ABC", "password":"password123"},
         "media":{"enabled":True, "fps":15, "rtsp_url":""}}
     setup.write_config(str(target),data)
@@ -62,7 +62,7 @@ def test_validate_requires_dedicated_interface():
     good = {"name":"cozmo", "description":"Cozmo", "color":"#3ba8ff",
             "server_url":"ws://localhost:8080/rover", "interface":"wlan0",
             "ssid":"Cozmo_ABC", "password":"password123",
-            "max_speed":100, "watchdog_seconds":0.65, "video":True,
+            "max_speed":100, "video":True,
             "fps":15, "rtsp_url":""}
     with patch.object(setup, "interfaces", return_value=[
             {"name":"wlan0", "selectable":False, "is_uplink":True}]):
@@ -78,7 +78,7 @@ def test_existing_password_preserved_only_for_same_network():
     good = {"name":"cozmo", "description":"Cozmo", "color":"#3ba8ff",
             "server_url":"ws://localhost:8080/rover", "interface":"wlan1",
             "ssid":"Cozmo_ABC", "password":"",
-            "max_speed":100, "watchdog_seconds":0.65, "video":True,
+            "max_speed":100, "video":True,
             "fps":15, "rtsp_url":""}
     existing = {"wifi":{"interface":"wlan1", "ssid":"Cozmo_ABC", "password":"savedpassword"}}
     with patch.object(setup, "interfaces", return_value=[
