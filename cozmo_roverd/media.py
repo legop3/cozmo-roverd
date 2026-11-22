@@ -27,6 +27,9 @@ class Publisher:
         self.last_error = None
         self.device = None
         self._ffmpeg_log_file = None
+        self._orientation_candidate = None
+        self._orientation_candidate_at = 0.0
+        self._orientation_visible = None
 
     def _test_encoder(self, encoder, *, device=None):
         # A listed FFmpeg encoder is not necessarily usable. Test a single
@@ -191,8 +194,59 @@ class Publisher:
         draw.ellipse((endpoint_x-2, endpoint_y-2, endpoint_x+2, endpoint_y+2),
                      fill=active)
 
+    # Firmware-derived orientation is advisory status, not an IMU estimate.
+    # Allow only known states; unknown/missing readings never create warnings.
+    ORIENTATION_LABELS = {
+        "ON_LEFT_SIDE": "LEFT SIDE",
+        "ON_RIGHT_SIDE": "RIGHT SIDE",
+        "ON_BACK": "ON BACK",
+        "ON_FACE": "FACE DOWN",
+    }
+
+    def _stable_orientation(self, reported):
+        """Debounce both warning entry and exit for 300 ms."""
+        candidate = reported if reported in self.ORIENTATION_LABELS else None
+        now = time.monotonic()
+        if candidate != self._orientation_candidate:
+            self._orientation_candidate = candidate
+            self._orientation_candidate_at = now
+        elif now - self._orientation_candidate_at >= 0.3:
+            self._orientation_visible = candidate
+        return self._orientation_visible
+
+    @staticmethod
+    def _orientation_icon(orientation):
+        """Small Cozmo profile rotated to match the reported resting pose."""
+        icon = Image.new("RGBA", (24, 24), (0, 0, 0, 0))
+        d = ImageDraw.Draw(icon)
+        amber = (255, 193, 80, 255)
+        edge = (255, 229, 179, 255)
+        # Treads, chassis and raised head make the silhouette recognizable.
+        d.rounded_rectangle((3, 14, 19, 20), radius=2, outline=edge, width=2)
+        d.rectangle((4, 9, 16, 14), outline=amber, width=2)
+        d.rounded_rectangle((13, 3, 22, 11), radius=2, outline=edge, width=2)
+        d.point((19, 7), fill=amber)
+        rotation = {
+            "ON_LEFT_SIDE": 90,
+            "ON_RIGHT_SIDE": 270,
+            "ON_BACK": 180,
+            "ON_FACE": 315,
+        }[orientation]
+        return icon.rotate(rotation, resample=Image.Resampling.BICUBIC)
+
+    def _draw_orientation_warning(self, output, orientation):
+        """Non-animated amber badge left of the original two gauges."""
+        label = self.ORIENTATION_LABELS[orientation]
+        draw = ImageDraw.Draw(output)
+        draw.rounded_rectangle((44, 3, 143, 31), radius=8,
+                               fill=(9, 18, 24), outline=(239, 178, 64),
+                               width=1)
+        symbol = self._orientation_icon(orientation)
+        output.paste(symbol, (49, 5), symbol)
+        draw.text((77, 12), label, fill=(255, 209, 117))
+
     def render_frame(self, image, data=None):
-        """Small top-center IMU bubble with adjacent lift-position icon."""
+        """Top-center IMU/lift gauges, plus a warning when Cozmo isn't upright."""
         output = image.convert("RGB")
         if output.size != (320, 240):
             output = output.resize((320, 240))
@@ -221,6 +275,9 @@ class Publisher:
         else:
             draw.ellipse((cx-2, cy-2, cx+2, cy+2), fill=(180, 184, 190))
         self._draw_lift_indicator(draw, st.get("lift"))
+        orientation = self._stable_orientation(st.get("orientation"))
+        if orientation is not None:
+            self._draw_orientation_warning(output, orientation)
         return output
 
     @staticmethod
