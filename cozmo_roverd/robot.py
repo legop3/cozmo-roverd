@@ -320,8 +320,11 @@ class Robot:
 
     def note_tts(self, text):
         """Remember a speech message even if synthesis or playback fails."""
+        message = " ".join(str(text).split())[:512]
+        if not message:
+            return
         with self.lock:
-            self.last_tts = " ".join(str(text).split())[:512]
+            self.last_tts = message
             self.last_tts_error = None
             self._face_scroll = 0
             self._face_last_content = None
