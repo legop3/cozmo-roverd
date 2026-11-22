@@ -15,7 +15,7 @@ class FakeRobot:
     def light(self, state):
         self.headlight = state
         self.calls.append(("light", state))
-    def face(self, text): self.calls.append(("face", text))
+    def note_tts(self, text): self.calls.append(("note_tts", text))
     def lift_motor(self, pwm): self.calls.append(("lift_motor", pwm))
     def start_undock(self, command_id, backoff, done):
         self.calls.append(("undock", command_id, backoff))
@@ -81,10 +81,23 @@ def test_dock_assist_and_cancel(bridge):
 
 def test_tts_to_speaker(bridge):
     bridge.execute({"type": "tts", "tts": {"speak": True, "text": "Hi", "speed": 1.1}})
-    assert bridge.robot.calls[-1] == ("tts", "Hi", 1.1)
+    assert bridge.robot.calls[-2:] == [("note_tts", "Hi"), ("tts", "Hi", 1.1)]
 
 
 def test_new_drive_interrupts_undock_instead_of_being_ignored(bridge):
     bridge.robot.undock_active = True
     bridge.execute({"type": "drive", "driveDirect": {"left": 100, "right": -100}})
     assert bridge.robot.calls == [("interrupt_undock",), ("drive", 100, -100)]
+
+
+def test_tts_last_message_is_kept_even_without_audio(bridge):
+    bridge.execute({"type": "tts", "tts": {"speak": False, "text": "Status update"}})
+    assert bridge.robot.calls == [("note_tts", "Status update")]
+
+
+def test_manual_face_and_volume_controls_are_removed(bridge):
+    for control, value in (("face", "Hello"), ("volume", 60),
+                           ("clear_face", True)):
+        with pytest.raises(ValueError, match="unsupported peripheral"):
+            bridge.execute({"type": "peripheral", "peripheral": {
+                "id": "cozmo", "control": control, "value": value}})
