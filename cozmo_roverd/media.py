@@ -138,81 +138,34 @@ class Publisher:
         return (roll, pitch)
 
     def render_frame(self, image, data=None):
-        """Draw a compact top-center tilt compass on the existing frame."""
+        """A small top-center IMU bubble only. No labels or panel."""
         output = image.convert("RGB")
         if output.size != (320, 240):
             output = output.resize((320, 240))
         if not self.hud:
             return output
         st = data or {}
-        # A single lightweight Pillow drawing pass, executed by the encoder
-        # thread after dequeue. No additional frame queue or encoding pass.
-        draw = ImageDraw.Draw(output, "RGBA")
-        cx, cy, radius = 160, 37, 26
-        draw.rounded_rectangle((65, 2, 255, 100), radius=9,
-                               fill=(9, 17, 23, 165),
-                               outline=(210, 228, 233, 120), width=1)
-        draw.ellipse((cx-radius, cy-radius, cx+radius, cy+radius),
-                     fill=(17, 34, 43, 190), outline=(194, 222, 225, 225), width=1)
-        draw.line((cx-radius+4, cy, cx+radius-4, cy),
-                  fill=(125, 155, 166, 125), width=1)
-        draw.line((cx, cy-radius+4, cx, cy+radius-4),
-                  fill=(125, 155, 166, 125), width=1)
-        draw.text((cx-3, cy-radius-10), "F", fill=(228, 243, 246, 255))
+        draw = ImageDraw.Draw(output)
+        cx, cy, radius = 160, 17, 13
+        # Thin, compact round horizon indicator, approx. 28x28 pixels.
+        # Draw directly on the current frame without another buffer.
+        draw.ellipse((cx-radius-1, cy-radius-1, cx+radius+1, cy+radius+1),
+                     fill=(9, 18, 24), outline=(216, 236, 239), width=1)
+        draw.line((cx-9, cy, cx+9, cy), fill=(80, 112, 125), width=1)
+        draw.line((cx, cy-9, cx, cy+9), fill=(80, 112, 125), width=1)
         tilt = self.imu_tilt(st.get("accel"))
         if tilt is not None:
             roll, pitch = tilt
-            # Bubble position is a gravity tilt indicator, not planar
-            # displacement. Clamp only the drawing, not the measurements.
-            dx = max(-19, min(19, roll * 0.34))
-            dy = max(-19, min(19, pitch * 0.34))
-            scale = min(1.0, 19.0 / max(math.hypot(dx, dy), 1e-6))
-            bx, by = int(round(cx + dx*scale)), int(round(cy + dy*scale))
-            draw.ellipse((bx-4, by-4, bx+4, by+4), fill=(78, 239, 210, 255),
-                         outline=(234, 255, 251, 255), width=1)
+            dx = max(-9, min(9, roll * 0.14))
+            dy = max(-9, min(9, pitch * 0.14))
+            norm = math.hypot(dx, dy)
+            if norm > 9:
+                dx, dy = dx * 9 / norm, dy * 9 / norm
+            bx, by = int(round(cx + dx)), int(round(cy + dy))
+            draw.ellipse((bx-3, by-3, bx+3, by+3),
+                         fill=(83, 241, 204), outline=(233, 255, 248), width=1)
         else:
-            roll = pitch = None
-            draw.text((cx-8, cy-4), "IMU", fill=(255, 182, 103, 255))
-        # F denotes robot-forward, not magnetic north. Heading is from
-        # local wheel odometry rather than an absolute compass reference.
-        # Heading from wheel odometry is separate from gravity tilt; indicate
-        # the current robot yaw as a small amber pointer on the circle.
-        heading = st.get("heading")
-        if isinstance(heading, (float, int)) and math.isfinite(heading):
-            theta = math.radians(heading)
-            hx = int(round(cx + 21 * math.sin(theta)))
-            hy = int(round(cy - 21 * math.cos(theta)))
-            draw.ellipse((hx-2, hy-2, hx+2, hy+2), fill=(255, 193, 83, 255))
-        # Peripheral stats stay in the same top-center module, flanking
-        # the compass instead of occupying full-width top/bottom strips.
-        pct = self._format(st.get("battery_pct"), 0, "%")
-        draw.text((70, 13), f"BAT {pct}", fill=(173, 239, 222, 255))
-        draw.text((70, 26), self._format(st.get("voltage"), 2, "V"),
-                  fill=(226, 237, 240, 255))
-        dock = "CHARGING" if st.get("charging") else "DOCKED" if st.get("docked") else ""
-        if dock:
-            draw.text((70, 39), dock, fill=(105, 240, 179, 255))
-        draw.text((70, 56), "L " + self._format(st.get("left"), 0),
-                  fill=(226, 237, 240, 255))
-        draw.text((70, 69), "R " + self._format(st.get("right"), 0),
-                  fill=(226, 237, 240, 255))
-        draw.text((192, 13), "HEAD " + self._format(st.get("head"), 0),
-                  fill=(226, 237, 240, 255))
-        draw.text((192, 26), "LIFT " + self._format(st.get("lift"), 0),
-                  fill=(226, 237, 240, 255))
-        draw.text((192, 39), "CLIFF " + self._format(st.get("cliff")),
-                  fill=(226, 237, 240, 255))
-        gyro = st.get("gyro") or {}
-        draw.text((192, 56), "GZ " + self._format(gyro.get("z"), 1),
-                  fill=(226, 237, 240, 255))
-        draw.text((cx-45, 69), f"R {self._format(roll, 0)} P {self._format(pitch, 0)}",
-                  fill=(223, 241, 244, 255))
-        draw.text((cx-45, 84), f"HDG {self._format(heading, 0)}",
-                  fill=(156, 235, 218, 255))
-        if not st.get("connected", False):
-            draw.rounded_rectangle((108, 44, 212, 58), radius=3,
-                                   fill=(117, 36, 27, 225))
-            draw.text((113, 46), "RECONNECTING", fill=(255, 236, 223, 255))
+            draw.ellipse((cx-2, cy-2, cx+2, cy+2), fill=(180, 184, 190))
         return output
 
     def _offline_frame(self):
