@@ -106,7 +106,7 @@ function configFromUI() {
     ssid: field("ssid"),
     password: field("password"),
     max_speed: Number(field("speed")),
-    camera_mode: field("camera-mode"),
+    camera_mode: "auto",
     hud: $("hud").checked,
     fps: Number(field("fps")),
     video: $("video").checked,
@@ -128,7 +128,6 @@ function applyConfig(config, options) {
       : "Enter the password shown on Cozmo.";
   $("video").checked = !!config.video;
   $("hud").checked = config.hud !== false;
-  $("camera-mode").value = config.camera_mode || "auto";
   $("rtsp-url").value = config.rtsp_url;
   selectOptions($("speed"), options.speeds.map(n => ({value:n,label:`${n} mm/s`})), config.max_speed);
   selectOptions($("fps"), options.fps.map(n => ({value:n,label:`${n} FPS`})), config.fps);
