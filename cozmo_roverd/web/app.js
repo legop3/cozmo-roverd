@@ -239,6 +239,8 @@ async function refreshTelemetry() {
         ["Queued audio frames remaining", displayMetric(audio.queued_frames_remaining)],
         ["Speech aborted due to congestion", displayMetric(audio.aborted_due_to_congestion)],
         ["TTS ACK backpressure ticks", displayMetric(audio.backpressure_ticks)],
+        ["Firmware animation keyframes received", displayMetric(audio.firmware_keyframes_received)],
+        ["Firmware keyframe pacing active", displayMetric(audio.keyframe_gating_enabled)],
         ["Face screen updates", displayMetric(response.face_frames_sent)],
         ["Last encoded face image", displayMetric(response.face_last_encoded_bytes, " bytes")],
         ["Face display error", displayMetric(response.face_last_error)],
