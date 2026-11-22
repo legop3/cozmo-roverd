@@ -229,7 +229,6 @@ class Bridge:
                 while not self.stop_event.is_set():
                     if not self.wifi.active() or not self.robot.is_healthy():
                         raise RuntimeError("Cozmo Wi-Fi or state stream lost")
-                    self.robot.watchdog(self.cfg.watchdog_seconds)
                     await asyncio.sleep(0.1)
             except asyncio.CancelledError:
                 raise
