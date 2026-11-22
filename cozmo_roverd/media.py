@@ -1,6 +1,7 @@
 """Feed latest PyCozmo PIL camera frames to ffmpeg/MediaMTX as low-latency H264."""
 from __future__ import annotations
 import logging
+from collections import deque
 import math
 import os
 from pathlib import Path
@@ -23,6 +24,12 @@ class Publisher:
         self.encoder = None
         self.frame_count = 0
         self.dropped_frames = 0
+        self.camera_arrivals = deque(maxlen=240)
+        self.output_frames = deque(maxlen=240)
+        self.output_new_frames = 0
+        self.output_repeated_frames = 0
+        self.ffmpeg_write_max_ms = 0.0
+        self.ffmpeg_write_last_ms = 0.0
         self.last_frame_time = None
         self.last_error = None
         self.device = None
@@ -84,6 +91,7 @@ class Publisher:
         # worker, never the Cozmo packet processing thread.
         if not self.running.is_set(): return
         self.last_frame_time = time.monotonic()
+        self.camera_arrivals.append(self.last_frame_time)
         self.frame_count += 1
         if self.frames.full():
             try:
@@ -93,8 +101,21 @@ class Publisher:
         try: self.frames.put_nowait(image)
         except queue.Full: self.dropped_frames += 1
 
+    @staticmethod
+    def _recent_fps(stamps, now):
+        # A rolling two-second window measures distinct arrivals separately
+        # from encoded/duplicated frames, without keeping frame images.
+        return round(sum(t >= now - 2.0 for t in tuple(stamps)) / 2.0, 1)
+
     def diagnostics(self):
+        now = time.monotonic()
         return {
+            "camera_input_fps_2s": self._recent_fps(self.camera_arrivals, now),
+            "rtsp_output_fps_2s": self._recent_fps(self.output_frames, now),
+            "rtsp_unique_camera_frames": self.output_new_frames,
+            "rtsp_repeated_camera_frames": self.output_repeated_frames,
+            "ffmpeg_write_last_ms": round(self.ffmpeg_write_last_ms, 1),
+            "ffmpeg_write_max_ms": round(self.ffmpeg_write_max_ms, 1),
             "enabled": self.running.is_set(),
             "encoder": self.encoder,
             "hardware_device": self.device,
@@ -350,6 +371,10 @@ class Publisher:
                             if image is not None:
                                 latest_image = image
                             if latest_image is not None:
+                                if image is not None:
+                                    self.output_new_frames += 1
+                                else:
+                                    self.output_repeated_frames += 1
                                 frame = self.render_frame(latest_image, data).tobytes()
                             else:
                                 frame = self._offline_frame(data).tobytes()
@@ -358,7 +383,12 @@ class Publisher:
                             # the next connection must provide its own frames.
                             latest_image = None
                             frame = self._offline_frame(data).tobytes()
+                        write_start = time.monotonic()
                         process.stdin.write(frame)
+                        self.ffmpeg_write_last_ms = (time.monotonic() - write_start) * 1000
+                        self.ffmpeg_write_max_ms = max(
+                            self.ffmpeg_write_max_ms, self.ffmpeg_write_last_ms)
+                        self.output_frames.append(time.monotonic())
                     except (BrokenPipeError, OSError, ValueError) as exc:
                         self.last_error = str(exc)[:180]
                         break
