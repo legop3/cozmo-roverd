@@ -31,6 +31,8 @@ class BatteryTracker:
         self.voltages = deque(maxlen=7)
         self.voltage = None
         self.percent = None
+        self._smoothed_voltage = None
+        self._smoothed_at = None
         self.docked = None
         self.charging = None
         self.raw_charging = None
@@ -52,8 +54,21 @@ class BatteryTracker:
         if voltage is not None and 2.7 <= voltage <= 4.4:
             self.voltages.append(voltage)
             self.voltage = voltage
-            # Median over recent packets rejects electrical spikes.
-            self.percent = battery_percent(median(self.voltages))
+            # Median rejects spikes. Smooth voltage over elapsed time rather
+            # than packet count; Cozmo's RobotState rate is not constant.
+            stable_voltage = median(self.voltages)
+            if self._smoothed_voltage is None:
+                self._smoothed_voltage = stable_voltage
+            else:
+                elapsed = max(0.0, now - self._smoothed_at)
+                alpha = 1.0 - math.exp(-elapsed / 20.0)
+                self._smoothed_voltage += alpha * (stable_voltage - self._smoothed_voltage)
+            self._smoothed_at = now
+            candidate = battery_percent(self._smoothed_voltage)
+            # Avoid one-percent flicker; track real sustained changes.
+            if self.percent is None or (candidate is not None
+                                        and abs(candidate - self.percent) >= 2):
+                self.percent = candidate
         self.raw_docked = bool(flags & ON_CHARGER)
         self.raw_charging = bool(flags & CHARGING)
         contact = self.raw_docked or self.raw_charging
@@ -113,6 +128,7 @@ class BatteryTracker:
         return {
             "voltage_v": self.voltage,
             "estimated_percent": self.percent,
+            "smoothed_voltage_v": self._smoothed_voltage,
             "raw_docked": self.raw_docked,
             "raw_charging": self.raw_charging,
             "stable_docked": self.docked,
