@@ -76,6 +76,16 @@ class Bridge:
         if self.publisher:
             self.publisher.submit(image)
 
+    def report_result(self, command_id, error=None):
+        def enqueue():
+            if not self.results.full():
+                self.results.put_nowait({
+                    "type": "commandResult", "id": command_id,
+                    "status": "error" if error else "ok",
+                    **({"error": str(error)[:180]} if error else {}),
+                })
+        self.loop.call_soon_threadsafe(enqueue)
+
     def execute(self, msg):
         cmd = msg.get("type")
         if cmd == "drive":
@@ -96,6 +106,25 @@ class Bridge:
                 raise ValueError("raw pulse servo control not available")
             self.head_degrees = max(-25, min(44, target))
             self.robot.head(self.head_degrees)
+        elif cmd == "undock":
+            backoff = msg.get("backoff", True)
+            if type(backoff) is not bool:
+                raise ValueError("undock.backoff must be boolean")
+            self.robot.start_undock(msg["id"], backoff, self.report_result)
+        elif cmd == "dockAssist":
+            self.robot.assist_docking()
+        elif cmd == "cancelDocking":
+            self.robot.cancel_docking()
+        elif cmd == "autoDock":
+            raise ValueError("Automatic charger seeking requires charger localization; dock assist is available")
+        elif cmd == "motors":
+            payload = msg.get("motorPwm")
+            if not isinstance(payload, dict):
+                raise ValueError("motorPwm missing")
+            main = payload.get("main")
+            if type(main) is not int or not -127 <= main <= 127:
+                raise ValueError("motorPwm.main must be an integer -127..127")
+            self.robot.lift_motor(main)
         elif cmd == "tts":
             payload = msg.get("tts")
             if not isinstance(payload, dict):
