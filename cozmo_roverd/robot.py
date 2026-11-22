@@ -6,6 +6,7 @@ import threading
 import time
 from PIL import Image, ImageDraw
 from .telemetry import snapshot
+from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
@@ -25,6 +26,10 @@ class Robot:
         self.last_drive = 0.0
         self.moving = False
         self.ready = False
+        self.battery = BatteryTracker()
+        self.packets_received = 0
+        self.last_packet_error = None
+        self.packet_status = {}
 
     def connect(self):
         import pycozmo
@@ -41,8 +46,10 @@ class Robot:
                             lambda _client, value: self._cliff(bool(value)))
             cli.add_handler(pycozmo.event.EvtRobotPickedUpChange,
                             lambda _client, value: self._picked_up(bool(value)))
-            cli.add_handler(pycozmo.event.EvtRobotStateUpdated,
-                            lambda _client: self._sample(cli))
+            # Handle actual packets, retaining all direct fields. Registered
+            # after PyCozmo's own handler so its high-level state is current.
+            cli.add_handler(pycozmo.protocol_encoder.RobotState,
+                            lambda _client, pkt: self._packet(cli, pkt))
             cli.enable_camera(enable=True, color=True)
             with self.lock:
                 self.client = cli
@@ -67,24 +74,40 @@ class Robot:
         self.picked_up = value
         if value: self.stop_drive()
 
-    def _sample(self, cli):
-        # PyCozmo publishes the complete state in EvtRobotStateUpdated. Pull
-        # all values from that packet, including charger flags, without using
-        # separate callbacks as a required prerequisite for reporting state.
-        data = snapshot(cli)
-        old_state = (self.charging, self.on_charger, self.cliff,
-                     self.picked_up, self.voltage)
-        self.latest = data
-        self.voltage = data["battery_voltage_v"]
-        self.on_charger = data["on_charger"]
-        self.charging = data["charging"]
-        self.cliff = data["cliff_detected"]
-        self.picked_up = data["picked_up"]
-        self.last_sensor = time.monotonic()
-        new_state = (self.charging, self.on_charger, self.cliff,
-                     self.picked_up, self.voltage)
-        if old_state != new_state:
-            self.on_state()
+    def _packet(self, cli, pkt):
+        # No network I/O in the PyCozmo receive thread.
+        self.packets_received += 1
+        now = time.monotonic()
+        self.last_sensor = now
+        try:
+            data = snapshot_packet(pkt)
+            battery = self.battery.observe(pkt.battery_voltage, pkt.status, now)
+            old = (self.on_charger, self.charging, self.voltage, self.cliff,
+                   self.picked_up)
+            self.voltage = battery.voltage
+            self.on_charger = battery.docked
+            self.charging = battery.charging
+            self.cliff = data["cliff_detected"]
+            self.picked_up = data["picked_up"]
+            # Rich PyCozmo-derived values are best effort and must never
+            # prevent the actual packet and battery state reaching MRR.
+            try:
+                rich = snapshot(cli, pkt)
+                rich.update(data)
+                data = rich
+            except Exception as exc:
+                self.last_packet_error = str(exc)[:160]
+            data["battery_tracking"] = battery.diagnostic()
+            data["packet_count"] = self.packets_received
+            self.latest = data
+            changed = old != (self.on_charger, self.charging, self.voltage,
+                             self.cliff, self.picked_up)
+            if changed:
+                self.on_state()
+        except Exception as exc:
+            self.last_packet_error = str(exc)[:160]
+            LOG.exception("Cozmo RobotState packet handling failed")
+        # Always keep the packet receive counter available for diagnostics.
 
     def is_healthy(self):
         return self.ready and time.monotonic() - self.last_sensor < 5.0
@@ -153,6 +176,7 @@ class Robot:
             cli, self.client = self.client, None
             self.ready = False
             self.moving = False
+            self.battery = BatteryTracker()
             self.latest = {}
             self.voltage = None
             self.on_charger = None
