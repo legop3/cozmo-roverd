@@ -12,9 +12,18 @@ from PIL import Image, ImageDraw, ImageFont
 LOG = logging.getLogger(__name__)
 
 class Publisher:
-    def __init__(self, url: str, fps: int = 15, hud: bool = True):
+    def __init__(self, url: str, fps: int = 15, hud: bool = True,
+                 brightness: int = 1):
+        if type(brightness) is not int or not 1 <= brightness <= 8:
+            raise ValueError("Digital brightness must be 1–8")
         self.url, self.fps = url, fps
         self.hud = hud
+        self.brightness = brightness
+        # Nonlinear lift of dark pixels. Preserve black/white endpoints
+        # and avoid altering the HUD; this runs only in the video worker.
+        self._brightness_lut = None if brightness == 1 else [
+            min(255, round(255 * (value / 255) ** (1 / brightness)))
+            for value in range(256)] * 3
         self.state_provider = None
         self.frames: queue.Queue[Image.Image] = queue.Queue(maxsize=1)
         self.running = threading.Event()
@@ -196,6 +205,8 @@ class Publisher:
         output = image.convert("RGB")
         if output.size != (320, 240):
             output = output.resize((320, 240))
+        if self._brightness_lut is not None:
+            output = output.point(self._brightness_lut)
         if not self.hud:
             return output
         st = data or {}
