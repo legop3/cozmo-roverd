@@ -158,7 +158,7 @@ class Publisher:
                   fill=(125, 155, 166, 125), width=1)
         draw.line((cx, cy-radius+4, cx, cy+radius-4),
                   fill=(125, 155, 166, 125), width=1)
-        draw.text((cx-3, cy-radius-10), "N", fill=(228, 243, 246, 255))
+        draw.text((cx-3, cy-radius-10), "F", fill=(228, 243, 246, 255))
         tilt = self.imu_tilt(st.get("accel"))
         if tilt is not None:
             roll, pitch = tilt
@@ -173,6 +173,8 @@ class Publisher:
         else:
             roll = pitch = None
             draw.text((cx-8, cy-4), "IMU", fill=(255, 182, 103, 255))
+        # F denotes robot-forward, not magnetic north. Heading is from
+        # local wheel odometry rather than an absolute compass reference.
         # Heading from wheel odometry is separate from gravity tilt; indicate
         # the current robot yaw as a small amber pointer on the circle.
         heading = st.get("heading")
