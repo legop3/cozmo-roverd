@@ -52,7 +52,7 @@ def _fix_pycozmo_packet_batching(cli):
 
 
 def _limit_animation_idle_traffic(cli):
-    """Pace Cozmo speech by ACK and firmware playback, not a blind 30 Hz flood.
+    """Send native-rate Cozmo speaker audio with bounded transport congestion.
 
     PyCozmo's stock animation timer emits OutputSilence and the last display
     bitmap at 30 Hz while idle, and emits audio at 30 Hz without checking
@@ -88,147 +88,90 @@ def _limit_animation_idle_traffic(cli):
         cli.add_handler(protocol_encoder.Keyframe, on_keyframe)
 
     def run_frame(self):
-        # Cozmo's Wi-Fi replies are still arriving when TTS freezes
-        # controls, but its reliable-send ACK stops advancing. The previous
-        # four-packet allowance was too generous: 20 frames were queued,
-        # four reached the sender, then the window grew to 24 unacknowledged
-        # packets. Use strict stop-and-wait for each 744-byte audio frame;
-        # other controls retain their normal sending semantics.
+        # Run at PyCozmo's native 30 Hz animation cadence. OutputAudio is
+        # time-based: waiting for one KEYFRAME or network ACK between every
+        # 744-sample chunk starves the speaker. The separate sender framing
+        # bug is fixed by _fix_pycozmo_packet_batching().
         sender = getattr(getattr(self.cli, "conn", None), "send_thread", None)
         q = self.queue
-        audio_waiting = False
-        if hasattr(q, "audio_queue") and hasattr(q, "lock"):
-            with q.lock:
-                audio_waiting = bool(q.audio_queue)
-        # Wait for the final audio packet's acknowledgement before
-        # queuing OutputSilence. Do not let a trailing silence overtake
-        # speech and take another slot in a congested send window.
-        if (audio_waiting or self.playing_audio) and sender is not None:
+        with q.lock:
+            audio_waiting = bool(q.audio_queue)
+        pending = 0
+        queued = 0
+        if sender is not None:
             with sender.lock:
                 pending = ((sender.window.next_seq - sender.window.expected_seq)
                            % sender.window.max_seq)
-            backlog = sender.queue.qsize()
-            # A network ACK only means the robot received a frame, not
-            # that the firmware's small animation buffer has played it.
-            # Never put more than two speech frames in that buffer even
-            # when network ACKs happen quickly.
-            reported_played = getattr(self, "num_audio_frames_played", None)
-            played_baseline = self._cozmo_audio_played_baseline
-            playback_backlog = 0
-            if (reported_played is not None and played_baseline is not None):
-                playback_backlog = max(
-                    0, self._cozmo_audio_frames_submitted
-                    - max(0, reported_played - played_baseline))
-            # OutputAudio must be synchronized with firmware KEYFRAME,
-            # not just the outer UDP reliable ACK. There was previously no
-            # Keyframe handling, so the first audio packet could enter a
-            # starved animation buffer and stall all following commands.
-            keyframe_ready = True
-            # Cozmo sends Keyframe as acknowledgement of an animation
-            # tick, not as an unsolicited "ready" signal. The earlier
-            # implementation waited for a Keyframe *before the first*
-            # OutputAudio, deadlocking speech at startup. Permit exactly
-            # the first frame after an empty send window; require a fresh
-            # Keyframe for subsequent speech frames.
-            if (self._cozmo_keyframe_gating and audio_waiting
-                    and self._cozmo_audio_frames_submitted > 0):
-                keyframe_ready = (
-                    self._cozmo_keyframes_received > self._cozmo_keyframe_consumed
-                    and time.monotonic() - self._cozmo_last_keyframe_at <= 1.0)
-            if pending >= 1 or backlog >= 1 or playback_backlog >= 2 or not keyframe_ready:
-                now = time.monotonic()
-                self._cozmo_audio_backpressure_ticks += 1
-                if self._cozmo_audio_blocked_at is None:
-                    self._cozmo_audio_blocked_at = now
-                if now - self._cozmo_audio_blocked_at < 2.0:
-                    # Avoid extra "startup" silence packets during a
-                    # speech stall: they also consume reliable sequence
-                    # numbers and previously froze motor commands.
-                    return
-                # Audio is optional. Abort a stalled utterance instead of
-                # letting its backlog block motor commands indefinitely.
-                with q.lock:
-                    discarded = len(q.audio_queue)
-                    q.audio_queue.clear()
-                self._cozmo_audio_aborted = True
-                self._cozmo_audio_abort_reason = (
-                    "firmware KEYFRAME did not arrive" if not keyframe_ready
-                    else "reliable packets not acknowledged" if pending or backlog
-                    else "firmware audio playback did not advance")
-                self._cozmo_audio_blocked_at = None
-                # No additional OutputSilence is enqueued into a stalled
-                # channel. Mark the interrupted stream inactive, so the
-                # animation timer doesn't repeat the same abort forever.
-                self.playing_audio = False
-                LOG.warning(
-                    "Aborted Cozmo TTS waiting for reliable ACK or firmware KEYFRAME "
-                    "(%d unacked, %d queued commands, %d audio discarded, "
-                    "%d speech sent, %d keyframes received)",
-                    pending, backlog, discarded, self._cozmo_audio_frames_submitted,
-                    self._cozmo_keyframes_received)
+            queued = sender.queue.qsize()
+
+        now = time.monotonic()
+        # Keep the reliable queue bounded, but never wait for a robot
+        # KEYFRAME or frame-playback count. Those events are diagnostics,
+        # not a documented condition for sending each audio chunk.
+        if (audio_waiting or self.playing_audio) and (pending >= 6 or queued >= 3):
+            self._cozmo_audio_backpressure_ticks += 1
+            if self._cozmo_audio_blocked_at is None:
+                self._cozmo_audio_blocked_at = now
+            if now - self._cozmo_audio_blocked_at < 1.5:
                 return
+            with q.lock:
+                dropped = len(q.audio_queue)
+                q.audio_queue.clear()
+            self.playing_audio = False
+            self._cozmo_audio_aborted = True
+            self._cozmo_audio_abort_reason = (
+                f"transport congested: {pending} unacknowledged, {queued} queued")
             self._cozmo_audio_blocked_at = None
-        audio_pkt, image_pkt, pkts = self.queue.get()
+            LOG.warning(
+                "Cozmo speech aborted to protect controls: "
+                "%d unacknowledged packets, %d application packets, "
+                "%d speech chunks discarded, %d chunks submitted",
+                pending, queued, dropped, self._cozmo_audio_frames_submitted)
+            return
+        self._cozmo_audio_blocked_at = None
+
         if not self.animations_enabled:
             return
+        audio_pkt, image_pkt, pkts = q.get()
         if audio_pkt is not None:
             self.cli.conn.send(audio_pkt)
-            if self._cozmo_keyframe_gating:
-                self._cozmo_keyframe_consumed = self._cozmo_keyframes_received
             self._cozmo_audio_frames_submitted += 1
             self.playing_audio = True
         elif self.playing_audio:
             self.playing_audio = False
             self.cli.conn.send(protocol_encoder.OutputSilence())
-            self._cozmo_last_idle_silence_at = time.monotonic()
+            self._cozmo_last_idle_silence_at = now
             self.cli.conn.post_event(event.EvtAudioCompleted, self.cli)
-        elif (self.image_displayed
+        elif (self.image_displayed and now - self._cozmo_last_idle_silence_at >= 1.0
+              and pending == 0 and queued == 0
               and getattr(self.cli.conn, "state", None) ==
-                  getattr(self.cli.conn, "CONNECTED", object())
-              and time.monotonic() - self._cozmo_last_idle_silence_at >= 1.0):
-            # Cozmo's face animation is clocked by OutputSilence even when
-            # no speech is playing. Removing *all* silence packets caused
-            # image keyframes to accumulate and the face to stay blank.
-            # One small silence packet per second is sufficient for the
-            # static dashboard and avoids PyCozmo's default 30 Hz flood.
-            # Even the tiny silence packet must not pile up when Cozmo
-            # has stopped acknowledging reliable commands.
-            can_send_silence = True
-            if sender is not None:
-                with sender.lock:
-                    pending = ((sender.window.next_seq - sender.window.expected_seq)
-                               % sender.window.max_seq)
-                can_send_silence = pending == 0 and sender.queue.empty()
-            if can_send_silence:
-                self.cli.conn.send(protocol_encoder.OutputSilence())
-                self._cozmo_last_idle_silence_at = time.monotonic()
-        if (image_pkt is None and self.procedural_face_enabled
-                and not self.playing_animation and not self.image_displayed):
+                  getattr(self.cli.conn, "CONNECTED", object())):
+            # Maintain the display at 1 Hz without PyCozmo's default
+            # 30 Hz idle-silence flood.
+            self.cli.conn.send(protocol_encoder.OutputSilence())
+            self._cozmo_last_idle_silence_at = now
+
+        # Camera and controls must not contend with TTS for large reliable
+        # messages. Preserve pending face images until speech is finished.
+        if (audio_pkt is not None or self.playing_audio or audio_waiting):
+            if image_pkt is not None:
+                with q.lock:
+                    q.image_queue.appendleft(image_pkt)
+                image_pkt = None
+        elif image_pkt is None and self.procedural_face_enabled and (
+                not self.playing_animation and not self.image_displayed):
             image_pkt = self._get_face_image()
-        if audio_pkt is not None and image_pkt is not None and hasattr(q, "image_queue"):
-            # Do not combine a large TTS packet and display keyframe in the
-            # same animation tick. The screen is lower priority than speech
-            # or motion commands and may safely wait until playback finishes.
-            with q.lock:
-                q.image_queue.appendleft(image_pkt)
-            image_pkt = None
+
         if image_pkt is not None:
             self.last_image_pkt = image_pkt
             self.cli.conn.send(image_pkt)
-            self._cozmo_image_refresh_at = time.monotonic()
-        elif (self.image_displayed and not self.playing_audio and not audio_waiting
-              and time.monotonic() - self._cozmo_image_refresh_at >= 10.0):
-            # A screen keepalive must not enter the reliable window during
-            # an ACK stall either: that was another backlog source.
-            can_send_image = True
-            if sender is not None:
-                with sender.lock:
-                    pending = ((sender.window.next_seq - sender.window.expected_seq)
-                               % sender.window.max_seq)
-                can_send_image = pending == 0 and sender.queue.empty()
-            if can_send_image:
-                self.cli.conn.send(self.last_image_pkt)
-                self._cozmo_image_refresh_at = time.monotonic()
+            self._cozmo_image_refresh_at = now
+        elif (not self.playing_audio and not audio_waiting and self.image_displayed
+              and now - self._cozmo_image_refresh_at >= 10.0
+              and pending == 0 and queued == 0):
+            self.cli.conn.send(self.last_image_pkt)
+            self._cozmo_image_refresh_at = now
+
         if pkts:
             for pkt in pkts:
                 self.cli.conn.send(pkt)
