@@ -38,10 +38,16 @@ class Bridge:
         self.loop.call_soon_threadsafe(self.state_dirty.set)
 
     def current_state(self):
-        return state(charging=self.robot.charging,
-                     docked=self.robot.on_charger,
+        battery = self.robot.battery
+        if battery.stale() or not self.robot.ready:
+            return state(charging=None, docked=None,
+                         headlight=self.robot.headlight, voltage=None,
+                         driving=self.robot.ready)
+        return state(charging=battery.charging,
+                     docked=battery.docked,
                      headlight=self.robot.headlight,
-                     voltage=self.robot.voltage,
+                     voltage=battery.voltage,
+                     battery=battery.battery_state(),
                      driving=self.robot.ready)
 
     def current_sensor(self):
@@ -50,8 +56,8 @@ class Bridge:
             return None
         wheels = latest.get("wheel_speeds_mmps") or {}
         return sensor(voltage=latest.get("battery_voltage_v"),
-                      cliff=latest.get("cliff_detected"),
-                      left=wheels.get("left"), right=wheels.get("right"))
+                      left=wheels.get("left"), right=wheels.get("right"),
+                      on_charger=latest.get("on_charger"))
 
     def publish_sensor(self):
         # Sensors are sent at a bounded 5 Hz in _send, not for every hardware
@@ -133,6 +139,9 @@ class Bridge:
                     "cozmo": snap,
                     "rover_state": self.current_state()["state"],
                     "video": self.publisher.diagnostics() if self.publisher else {"enabled": False},
+                    "packets_received": self.robot.packets_received,
+                    "last_packet_error": self.robot.last_packet_error,
+                    "battery_tracker": self.robot.battery.diagnostic(),
                 }
                 tmp = target.with_suffix(".tmp")
                 tmp.write_text(json.dumps(output))
