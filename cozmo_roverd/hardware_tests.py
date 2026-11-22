@@ -179,7 +179,22 @@ def _worker(config_path, case, duration, output_dir):
                 stalled_at = None
             last_ack = metrics["next_ack_expected"]
             time.sleep(0.25)
-        write("test_finished", transport=_snapshot(cli))
+        final = _snapshot(cli)
+        played_delta = (final["audio_frames_reported_played"]
+                        - before["audio_frames_reported_played"])
+        if case.startswith("audio") and played_delta <= 0:
+            write("audio_not_reported_played", transport=final,
+                  frames_reported_during_test=played_delta)
+            recorder.incident(reason="audio_frames_not_reported_played",
+                              stage=case, transport=final)
+            return 4
+        if final["pending_reliable_packets"] >= 6:
+            write("outstanding_commands_at_end", transport=final)
+            recorder.incident(reason="commands_still_pending_at_end",
+                              stage=case, transport=final)
+            return 5
+        write("test_finished", transport=final,
+              audio_frames_reported_during_test=played_delta)
         return 0
     except Exception as exc:
         write("test_exception", exception_type=type(exc).__name__, message=str(exc))
