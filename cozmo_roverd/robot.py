@@ -237,8 +237,9 @@ class Robot:
         if self._state_worker is not None and self._state_worker.is_alive():
             if self._put_latest(self._state_queue, (cli, pkt)):
                 self.state_packets_coalesced += 1
-        elif self.client is None:
-            # Unit-test direct processing; real connections use the worker.
+        else:
+            # Manual/fake clients in tests have no worker. A closed real
+            # connection is excluded above by _state_stop.
             self._process_packet(cli, pkt)
 
     def _process_packet(self, cli, pkt):
