@@ -96,17 +96,17 @@ def test_tts_failure_is_visible_in_face_diagnostics(monkeypatch):
     assert "espeak-ng" in robot.last_tts_error
 
 
-def test_generated_widgets_change_with_battery_and_telemetry():
-    baseline = status_image(
-        voltage=3.8, percent=10, charging=False, wheels=(0, 0),
-        cliff=False, picked_up=False)
-    charged = status_image(
-        voltage=4.2, percent=95, charging=True, docked=True,
-        wheels=(250, -250), cliff=True, picked_up=True,
+def test_face_changes_only_with_voltage_or_last_tts():
+    baseline = status_image(voltage=3.8, last_tts="Hello")
+    visible_robot_status_changed = status_image(
+        voltage=3.8, last_tts="Hello", percent=95, charging=True,
+        docked=True, wheels=(250, -250), cliff=True, picked_up=True,
         audio_error="speech playback failed")
-    assert baseline.size == charged.size == (128, 32)
-    assert baseline.mode == charged.mode == "1"
-    assert baseline.tobytes() != charged.tobytes()
+    assert baseline.size == visible_robot_status_changed.size == (128, 32)
+    assert baseline.mode == visible_robot_status_changed.mode == "1"
+    assert baseline.tobytes() == visible_robot_status_changed.tobytes()
+    assert status_image(voltage=4.2, last_tts="Hello").tobytes() != baseline.tobytes()
+    assert status_image(voltage=3.8, last_tts="Goodbye").tobytes() != baseline.tobytes()
 
 
 def test_generated_face_has_no_content_outside_128x32_canvas():
@@ -531,8 +531,8 @@ def test_operator_face_gives_latest_tts_a_full_width_readable_row():
                          charging=True, last_tts="HELLO WORLD")
     empty = status_image(voltage=3.98, percent=81,
                          charging=True, last_tts="")
-    # The message occupies the prominent bottom row, not a 6px
-    # clipped footer. Battery voltage and gauge occupy the top band.
+    # The message occupies the whole bottom band and battery voltage
+    # occupies the top band; nothing else appears on the display.
     assert image.crop((2, 21, 127, 32)).getbbox() is not None
     assert image.crop((2, 21, 127, 32)).tobytes() != (
         empty.crop((2, 21, 127, 32)).tobytes())
