@@ -29,6 +29,7 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_image_refresh_at = 0.0
     controller._cozmo_audio_blocked_at = None
     controller._cozmo_audio_aborted = False
+    controller._cozmo_audio_abort_reason = None
     controller._cozmo_audio_backpressure_ticks = 0
     controller._cozmo_audio_frames_submitted = 0
     controller._cozmo_audio_played_baseline = None
@@ -109,6 +110,10 @@ def _limit_animation_idle_traffic(cli):
                     discarded = len(q.audio_queue)
                     q.audio_queue.clear()
                 self._cozmo_audio_aborted = True
+                self._cozmo_audio_abort_reason = (
+                    "firmware KEYFRAME did not arrive" if not keyframe_ready
+                    else "reliable packets not acknowledged" if pending or backlog
+                    else "firmware audio playback did not advance")
                 self._cozmo_audio_blocked_at = None
                 # No additional OutputSilence is enqueued into a stalled
                 # channel. Mark the interrupted stream inactive, so the
@@ -525,6 +530,7 @@ class Robot:
                 "robot_reported_audio_frames": played,
                 "queued_frames_remaining": queue_size,
                 "aborted_due_to_congestion": getattr(cli.anim_controller, "_cozmo_audio_aborted", False) if cli else None,
+                "abort_reason": getattr(cli.anim_controller, "_cozmo_audio_abort_reason", None) if cli else None,
                 "backpressure_ticks": getattr(cli.anim_controller, "_cozmo_audio_backpressure_ticks", 0) if cli else None,
                 "frames_submitted_to_transport": getattr(cli.anim_controller, "_cozmo_audio_frames_submitted", 0) if cli else None,
                 "playback_counter_at_speech_start": getattr(cli.anim_controller, "_cozmo_audio_played_baseline", None) if cli else None,
@@ -658,6 +664,7 @@ class Robot:
                 controller = self.client.anim_controller
                 controller.enable_animations(True)
                 controller._cozmo_audio_aborted = False
+                controller._cozmo_audio_abort_reason = None
                 controller._cozmo_audio_blocked_at = None
                 controller._cozmo_audio_frames_submitted = 0
                 controller._cozmo_audio_backpressure_ticks = 0
