@@ -121,7 +121,7 @@ def test_optional_led_features_default_off_and_enable_independently(monkeypatch)
     from cozmo_roverd.main import _env_enabled
     monkeypatch.delenv("COZMO_BACKPACK_STATUS", raising=False)
     monkeypatch.delenv("COZMO_CHARGER_STATUS", raising=False)
-    assert _env_enabled("COZMO_BACKPACK_STATUS", default=True)
+    assert not _env_enabled("COZMO_BACKPACK_STATUS")
     assert not _env_enabled("COZMO_CHARGER_STATUS")
     monkeypatch.setenv("COZMO_BACKPACK_STATUS", "1")
     assert _env_enabled("COZMO_BACKPACK_STATUS")
