@@ -156,31 +156,40 @@ class Publisher:
 
     @staticmethod
     def _draw_lift_indicator(draw, height_mm):
-        """Lift height position, with an obvious 20px travel and live mm value.
+        """Original compact hinged-arm gauge beside the IMU ball.
 
-        Use the same `lift_height_mm` RobotState reading as the web UI. The
-        old 15px diagonal arm moved only a handful of pixels and looked
-        stationary after the low-resolution stream was scaled in MRR.
+        The input is real height in mm, converted once from the firmware's
+        raw lift-angle reading by robot_packet.snapshot_packet().
         """
+        cx, cy, radius = 188, 17, 12
+        bg = (9, 18, 24)
+        edge = (216, 236, 239)
+        muted = (80, 112, 125)
+        active = (83, 241, 204)
+        draw.ellipse((cx-radius-1, cy-radius-1, cx+radius+1, cy+radius+1),
+                     fill=bg, outline=edge, width=1)
+        pivot_x, pivot_y = cx-6, cy+6
+        draw.line((pivot_x-3, pivot_y+2, pivot_x+6, pivot_y+2),
+                  fill=muted, width=2)
         fraction = Publisher.lift_fraction(height_mm)
-        x, top, bottom = 188, 7, 27
-        # Compact vertical lift track next to the round IMU indicator.
-        draw.rounded_rectangle((x-4, top-3, x+5, bottom+3), radius=4,
-                               fill=(9, 18, 24), outline=(216, 236, 239))
-        draw.line((x, top, x, bottom), fill=(80, 112, 125), width=2)
         if fraction is None:
-            draw.line((x-2, 17, x+3, 17), fill=(170, 176, 183), width=2)
-            text = "--"
-        else:
-            y = int(round(bottom - fraction * (bottom - top)))
-            # Strong cyan position marker travels the full track.
-            draw.rounded_rectangle((x-3, y-2, x+4, y+2), radius=1,
-                                   fill=(83, 241, 204))
-            text = str(int(round(float(height_mm))))
-        # Small numerical verification beside the gauge. It changes with
-        # live lift telemetry, so an unmoving value is distinguishable from
-        # a glyph that's merely too small to make out.
-        draw.text((198, 12), text, fill=(216, 236, 239))
+            draw.line((pivot_x, pivot_y, cx+6, cy-1),
+                      fill=muted, width=2)
+            draw.point((pivot_x, pivot_y), fill=edge)
+            return
+        # The arm angle follows Cozmo's real lift pivot geometry rather
+        # than pretending the height in millimeters is itself an angle.
+        height = 32.0 + 60.0 * fraction
+        theta = math.asin(max(-1.0, min(1.0, (height - 45.0) / 66.0)))
+        length = 15.0
+        endpoint_x = int(round(pivot_x + length * math.cos(theta)))
+        endpoint_y = int(round(pivot_y - length * math.sin(theta)))
+        draw.line((pivot_x, pivot_y, endpoint_x, endpoint_y),
+                  fill=active, width=3)
+        draw.ellipse((pivot_x-2, pivot_y-2, pivot_x+2, pivot_y+2),
+                     fill=edge)
+        draw.ellipse((endpoint_x-2, endpoint_y-2, endpoint_x+2, endpoint_y+2),
+                     fill=active)
 
     def render_frame(self, image, data=None):
         """Small top-center IMU bubble with adjacent lift-position icon."""
