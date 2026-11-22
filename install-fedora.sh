@@ -31,6 +31,11 @@ install -m 0644 "$ROOT/packaging/cozmo-roverd-setup.service" /etc/systemd/system
 systemctl daemon-reload
 systemctl enable --now cozmo-roverd-setup.service
 systemctl restart cozmo-roverd-setup.service
+# Upgrading the package does not reload an already running Python process.
+# Restart an active bridge to pick up new code; leave unconfigured bridges off.
+if systemctl is-active --quiet cozmo-roverd.service; then
+  systemctl restart cozmo-roverd.service
+fi
 if systemctl is-active --quiet firewalld.service && command -v firewall-cmd >/dev/null 2>&1; then
   firewall-cmd --permanent --add-port=8765/tcp
   firewall-cmd --reload
