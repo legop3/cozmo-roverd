@@ -58,7 +58,7 @@ def test_exposure_preset_sent_to_camera():
     assert pkt.exposure_ms == 60
     robot.camera_mode = "auto"
     robot.configure_camera()
-    assert robot.client.packets[-1].auto_exposure_enabled is True
+    assert robot.client.packets[-1].auto_exposure_enabled is False
 
 
 def test_undock_drives_forward_until_charger_contact_clears():
@@ -149,22 +149,23 @@ def test_pickup_and_docked_status_never_block_direct_driving():
     assert robot.client.drives[-1] == (250, -250)
 
 
-def test_live_exposure_switch_uses_firmware_auto_flag_and_keeps_manual_gain_low():
+def test_live_exposure_switch_uses_adaptive_sensor_control():
     from pycozmo.protocol_encoder import SetCameraParams
     robot, _ = fake_robot(mode="bright")
     robot.set_camera_auto_exposure()
     assert robot.camera_mode == "auto"
     pkt = robot.client.packets[-1]
     assert isinstance(pkt, SetCameraParams)
-    assert pkt.auto_exposure_enabled is True
-    assert pkt.exposure_ms == 0
+    assert pkt.auto_exposure_enabled is False
+    assert pkt.exposure_ms == 16
+    assert pkt.gain == 1.0
     robot.set_camera_manual_exposure(2)
     assert robot.camera_mode == "manual"
     pkt = robot.client.packets[-1]
     assert isinstance(pkt, SetCameraParams)
     assert pkt.auto_exposure_enabled is False
     assert pkt.exposure_ms == 2
-    assert pkt.gain == robot.client.camera_config.min_gain
+    assert pkt.gain == 2.0
     robot.set_camera_auto_exposure()
     assert robot.client.packets[-1].auto_exposure_enabled is True
     assert robot.manual_exposure_ms == 2
