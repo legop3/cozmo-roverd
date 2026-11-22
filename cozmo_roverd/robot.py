@@ -115,6 +115,10 @@ class Robot:
                 self.stop_drive()
                 self.dock_assist = False
                 self.docking_phase = None
+                try:
+                    self.head(10)
+                except Exception:
+                    LOG.exception("Could not reset head after dock contact")
             changed = old != (self.on_charger, self.charging, self.voltage,
                              self.cliff, self.picked_up)
             if changed:
@@ -140,6 +144,11 @@ class Robot:
             if self.cliff or self.picked_up:
                 self.stop_drive()
                 raise RuntimeError("Motion blocked by cliff/pickup sensor")
+            if self.on_charger and not self.undock_active and (left or right):
+                raise RuntimeError("Use undock to leave charging contacts")
+            if self.dock_assist:
+                left = max(-60, min(60, left))
+                right = max(-60, min(60, right))
             self.client.drive_wheels(left, right)
             self.moving = left != 0 or right != 0
 
@@ -236,6 +245,7 @@ class Robot:
             self.dock_assist = False
             self.docking_phase = None
             self.stop_drive()
+            self.head(10)
         self.on_state()
 
     def head(self, degrees):
