@@ -66,6 +66,30 @@ Only the high-volume `protocol.log` rotates automatically (approximately 40 MiB 
 
 To examine the latest failure, use `sudo tail -n 1 /var/log/cozmo-roverd/incidents.jsonl | python3 -m json.tool`; for the preceding packet activity use `sudo tail -n 150 /var/log/cozmo-roverd/protocol.log`.
 
+## Exposure control in MRR
+
+**Camera auto exposure is now the default** for a new configuration. This uses Cozmo firmware's native `SetCameraParams(auto_exposure_enabled=True)`, so the camera adjusts continuously when moving between indoor light and direct sunlight. Existing `/etc/cozmo-roverd.toml` files are deliberately not overwritten on upgrades: if yours still specifies `camera_mode = "bright"`, set **Camera exposure = Automatic** in the Fedora setup page and save to keep it active after restarts.
+
+MRR's **Cozmo** peripheral now includes **Auto exposure** (momentary button: clicking enables native AE immediately) and **Manual exposure (ms)** (1–67 slider: dragging switches to minimum sensor gain with a specific exposure). The existing lift slider remains unchanged. These controls use MRR's existing supported peripheral schema; no MRR server modification is needed. Exposure modes persist across hardware reconnects within a bridge session. The Fedora diagnostic JSON reports `camera_exposure.mode` and `camera_exposure.manual_ms`. An ACK means the command was accepted for transmission, **not** proof the sensor exposure changed; verify with the live image.
+
+## Isolated physical audio and light diagnostics
+
+The real-hardware probe runs **outside the production bridge**, with a fresh, unmodified PyCozmo client in a separate child process for each case. No lights or audio are enabled during normal driving. Running these tests **can hang or disconnect Cozmo**, so the user must explicitly opt in. Do not run while the production service is active.
+
+After installing/updating the bridge and preparing Cozmo's Wi-Fi, stop the rover and run cases individually:
+
+```sh
+sudo systemctl stop cozmo-roverd.service
+sudo /opt/cozmo-roverd/.venv/bin/python -m cozmo_roverd.hardware_tests --case baseline-camera --i-understand-risk
+sudo /opt/cozmo-roverd/.venv/bin/python -m cozmo_roverd.hardware_tests --case backpack-side-camera --i-understand-risk
+sudo /opt/cozmo-roverd/.venv/bin/python -m cozmo_roverd.hardware_tests --case audio-camera --i-understand-risk
+sudo systemctl start cozmo-roverd.service
+```
+
+Available cases: `baseline-idle` (no camera/animation), `baseline-camera`, `backpack-stock` (upstream `set_all_backpack_lights`), `backpack-side`, `backpack-side-camera`, `charger` (only if detected), `audio-idle` (upstream `play_audio`, 0.28-second quiet generated WAV), and `audio-camera`. The baseline and paired camera/no-camera cases distinguish a bad individual packet from interference from continuous camera/animation traffic.
+
+**Each test runs in its own killable process**, samples reliable ACK-window sequence/queue counters four times per second, and records PyCozmo protocol messages and the actual playback-frame count. A sustained ACK stall writes an incident snapshot and aborts that case. The parent kills a worker that hangs during Wi-Fi connection or teardown. Results are retained under `/var/log/cozmo-roverd/hardware-tests/<timestamp>-<case>/`: `measurements.jsonl`, `incidents.jsonl`, and `protocol.log`. These are actual physical experiments, not tests that claim to prove hardware behavior using mocks. The test runner and packet formats also have automated unit tests, but **the real-world LED/audio result cannot be established until it is run on the robot**.
+
 ## TTS safety: hardware speaker disabled
 
 **Hardware TTS is deliberately disabled in the normal Cozmo bridge.** Sending PyCozmo `OutputAudio` repeatedly stalled the reliable control channel, often forcing a robot disconnect. The reference audio example working in isolation was not sufficient evidence that it could work safely in a continuously controlled rover. Further experiments must be performed in a separate, isolated test and not silently re-enabled on this bridge.
