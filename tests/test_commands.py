@@ -23,6 +23,8 @@ class FakeRobot:
     def assist_docking(self): self.calls.append(("assist_docking",))
     def cancel_docking(self): self.calls.append(("cancel_docking",))
     def speak(self, text, speed=1.0): self.calls.append(("tts", text, speed))
+    def set_camera_auto_exposure(self): self.calls.append(("camera_auto",))
+    def set_camera_manual_exposure(self, ms): self.calls.append(("camera_manual", ms))
 
 @pytest.fixture
 def bridge():
@@ -106,3 +108,17 @@ def test_manual_face_and_volume_controls_are_removed(bridge):
         with pytest.raises(ValueError, match="unsupported peripheral"):
             bridge.execute({"type": "peripheral", "peripheral": {
                 "id": "cozmo", "control": control, "value": value}})
+
+
+def test_mrr_camera_exposure_controls_apply_immediately(bridge):
+    bridge.execute({"type": "peripheral", "peripheral": {
+        "id": "cozmo", "control": "camera_auto_exposure", "value": True}})
+    bridge.execute({"type": "peripheral", "peripheral": {
+        "id": "cozmo", "control": "camera_auto_exposure", "value": False}})
+    bridge.execute({"type": "peripheral", "peripheral": {
+        "id": "cozmo", "control": "camera_manual_exposure", "value": 3}})
+    assert bridge.robot.calls == [("camera_auto",), ("camera_manual", 3)]
+    for value in (True, False, 0, 68, 1.5, "3"):
+        with pytest.raises(ValueError, match="unsupported peripheral"):
+            bridge.execute({"type": "peripheral", "peripheral": {
+                "id": "cozmo", "control": "camera_manual_exposure", "value": value}})
