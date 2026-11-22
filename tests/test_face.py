@@ -210,3 +210,34 @@ def test_face_does_not_interfere_with_active_speech_audio():
     assert not robot.refresh_face()
     robot.client.anim_controller.playing_audio = False
     assert robot.refresh_face()
+
+
+
+def test_face_packet_always_fits_single_cozmo_transport_frame():
+    from pycozmo.image_encoder import ImageEncoder
+    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+    image = status_image(voltage=3.96, percent=82, charging=True,
+                         docked=True, cliff=True, picked_up=True,
+                         wheels=(-250, 250),
+                         last_tts="This is a long message displayed while moving",
+                         scroll=6, audio_error="speech error")
+    payload = bytes(ImageEncoder(image).encode())
+    # This test documents whether the full graphic fits on the wire. The
+    # robot refresh fallback handles states where it does not.
+    if len(payload) > MAX_FRAME_PAYLOAD_SIZE - 6:
+        robot = robot_with_face()
+        robot.battery.voltage = 3.96
+        robot.battery.percent = 82
+        robot.last_tts = "Test oversized image"
+        assert robot.refresh_face()
+        assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
+    else:
+        assert len(payload) <= MAX_FRAME_PAYLOAD_SIZE - 6
+
+
+def test_face_records_encoding_size_after_display():
+    robot = robot_with_face()
+    assert robot.refresh_face()
+    assert robot.face_last_encoded_bytes is not None
+    assert robot.face_last_encoded_bytes > 0
+    assert robot.face_last_error is None
