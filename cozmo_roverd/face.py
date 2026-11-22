@@ -1,8 +1,9 @@
-"""Only the battery voltage and last TTS message on Cozmo's 128x32 face.
+"""Battery voltage and latest TTS on Cozmo's interlaced OLED.
 
-Draw at the native 1-bit pixel resolution. Previous 4x supersampling made
-Pillow's fallback bitmap font shrink to a few pixels when DejaVu was absent
-from a headless Fedora server. Both font paths must produce legible output.
+PyCozmo accepts a 128x32 1-bit image, but Cozmo paints those 32 rows onto
+alternating physical rows of its 128x64 OLED. A 15-pixel-high font therefore
+looks roughly 30 physical pixels tall. Render small, crisp glyphs directly at
+the protocol resolution; never scale or downsample this bitmap.
 """
 from __future__ import annotations
 
@@ -32,8 +33,10 @@ def _font(size):
     return ImageFont.load_default()
 
 
-_VOLTAGE_FONT = _font(15)
-_MESSAGE_FONT = _font(11)
+# Keep text about 7-8 protocol pixels tall (14-16 physical rows).
+# Older 15px/11px fonts made the two lines visually oversized on the OLED.
+_VOLTAGE_FONT = _font(11)
+_MESSAGE_FONT = _font(10)
 
 
 def _strip(text, font, width, height, scroll=0):
@@ -67,8 +70,10 @@ def status_image(*, voltage=None, last_tts="", scroll=0, **_unused):
         voltage_text = "--.-- V"
     msg = " ".join(str(last_tts or "").split()) or "NO TTS YET"
     face = Image.new("1", (WIDTH, HEIGHT), 0)
-    face.paste(_strip(voltage_text, _VOLTAGE_FONT, WIDTH, 18), (0, 0))
-    face.paste(_strip(msg, _MESSAGE_FONT, WIDTH, 13, scroll), (0, 19))
+    # Reserve separate rows with blank breathing room. Vertical coordinates
+    # are protocol pixels, not physical display pixels (each is interlaced).
+    face.paste(_strip(voltage_text, _VOLTAGE_FONT, WIDTH, 14), (0, 0))
+    face.paste(_strip(msg, _MESSAGE_FONT, WIDTH, 15, scroll), (0, 17))
     return face
 
 
