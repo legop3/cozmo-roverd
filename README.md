@@ -68,11 +68,22 @@ Only the high-volume `protocol.log` rotates automatically (approximately 40 MiB 
 
 To examine the latest failure, use `sudo tail -n 1 /var/log/cozmo-roverd/incidents.jsonl | python3 -m json.tool`; for the preceding packet activity use `sudo tail -n 150 /var/log/cozmo-roverd/protocol.log`.
 
-## Exposure control in MRR
+## Reconnect Cozmo from MRR
 
-**Camera auto exposure is now the default** for a new configuration. This uses Cozmo firmware's native `SetCameraParams(auto_exposure_enabled=True)`, so the camera adjusts continuously when moving between indoor light and direct sunlight. Existing `/etc/cozmo-roverd.toml` files are deliberately not overwritten on upgrades: if yours still specifies `camera_mode = "bright"`, set **Camera exposure = Automatic** in the Fedora setup page and save to keep it active after restarts.
+MRR's **Cozmo** peripheral exposes the existing **Lift height (%)** slider and
+a momentary **Reconnect Cozmo** button. The previous manual/automatic exposure
+accessory controls have been removed; automatic camera exposure still runs
+internally and is not changed by this button.
 
-MRR's **Cozmo** peripheral now includes **Auto exposure** (momentary button: clicking enables native AE immediately) and **Manual exposure (ms)** (1–67 slider: dragging switches to minimum sensor gain with a specific exposure). The existing lift slider remains unchanged. These controls use MRR's existing supported peripheral schema; no MRR server modification is needed. Exposure modes persist across hardware reconnects within a bridge session. The Fedora diagnostic JSON reports `camera_exposure.mode` and `camera_exposure.manual_ms`. An ACK means the command was accepted for transmission, **not** proof the sensor exposure changed; verify with the live image.
+Clicking **Reconnect Cozmo** requests a single controlled reconnection from
+the hardware supervisor. It marks the hardware temporarily unavailable,
+stops the existing PyCozmo client, then reconnects via the existing dedicated
+Wi-Fi association. It does not create a second client, restart the whole
+RoverD service, or intentionally disconnect the MRR WebSocket. RTSP shows
+the existing reconnect screen until fresh camera images return. The command
+ACK acknowledges the reconnect request, not completion of the handshake.
+The button is unavailable while the hardware is disconnected because MRR's
+command receiver rejects hardware actions until it reconnects.
 
 ## Pinned pycozmo UDP frame-split fix
 
