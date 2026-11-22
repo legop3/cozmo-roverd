@@ -31,10 +31,12 @@ def test_face_has_battery_and_latest_tts_and_128x32_format():
     assert image.getbbox() is not None
 
 
-def test_latest_tts_scrolls_and_remains_visible():
-    image1 = status_image(last_tts="This is a fairly long message", scroll=0)
-    image2 = status_image(last_tts="This is a fairly long message", scroll=8)
+def test_long_tts_wraps_across_pages():
+    message = "This is a fairly long message that should continue onto later pages"
+    image1 = status_image(last_tts=message, scroll=0)
+    image2 = status_image(last_tts=message, scroll=1)
     assert image1.tobytes() != image2.tobytes()
+    assert image1.size == image2.size == (128, 32)
 
 
 def test_face_updates_only_on_change_but_last_message_is_persistent():
@@ -197,23 +199,28 @@ def test_tts_played_counter_is_read_from_animation_controller():
 
 
 
-def test_operator_face_gives_latest_tts_a_full_width_readable_row():
-    image = status_image(voltage=3.98, percent=81,
-                         charging=True, last_tts="HELLO WORLD")
-    empty = status_image(voltage=3.98, percent=81,
-                         charging=True, last_tts="")
-    # The message occupies the whole bottom band and battery voltage
-    # occupies the top band; nothing else appears on the display.
-    assert image.crop((2, 21, 127, 32)).getbbox() is not None
-    assert image.crop((2, 21, 127, 32)).tobytes() != (
-        empty.crop((2, 21, 127, 32)).tobytes())
-    assert image.crop((3, 0, 128, 12)).getbbox() is not None
-    # Long messages should scroll without changing top-row battery data.
-    long0 = status_image(voltage=3.98, percent=81, last_tts="A VERY LONG MESSAGE ACROSS COZMO DISPLAY", scroll=0)
-    long1 = status_image(voltage=3.98, percent=81, last_tts="A VERY LONG MESSAGE ACROSS COZMO DISPLAY", scroll=5)
-    assert long0.crop((0, 21, 128, 32)).tobytes() != long1.crop((0, 21, 128, 32)).tobytes()
-    assert long0.crop((0, 0, 128, 21)).tobytes() == long1.crop((0, 0, 128, 21)).tobytes()
-
+def test_operator_face_wraps_tts_and_places_voltage_in_corner():
+    from cozmo_roverd.face import _pages, _MESSAGE_FONT
+    from PIL import ImageDraw
+    image = status_image(voltage=3.98, last_tts="HELLO WORLD THIS MESSAGE WRAPS")
+    no_message = status_image(voltage=3.98, last_tts="")
+    assert image.crop((0, 0, 75, 11)).getbbox() is not None
+    assert image.crop((0, 11, 128, 32)).getbbox() is not None
+    # Speech occupies the left side of row one; battery is not a header row.
+    assert image.crop((82, 0, 128, 11)).getbbox() is not None
+    assert image.tobytes() != no_message.tobytes()
+    # Long text is paginated, not a one-line ticker.
+    msg = "A VERY LONG MESSAGE THAT SHOULD WRAP OVER SEVERAL FULL SCREEN PAGES"
+    first = status_image(voltage=3.98, last_tts=msg, scroll=0)
+    second = status_image(voltage=3.98, last_tts=msg, scroll=1)
+    assert first.tobytes() != second.tobytes()
+    assert first.crop((82, 0, 128, 11)).tobytes() == (
+        second.crop((82, 0, 128, 11)).tobytes())
+    sample = Image.new("1", (128, 32))
+    draw = ImageDraw.Draw(sample)
+    pages = _pages(msg, draw, (78, 128, 128))
+    assert len(pages) >= 2
+    assert all(len(page) <= 3 for page in pages)
 
 
 def test_wire_encoded_face_is_not_a_single_pixel():
@@ -327,14 +334,14 @@ def test_display_only_sender_clocks_image_without_30hz_image_flood():
 def test_headless_fedora_without_any_truetype_fonts_still_draws_readable_face(monkeypatch):
     import cozmo_roverd.face as face_module
     monkeypatch.setattr(face_module, "_FONT_CHOICES", ())
-    monkeypatch.setattr(face_module, "_VOLTAGE_FONT", face_module._font(15))
-    monkeypatch.setattr(face_module, "_MESSAGE_FONT", face_module._font(11))
+    monkeypatch.setattr(face_module, "_VOLTAGE_FONT", face_module._font(9, ()))
+    monkeypatch.setattr(face_module, "_MESSAGE_FONT", face_module._font(12, ()))
     image = face_module.status_image(voltage=3.98, last_tts="Hello Cozmo")
     assert image.mode == "1"
     assert image.size == (128, 32)
     assert sum(image.getdata()) >= 40
     assert image.crop((0, 0, 128, 18)).getbbox() is not None
-    assert image.crop((0, 19, 128, 32)).getbbox() is not None
+    assert image.crop((0, 11, 128, 32)).getbbox() is not None
     # More than a single bright dot or a 4x-shrunk glyph.
     occupied_columns = sum(
         image.crop((x, 0, x + 1, 32)).getbbox() is not None
@@ -342,21 +349,26 @@ def test_headless_fedora_without_any_truetype_fonts_still_draws_readable_face(mo
     assert occupied_columns >= 25
 
 
-def test_interlaced_oled_status_has_two_compact_separated_lines():
-    """Protocol rows are physically doubled on Cozmo's interlaced OLED."""
-    image = status_image(voltage=3.91, last_tts="HELLO COZMO")
+def test_large_status_uses_all_rows_and_preserves_interlacing():
+    image = status_image(voltage=3.91, last_tts="HELLO FROM THE COZMO ROBOT")
     assert image.size == (128, 32)
-    # Keep a blank gap rather than using tall glyphs across the two fields.
-    assert image.crop((0, 14, 128, 17)).getbbox() is None
-    top = image.crop((0, 0, 128, 14)).getbbox()
-    bottom = image.crop((0, 17, 128, 32)).getbbox()
-    assert top is not None and bottom is not None
-    # Max ten logical rows of actual ink: at most 20 physical OLED rows.
-    assert top[3] - top[1] <= 10
-    assert bottom[3] - bottom[1] <= 10
-    # Both logical row parities must carry artwork. Do not discard every
-    # second protocol row; pycozmo/firmware handle physical interlacing.
-    assert any(image.crop((0, y, 128, y + 1)).getbbox() is not None
+    # The caption may extend into three physical bands, no reserved voltage row.
+    assert image.crop((0, 0, 75, 11)).getbbox() is not None
+    assert image.crop((0, 11, 128, 22)).getbbox() is not None
+    assert image.crop((0, 22, 128, 32)).getbbox() is not None
+    # Firmware handles alternate physical OLED rows; don't pre-drop bitmap rows.
+    assert any(image.crop((0, y, 128, y+1)).getbbox() is not None
                for y in range(0, 32, 2))
-    assert any(image.crop((0, y, 128, y + 1)).getbbox() is not None
+    assert any(image.crop((0, y, 128, y+1)).getbbox() is not None
                for y in range(1, 32, 2))
+
+
+def test_wrap_splits_long_unbroken_words_without_clipping():
+    from cozmo_roverd.face import _pages
+    from PIL import ImageDraw
+    image = Image.new("1", (128, 32))
+    draw = ImageDraw.Draw(image)
+    text = "SUPERCALIFRAGILISTICEXPIALIDOCIOUS" * 2
+    pages = _pages(text, draw, (70, 128, 128))
+    assert len(pages) > 0
+    assert "".join("".join(page) for page in pages) == text
