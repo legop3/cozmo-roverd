@@ -204,6 +204,9 @@ class Bridge:
         return {
             "connected": self.robot.ready,
             "mrr_connected": self.mrr_connected,
+            "hardware_stage": self.hardware_stage,
+            "hardware_reconnect_attempts": self.hardware_reconnect_attempts,
+            "last_hardware_error": self.last_hardware_error,
             "battery_pct": battery.percent,
             "voltage": battery.voltage,
             "docked": battery.docked,
