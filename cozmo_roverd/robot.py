@@ -13,6 +13,44 @@ from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
+def _fix_pycozmo_packet_batching(cli):
+    """Fix PyCozmo's wrong last sequence when a UDP frame overflows.
+
+    Its stock SendThread._send_packets() uses the *next* packet's sequence
+    for the frame being flushed. The recipient can then acknowledge a
+    sequence that was not included in that frame. Audio packets (744 bytes)
+    make the overflow branch especially common.
+    """
+    import types
+    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+
+    sender = cli.conn.send_thread
+
+    def send_packets(self, pkts, last_ack):
+        to_frame = []
+        frame_len = 0
+        first_seq = last_seq = None
+        for seq, pkt in pkts:
+            pktlen = 4 + len(pkt)
+            if pktlen >= MAX_FRAME_PAYLOAD_SIZE:
+                raise ValueError(
+                    f"PyCozmo packet {type(pkt).__name__} ({pktlen} bytes) "
+                    "exceeds single UDP frame payload")
+            if to_frame and frame_len + pktlen >= MAX_FRAME_PAYLOAD_SIZE:
+                self._send_frame(to_frame, first_seq, last_seq, last_ack)
+                to_frame = []
+                frame_len = 0
+            if not to_frame:
+                first_seq = seq
+            to_frame.append(pkt)
+            frame_len += pktlen
+            last_seq = seq
+        if to_frame:
+            self._send_frame(to_frame, first_seq, last_seq, last_ack)
+
+    sender._send_packets = types.MethodType(send_packets, sender)
+
+
 def _limit_animation_idle_traffic(cli):
     """Pace Cozmo speech by ACK and firmware playback, not a blind 30 Hz flood.
 
@@ -236,6 +274,7 @@ class Robot:
     def connect(self):
         import pycozmo
         cli = pycozmo.Client(enable_animations=True, enable_procedural_face=False)
+        _fix_pycozmo_packet_batching(cli)
         _limit_animation_idle_traffic(cli)
         cli.start()
         try:
