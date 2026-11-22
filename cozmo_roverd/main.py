@@ -231,6 +231,7 @@ class Bridge:
                     "last_tts_frames": self.robot.last_tts_frames,
                     "last_tts_played_at": self.robot.last_tts_played_at,
                     "face_frames_sent": self.robot.face_frames_sent,
+                    "speaker": self.robot.speaker_diagnostics(),
                     "last_packet_error": self.robot.last_packet_error,
                     "battery_tracker": self.robot.battery.diagnostic(),
                     "max_speed_config_mmps": self.cfg.max_speed,
