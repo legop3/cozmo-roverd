@@ -247,6 +247,8 @@ class Bridge:
             "lift": latest.get("lift_height_mm"),
             "heading": pose.get("heading_deg"),
             "pitch": pose.get("pitch_deg"),
+            # PyCozmo's already-classified pose, not a second IMU guess.
+            "orientation": latest.get("orientation"),
             "accel": latest.get("accelerometer"),
             "gyro": latest.get("gyroscope"),
             "wheel_command": getattr(self.robot, "commanded_wheels", (0, 0)),
