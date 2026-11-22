@@ -55,19 +55,17 @@ Camera images are published via FFmpeg to the server's existing MediaMTX RTSP en
 
 The bridge patches the PyCozmo send thread **before starting its connection** to fix a frame-splitting bug: when the accumulated UDP frame would overflow, stock PyCozmo encodes the frame's last sequence using the *next, not-yet-included* packet. This can confuse acknowledgements when 744-byte `OutputAudio` packets are mixed with other commands. The patch keeps original packet ordering and retransmission behavior but uses the actual last sequence of each transmitted frame. Regression tests cover two audio packets, trailing silence, sequence wrap, and payload limits. This is a transport bug fix; it does not, by itself, establish that audible TTS is working on physical hardware.
 
-## Speech playback and command-channel stability
+## TTS safety: hardware speaker disabled
 
-PyCozmo's reference player accepts 22,050 Hz 16-bit mono WAVE and converts it into 744-byte, 8-bit μ-law `OutputAudio` packets, transmitted on its 30 Hz animation timer. The bridge generates the same WAVE with eSpeak NG and FFmpeg. **Speech generation is handled on a background thread**, so eSpeak/FFmpeg cannot stall incoming drive and servo commands on the MRR WebSocket.
+**Hardware TTS is deliberately disabled in the normal Cozmo bridge.** Sending PyCozmo `OutputAudio` repeatedly stalled the reliable control channel, often forcing a robot disconnect. The reference audio example working in isolation was not sufficient evidence that it could work safely in a continuously controlled rover. Further experiments must be performed in a separate, isolated test and not silently re-enabled on this bridge.
 
-The reference PyCozmo audio example does not stream camera video concurrently. The bridge therefore tests a less congested path: it temporarily sends `EnableCamera(false)`, waits up to one second for the reliable transport to acknowledge the camera pause, then sends speech at 30 Hz. Camera streaming is restored immediately when speech completes or is aborted. **Video will temporarily pause while the robot speaks.** If the camera command is not acknowledged, the bridge skips the audio rather than risk stalling controls. Motor/head commands continue normally while the background speech worker is preparing playback. A separate patch fixes PyCozmo's incorrect packet sequence boundaries when its send thread splits large UDP frames.
+MRR `tts` commands still update the **last message on Cozmo's face immediately**. If the request asks Cozmo to actually speak, the bridge returns an explicit unsupported-audio error rather than synthesizing a file, pausing video, transmitting speaker packets, or risking the robot. The `speak:false` option displays the message without an error. Camera streaming is no longer modified by TTS requests. Drive, servo and other controls are unaffected. The dashboard reports the disabled speaker status.
 
-Audio is paused if six or more reliable packets are unacknowledged or three application packets are queued. If that persists for 1.5 seconds, speech is aborted and camera streaming restored. If TTS is associated with a transport stall requiring reconnection, the speaker is disabled **for the rest of that service session** to prevent repeated robot crashes. The latest TTS message continues to display; restart the service to retry experimental speaker output.
+## Face stability and diagnostics
 
-The dashboard distinguishes audio frames queued, audio frames submitted, robot-reported playback frames, camera paused/restored state, failure reason and speaker fail-safe status. These changes are a controlled hardware diagnostic; audible speech still requires verification on the actual Cozmo.
+The face shows only battery voltage and the last TTS message. It renders directly at the native 128x32, 1-bit resolution so that even Pillow's built-in fallback font remains visible when Fedora's system TrueType fonts are missing. The previous 4x supersampled fallback could collapse the text into tiny dots. PyCozmo's encoded bitmap is decoded in-process to report lit pixel and occupied-column counts before the image is submitted.
 
-## Face image diagnostics
-
-The face displays only the measured battery voltage and most recent TTS message. The bridge now decodes its own PyCozmo RLE-encoded display payload and reports the **number of lit pixels and occupied columns**. If those numbers are substantial but the robot only shows one dot, the failure occurs after encoding—likely in Cozmo's display/animation transport—not in text rendering. After sending a fresh image, the animation clock briefly runs at up to 10 Hz to help the firmware consume the image, then drops to 1 Hz, and is suppressed during serious transport congestion.
+A bounded, display-only animation loop sends one new image as needed, small OutputSilence animation clock packets no more than 4 Hz, and a 10-second image keepalive. It does not send `OutputAudio` and no longer applies the experimental custom UDP frame-batching patch. The test suite includes headless-fallback-font and no-speaker-transmission regressions.
 
 ## Recovering an interrupted Cozmo connection
 
