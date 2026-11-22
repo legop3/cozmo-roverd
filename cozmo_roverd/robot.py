@@ -277,8 +277,8 @@ class Robot:
             if self.client is None:
                 raise RuntimeError("Cozmo disconnected")
             if self.dock_assist:
-                left = max(-70, min(70, left))
-                right = max(-70, min(70, right))
+                left = max(-50, min(50, left))
+                right = max(-50, min(50, right))
             # Manual movement from the dock counts as departure, even before
             # a new packet reports the contacts clearing.
             if ((left or right) and self.on_charger is True
