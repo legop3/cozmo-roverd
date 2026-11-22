@@ -591,6 +591,11 @@ class Robot:
             self._face_scroll = 0
             self._face_last_content = None
             self._face_sent_at = 0.0
+        # Show the newly requested text *before* speech synthesis and audio
+        # transfer begin. Otherwise a stuck TTS queue suppresses the face
+        # refresh, so the most recent message never becomes visible.
+        # refresh_face retains normal connection/backlog safeguards.
+        self.refresh_face()
 
     def refresh_face(self):
         """Refresh the Cozmo face dashboard, observing bandwidth limits."""
