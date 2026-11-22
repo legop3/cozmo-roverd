@@ -51,6 +51,10 @@ Camera images are published via FFmpeg to the server's existing MediaMTX RTSP en
 
 **Note:** Fedora's `ffmpeg-free` build may not contain `libx264`. The bridge automatically uses `libopenh264` when available instead. Enable the official `fedora-cisco-openh264` repository and install `openh264` if necessary, or install a full FFmpeg build. Check `ffmpeg -encoders | grep -E 'libx264|libopenh264'`. The installer does not silently enable third-party repositories.
 
+## Speech playback and command-channel stability
+
+PyCozmo represents Cozmo audio as 744-byte `OutputAudio` reliable packets, nominally 30 per second. Sending them without ACK backpressure can fill the robot command window, even if incoming camera video keeps flowing. The bridge's audio sender now pauses speech while four or more reliable packets remain unacknowledged (or three or more application commands are queued), and aborts only the speech if congestion lasts two seconds. Wheels and other commands are never rate-limited by the TTS controller. Face-keyframe updates are also deferred until queued speech has finished. The setup dashboard reports `speaker.backpressure_ticks`, `speaker.aborted_due_to_congestion`, remaining speech frames, and the reliable-transport backlog.
+
 ## Recovering an interrupted Cozmo connection
 
 The bridge retains its MRR registration while reconnecting Cozmo. It now reuses an active NetworkManager association, waits through brief RobotState pauses, and retries fresh PyCozmo handshakes without transmitting a protocol Disconnect to an absent robot. A stalled PyCozmo start/stop triggers a supervised service restart rather than blocking recovery indefinitely. In the setup dashboard, **Cozmo recovery stage**, **Last Cozmo failure**, and **Robot reconnect attempts** explain what the bridge is doing.
