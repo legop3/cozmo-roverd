@@ -248,16 +248,26 @@ class Publisher:
         draw = ImageDraw.Draw(image)
         title, step = self._recovery_status(st, had_video=self.frame_count > 0)
         dots = "." * (1 + int(time.monotonic() * 1.5) % 3)
-        # Keep only two centered lines: reconnection and its live stage.
-        # No MRR information, counters, panels, or error dumps.
+        # Only the essential status and the MRR unregister countdown.
+        # A short dropout retains the rover choice, but a long failure
+        # removes it from MRR until the hardware reconnects.
         for message, y, color in (
-            (title + dots, 105, (235, 243, 245)),
-            (step, 128, (160, 185, 196)),
+            (title + dots, 90, (235, 243, 245)),
+            (step, 113, (160, 185, 196)),
         ):
             bbox = draw.textbbox((0, 0), message)
             width = bbox[2] - bbox[0]
             draw.text(((320 - width) // 2, y - bbox[1]),
                       message, fill=color)
+        remaining = st.get("mrr_offline_remaining_seconds")
+        if isinstance(remaining, (int, float)) and not isinstance(remaining, bool):
+            remaining = max(0, int(remaining))
+            minutes, seconds = divmod(remaining, 60)
+            label = (f"MRR OFFLINE IN {minutes:02d}:{seconds:02d}"
+                     if remaining else "MRR OFFLINE - WAITING FOR COZMO")
+            bounds = draw.textbbox((0, 0), label)
+            draw.text(((320 - (bounds[2] - bounds[0])) // 2, 154 - bounds[1]),
+                      label, fill=(255, 199, 112))
         return image
 
     def _encoder_quality_args(self):
