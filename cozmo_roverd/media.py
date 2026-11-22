@@ -138,8 +138,58 @@ class Publisher:
         pitch = math.degrees(math.atan2(-ax, math.hypot(ay, az)))
         return (roll, pitch)
 
+    @staticmethod
+    def lift_fraction(height_mm):
+        """Normalize Cozmo's reported lift height to its documented travel.
+
+        The state provider reports lift height in millimeters (not arm angle).
+        An icon can depict approximate physical orientation without pretending
+        that it is a degree measurement.
+        """
+        try:
+            height = float(height_mm)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(height):
+            return None
+        return max(0.0, min(1.0, (height - 32.0) / (92.0 - 32.0)))
+
+    @staticmethod
+    def _draw_lift_indicator(draw, height_mm):
+        """Compact side-profile hinged arm beside the IMU bubble."""
+        cx, cy, radius = 188, 17, 12
+        bg = (9, 18, 24)
+        edge = (216, 236, 239)
+        muted = (80, 112, 125)
+        active = (83, 241, 204)
+        draw.ellipse((cx-radius-1, cy-radius-1, cx+radius+1, cy+radius+1),
+                     fill=bg, outline=edge, width=1)
+        # Base silhouette and pivot make this read as a moving lift arm,
+        # not a second IMU ball.
+        pivot_x, pivot_y = cx-6, cy+6
+        draw.line((pivot_x-3, pivot_y+2, pivot_x+6, pivot_y+2),
+                  fill=muted, width=2)
+        fraction = Publisher.lift_fraction(height_mm)
+        if fraction is None:
+            draw.line((pivot_x, pivot_y, cx+6, cy-1),
+                      fill=muted, width=2)
+            draw.point((pivot_x, pivot_y), fill=edge)
+            return
+        # At low lift the arm points almost horizontally; at high lift
+        # it rises toward vertical. This is a proportional position icon.
+        theta = math.radians(12.0 + 65.0*fraction)
+        length = 15.0
+        endpoint_x = int(round(pivot_x + length*math.cos(theta)))
+        endpoint_y = int(round(pivot_y - length*math.sin(theta)))
+        draw.line((pivot_x, pivot_y, endpoint_x, endpoint_y),
+                  fill=active, width=3)
+        draw.ellipse((pivot_x-2, pivot_y-2, pivot_x+2, pivot_y+2),
+                     fill=edge)
+        draw.ellipse((endpoint_x-2, endpoint_y-2, endpoint_x+2, endpoint_y+2),
+                     fill=active)
+
     def render_frame(self, image, data=None):
-        """A small top-center IMU bubble only. No labels or panel."""
+        """Small top-center IMU bubble with adjacent lift-position icon."""
         output = image.convert("RGB")
         if output.size != (320, 240):
             output = output.resize((320, 240))
@@ -167,6 +217,7 @@ class Publisher:
                          fill=(83, 241, 204), outline=(233, 255, 248), width=1)
         else:
             draw.ellipse((cx-2, cy-2, cx+2, cy+2), fill=(180, 184, 190))
+        self._draw_lift_indicator(draw, st.get("lift"))
         return output
 
     def _offline_frame(self):
