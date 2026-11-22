@@ -321,3 +321,22 @@ def test_display_only_sender_clocks_image_without_30hz_image_flood():
     assert sent.count("img") == 1
     assert sent.count("blank") == 0
     assert sum(isinstance(p, pycozmo.protocol_encoder.OutputSilence) for p in sent) == 2
+
+
+
+def test_headless_fedora_without_any_truetype_fonts_still_draws_readable_face(monkeypatch):
+    import cozmo_roverd.face as face_module
+    monkeypatch.setattr(face_module, "_FONT_CHOICES", ())
+    monkeypatch.setattr(face_module, "_VOLTAGE_FONT", face_module._font(15))
+    monkeypatch.setattr(face_module, "_MESSAGE_FONT", face_module._font(11))
+    image = face_module.status_image(voltage=3.98, last_tts="Hello Cozmo")
+    assert image.mode == "1"
+    assert image.size == (128, 32)
+    assert sum(image.getdata()) >= 40
+    assert image.crop((0, 0, 128, 18)).getbbox() is not None
+    assert image.crop((0, 19, 128, 32)).getbbox() is not None
+    # More than a single bright dot or a 4x-shrunk glyph.
+    occupied_columns = sum(
+        image.crop((x, 0, x + 1, 32)).getbbox() is not None
+        for x in range(128))
+    assert occupied_columns >= 25
