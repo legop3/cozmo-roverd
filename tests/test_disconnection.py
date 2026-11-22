@@ -105,3 +105,16 @@ def test_failed_robot_connection_retries_and_recovers_without_wifi_reassociation
     assert calls.count("wifi") == 2
     assert calls.count("close") == 2
     assert attempts == 2
+
+
+def test_live_camera_suppresses_robotstate_silence_reconnect():
+    from cozmo_roverd.main import Bridge
+    from types import SimpleNamespace as NS
+    bridge = object.__new__(Bridge)
+    bridge.publisher = NS(last_frame_time=100.0)
+    assert bridge._camera_link_active(102.0)
+    assert not bridge._camera_link_active(106.0)
+    bridge.publisher = NS(last_frame_time=None)
+    assert not bridge._camera_link_active(102.0)
+    bridge.publisher = None
+    assert not bridge._camera_link_active(102.0)
