@@ -743,7 +743,17 @@ class Robot:
         self.refresh_face()
 
     def refresh_face(self):
-        """Refresh the Cozmo face dashboard, observing bandwidth limits."""
+        """Keep automatic face packets off the reliable control channel.
+
+        A live RobotState/video feed with frozen outbound ACKs was observed
+        after display changes. Isolate DisplayImage/OutputSilence traffic while
+        preserving video, motors, IMU/lift HUD and the face renderer for later
+        hardware validation. Do not send an initial frame on reconnect.
+        """
+        return False
+
+    def _refresh_face_unverified(self):
+        """Inactive display sender retained for isolated hardware debugging."""
         with self.lock:
             if self.client is None or not self.ready:
                 return False
@@ -847,12 +857,11 @@ class Robot:
             return True
 
     def advance_face_display(self):
-        """Keep the face animation clock moving without replacing PyCozmo.
+        """No synthetic audio-clock packets while command ACKs are unstable."""
+        return False
 
-        Cozmo needs occasional OutputSilence ticks to display a static
-        DisplayImage. This is isolated application traffic, not a custom
-        animation-thread implementation, and never sends hardware speech.
-        """
+    def _advance_face_display_unverified(self):
+        """Inactive display clock retained for isolated hardware debugging."""
         with self.lock:
             if not self.ready or self.client is None or self._face_last_content is None:
                 return False
