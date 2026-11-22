@@ -322,7 +322,15 @@ class Bridge:
                 self.hardware_stage = "connecting_wifi"
                 await asyncio.to_thread(self.wifi.wait)
                 self.hardware_stage = "connecting_robot"
-                await asyncio.to_thread(self.robot.connect)
+                try:
+                    await asyncio.wait_for(asyncio.to_thread(self.robot.connect),
+                                           timeout=35.0)
+                except asyncio.TimeoutError:
+                    # A blocked PyCozmo connect/stop leaves its UDP thread
+                    # alive. Only process isolation guarantees a clean new
+                    # socket; systemd automatically restarts this service.
+                    LOG.critical("PyCozmo connect stuck for 35s; restarting service")
+                    os._exit(1)
                 self.hardware_stage = "online"
                 self.last_hardware_error = None
                 LOG.info("Cozmo hardware ready")
