@@ -203,6 +203,10 @@ class Bridge:
             "head": latest.get("head_angle_deg"),
             "lift": latest.get("lift_height_mm"),
             "heading": pose.get("heading_deg"),
+            "pitch": pose.get("pitch_deg"),
+            "accel": latest.get("accelerometer"),
+            "gyro": latest.get("gyroscope"),
+            "wheel_command": getattr(self.robot, "commanded_wheels", (0, 0)),
             "left": wheels.get("left"), "right": wheels.get("right"),
             "sample_age": battery.age_seconds(),
         }
