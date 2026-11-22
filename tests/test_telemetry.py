@@ -381,3 +381,72 @@ def test_mrr_sensor_keeps_last_measured_voltage_while_docked_and_silent():
     assert bridge.current_sensor()["sensors"]["voltageMv"] == 3920
     tracker.observe(0.0, 0x3000)
     assert bridge.current_sensor()["sensors"]["voltageMv"] == 3920
+
+
+def test_live_robotstate_callback_does_not_block_on_slow_state_processing():
+    import threading
+    import time
+    robot = Robot(max_speed=100, on_state=lambda: None,
+                  on_sensor=lambda: None, on_frame=lambda frame: None)
+    started = threading.Event()
+    release = threading.Event()
+    processed = []
+    def slow_process(_cli, pkt):
+        started.set()
+        release.wait(2)
+        processed.append(pkt.timestamp)
+    robot._process_packet = slow_process
+    robot._start_packet_workers()
+    try:
+        cli = fake_client()
+        begun = time.monotonic()
+        robot._packet(cli, fake_packet())
+        assert time.monotonic() - begun < 0.1
+        assert started.wait(1)
+        for i in range(30):
+            p = fake_packet()
+            p.timestamp = 100 + i
+            robot._packet(cli, p)
+        assert robot._state_queue.qsize() == 1
+        assert robot.state_packets_coalesced >= 28
+        release.set()
+        deadline = time.monotonic() + 2
+        while len(processed) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert processed == [42, 129]
+    finally:
+        release.set()
+        robot._stop_packet_workers()
+
+
+def test_camera_analysis_does_not_delay_video_callback_and_is_sampled():
+    import threading
+    import time
+    from PIL import Image
+    from cozmo_roverd.main import Bridge
+    submitted = []
+    robot = Robot(max_speed=100, on_state=lambda: None,
+                  on_sensor=lambda: None, on_frame=lambda frame: None)
+    entered = threading.Event()
+    release = threading.Event()
+    def slow_analysis(image):
+        entered.set()
+        release.wait(2)
+    robot.observe_camera_brightness = slow_analysis
+    bridge = object.__new__(Bridge)
+    bridge.robot = robot
+    bridge.publisher = NS(submit=lambda image: submitted.append(image))
+    robot._start_packet_workers()
+    try:
+        image = Image.new("RGB", (320, 240))
+        start = time.monotonic()
+        bridge.handle_frame(image)
+        assert time.monotonic() - start < 0.1
+        assert submitted == [image]
+        assert entered.wait(1)
+        bridge.handle_frame(image)
+        assert submitted == [image, image]
+        assert robot._camera_analysis_queue.qsize() == 0
+    finally:
+        release.set()
+        robot._stop_packet_workers()
