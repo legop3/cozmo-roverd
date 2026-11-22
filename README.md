@@ -77,7 +77,7 @@ FFmpeg's RTSP/encoding errors are written to `/run/cozmo-roverd/ffmpeg.log`, not
 
 ## In-video HUD, camera field of view, and temporary disconnects
 
-The optional **In-video telemetry HUD** now consists of a **single 30-pixel top-center IMU ball** on the existing 320×240 camera frame. Its dot responds to gravity-derived roll/pitch from Cozmo's accelerometer. There is no background panel, stats text, second video stream, extra frame queue, or additional encoding pass. Only the small ball is burned into the video. Turn it off in the Fedora setup UI.
+The optional **In-video telemetry HUD** places two small indicators at the top center of the existing 320×240 camera frame: the IMU ball (gravity-derived roll/pitch from Cozmo's accelerometer) and a matching side-profile lift-arm gauge immediately to its right. The lift gauge uses the reported lift height (32–92 mm) to show proportional travel; it is not an independently measured angle in degrees. Missing lift data renders a muted arm. Neither gauge adds a background panel, stats text, another video stream, extra frame queue, or an encoding pass. Disable the HUD in the Fedora setup UI.
 
 The bridge uses the **whole frame reported by PyCozmo** (4:3), without applying a crop or digital zoom. PyCozmo also reports camera-calibrated horizontal and vertical field of view in the live telemetry data, when the robot provides it. Those are lens properties: raising resolution or stretching an image cannot physically widen the lens.
 
