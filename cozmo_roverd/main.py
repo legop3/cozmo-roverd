@@ -307,6 +307,9 @@ class Bridge:
                 self.hardware_ready.clear()
                 self.robot.stop_drive()
                 await asyncio.to_thread(self.robot.close)
+                # Keep the MRR session alive but immediately advertise that
+                # the underlying robot is currently unavailable.
+                self.publish_state()
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=3)
             except asyncio.TimeoutError:
