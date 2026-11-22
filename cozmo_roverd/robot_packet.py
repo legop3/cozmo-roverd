@@ -20,6 +20,17 @@ PICKED_UP = 0x8
 MOVING = 0x1
 FALLING = 0x20
 
+# Cozmo has no battery-current/fuel-gauge telemetry. Charging recovery is
+# based on confirmed charger flags and elapsed *observed* charging time,
+# never the percentage inferred from biased charger-terminal voltage.
+RECOVERY_WITH_VOLTAGE_SECONDS = 15 * 60
+RECOVERY_NO_VOLTAGE_SECONDS = 35 * 60
+RECOVERY_MIN_VOLTAGE = 3.65
+RECOVERY_MIN_SAFE_VOLTAGE = 3.45
+RECOVERY_SAMPLE_GAP_SECONDS = 10
+RECOVERY_LOST_CONTACT_SECONDS = 30
+RECOVERY_VOLTAGE_MAX_AGE_SECONDS = 60
+
 def finite_float(value):
     try:
         v = float(value)
@@ -47,6 +58,12 @@ class BatteryTracker:
         self._last_charging_true = None
         self._last_sample = None
         self._voltage_at_wall = None
+        self._charge_recovery_seconds = 0.0
+        self._charge_recovery_last_at = None
+        self._charge_recovery_last_contact_at = None
+        self._charge_recovery_last_charging = False
+        self._charge_recovery_voltage_at = None
+        self._charge_recovery_voltage = None
 
     def voltage_snapshot(self):
         if self.voltage is None or self._voltage_at_wall is None:
@@ -82,6 +99,8 @@ class BatteryTracker:
         voltage = finite_float(voltage)
         valid_voltage = voltage is not None and 2.7 <= voltage <= 4.4
         if valid_voltage:
+            self._charge_recovery_voltage = voltage
+            self._charge_recovery_voltage_at = now
             self.voltages.append(voltage)
             self.voltage = voltage
             self._voltage_at_wall = time.time()
@@ -122,20 +141,74 @@ class BatteryTracker:
         self.charging = bool(self.raw_charging or
                              (self.docked and self._last_charging_true is not None
                               and now - self._last_charging_true < 2.0))
+        # Only count *observed charging* with fresh RobotState packets.
+        # A missing packet, stale dock contact, or charging pause never earns
+        # recovery time. Brief on-dock pauses retain already-earned time.
+        if contact:
+            self._charge_recovery_last_contact_at = now
+        elif (self._charge_recovery_last_contact_at is None
+              or now - self._charge_recovery_last_contact_at
+                 >= RECOVERY_LOST_CONTACT_SECONDS):
+            self._charge_recovery_seconds = 0.0
+        prior_at = self._charge_recovery_last_at
+        gap = now - prior_at if prior_at is not None else None
+        if gap is not None and gap > RECOVERY_LOST_CONTACT_SECONDS:
+            # Do not carry credit across a lost connection / stale telemetry.
+            self._charge_recovery_seconds = 0.0
+        if (contact and charge_now and self._charge_recovery_last_charging
+                and gap is not None and 0 < gap <= RECOVERY_SAMPLE_GAP_SECONDS):
+            self._charge_recovery_seconds += gap
+        self._charge_recovery_last_at = now
+        self._charge_recovery_last_charging = contact and charge_now
+
         if self.percent is not None:
             # SOC inferred while charging or moving is too uncertain to
-            # trigger MRR's low/critical indicators. Low requires a sustained
-            # low-voltage rest period; charging clears the active warning.
+            # trigger MRR's low/critical indicators. Low requires sustained
+            # low-voltage evidence rather than a transient dip.
             self.low = bool(self.gauge.low_confirmed and not self.docked)
             self.critical = bool(self.gauge.critical_confirmed and not self.docked)
             if self.low:
                 self.needs_charge = True
-            elif self.docked and self.percent >= 30:
-                if (self._contact_started is not None
-                        and now - self._contact_started >= 120):
+            elif self.needs_charge and self.docked:
+                voltage_age = (now - self._charge_recovery_voltage_at
+                               if self._charge_recovery_voltage_at is not None
+                               else None)
+                fresh_voltage = (voltage_age is not None
+                                 and 0 <= voltage_age <= RECOVERY_VOLTAGE_MAX_AGE_SECONDS)
+                last_voltage = self._charge_recovery_voltage
+                # Never release against a recent reading indicating severe
+                # undervoltage, even if charger bits keep reporting charging.
+                safe_voltage = (not fresh_voltage or last_voltage >= RECOVERY_MIN_SAFE_VOLTAGE)
+                verified_voltage = (fresh_voltage
+                                    and last_voltage >= RECOVERY_MIN_VOLTAGE)
+                charge_time = self._charge_recovery_seconds
+                if safe_voltage and (
+                    (verified_voltage and charge_time >= RECOVERY_WITH_VOLTAGE_SECONDS)
+                    or (not fresh_voltage and charge_time >= RECOVERY_NO_VOLTAGE_SECONDS)
+                    # A normal full-charge termination can stop charging
+                    # before the timer is complete. Require the gauge's
+                    # explicit full-charge observation, not just high voltage.
+                    or (verified_voltage and self.gauge.soc >= 98
+                        and charge_time >= 120)
+                ):
                     self.needs_charge = False
+                    # A confirmed recharge must also clear the old low flag.
+                    # Otherwise undocking would re-latch needsCharge at once.
+                    self.gauge.low_confirmed = False
+                    self.gauge.critical_confirmed = False
+                    self.gauge._rest_low_since = None
+                    self.low = False
+                    self.critical = False
+                    self._charge_recovery_seconds = 0.0
             elif not self.docked and self.percent >= 25:
-                self.needs_charge = False
+                # Recovery away from the dock is only supported by real,
+                # sustained *rested* voltage evidence, never by the estimator
+                # alone (which can remain high after a motor voltage sag).
+                if (self.gauge.rest_confirmed
+                        and self.gauge.rest_voltage is not None
+                        and self.gauge.rest_voltage >= 3.60
+                        and not self.gauge.low_confirmed):
+                    self.needs_charge = False
         return self
 
     def age_seconds(self, now=None):
@@ -169,6 +242,12 @@ class BatteryTracker:
             "raw_charging": self.raw_charging,
             "stable_docked": self.docked,
             "stable_charging": self.charging,
+            "recovery_charge_seconds": round(self._charge_recovery_seconds, 1),
+            "recovery_with_voltage_seconds": RECOVERY_WITH_VOLTAGE_SECONDS,
+            "recovery_no_voltage_seconds": RECOVERY_NO_VOLTAGE_SECONDS,
+            "recovery_voltage_age_seconds": (
+                round(time.monotonic() - self._charge_recovery_voltage_at, 1)
+                if self._charge_recovery_voltage_at is not None else None),
             "voltage_samples": list(self.voltages),
             "age_seconds": self.age_seconds(),
             "stale": self.stale(),
