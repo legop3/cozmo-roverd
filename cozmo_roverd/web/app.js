@@ -205,6 +205,7 @@ async function refreshTelemetry() {
     const wheels = c.wheel_speeds_mmps || {};
     const vid = response.video || {};
     const audio = response.speaker || {};
+    const transport = response.transport || {};
     const cards = $("telemetry-cards");
     cards.replaceChildren(
       telemetryCard("Battery & charger", [
@@ -247,6 +248,10 @@ async function refreshTelemetry() {
         ["Commanded wheels", "L " + displayMetric((response.commanded_wheels_mmps || {}).left, " mm/s") +
                              " / R " + displayMetric((response.commanded_wheels_mmps || {}).right, " mm/s")],
         ["RobotState packets", displayMetric(response.packets_received)],
+        ["Reliable packets awaiting ACK", displayMetric(transport.pending_reliable_packets)],
+        ["Application commands queued", displayMetric(transport.pending_application_commands)],
+        ["Wire packets sent including retries", displayMetric(transport.transmitted_packets_including_retries)],
+        ["Original outgoing packets", displayMetric(transport.outgoing_packets)],
         ["Last packet error", displayMetric(response.last_packet_error)],
         ["Encoder", displayMetric(vid.encoder)],
         ["RTSP publisher running", displayMetric(vid.publisher_running)],
