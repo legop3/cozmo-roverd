@@ -61,11 +61,11 @@ def test_resting_voltage_gradually_corrects_estimate():
     assert g.soc < 80
 
 
-def test_cozmo_low_warning_uses_resting_3_5v_not_soc_curve():
+def test_low_warning_uses_resting_3_3v_not_motor_sag():
     g = VoltageFuelGauge()
-    tick(g, 3.55, 0, 180)
+    tick(g, 3.42, 0, 180)
     assert g.low_confirmed is False
-    tick(g, 3.44, 180, 180)
+    tick(g, 3.18, 180, 180)
     assert g.low_confirmed is True
     tick(g, 3.68, 360, 240)
     assert g.low_confirmed is False
