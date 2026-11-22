@@ -72,6 +72,7 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_audio_frames_submitted = 0
     controller._cozmo_audio_played_baseline = None
     controller._cozmo_last_idle_silence_at = 0.0
+    controller._cozmo_last_image_at = 0.0
     controller._cozmo_keyframes_received = 0
     controller._cozmo_last_keyframe_at = 0.0
     controller._cozmo_keyframe_consumed = 0
@@ -163,14 +164,21 @@ def _limit_animation_idle_traffic(cli):
             self._cozmo_last_idle_silence_at = now
             self.cli.conn.post_event(event.EvtAudioCompleted, self.cli)
             self._cozmo_resume_video()
-        elif (self.image_displayed and now - self._cozmo_last_idle_silence_at >= 1.0
-              and pending == 0 and queued == 0
+        elif (self.image_displayed and not audio_waiting
               and getattr(self.cli.conn, "state", None) ==
                   getattr(self.cli.conn, "CONNECTED", object())):
-            # Maintain the display at 1 Hz without PyCozmo's default
-            # 30 Hz idle-silence flood.
-            self.cli.conn.send(protocol_encoder.OutputSilence())
-            self._cozmo_last_idle_silence_at = now
+            # A fresh DisplayImage needs animation clocks to actually
+            # advance on the robot. Previously suppressing silence when
+            # even ONE drive packet was unacknowledged starved the face
+            # indefinitely, leaving partial pixels on the OLED.
+            # Clock at 10 Hz for the first second after a new image, then
+            # 1 Hz while idle. Never inject silence into a congested link.
+            warmup = now - self._cozmo_last_image_at < 1.0
+            interval = 0.10 if warmup else 1.0
+            if (now - self._cozmo_last_idle_silence_at >= interval
+                    and pending < 8 and queued < 4):
+                self.cli.conn.send(protocol_encoder.OutputSilence())
+                self._cozmo_last_idle_silence_at = now
 
         # Camera and controls must not contend with TTS for large reliable
         # messages. Preserve pending face images until speech is finished.
@@ -187,6 +195,7 @@ def _limit_animation_idle_traffic(cli):
             self.last_image_pkt = image_pkt
             self.cli.conn.send(image_pkt)
             self._cozmo_image_refresh_at = now
+            self._cozmo_last_image_at = now
         elif (not self.playing_audio and not audio_waiting and self.image_displayed
               and now - self._cozmo_image_refresh_at >= 10.0
               and pending == 0 and queued == 0):
