@@ -97,10 +97,8 @@ class BatteryTracker:
             # SOC inferred while charging or moving is too uncertain to
             # trigger MRR's low/critical indicators. Low requires a sustained
             # low-voltage rest period; charging clears the active warning.
-            self.low = bool(self.gauge.low_confirmed and
-                            self.percent <= 15 and not self.docked)
-            self.critical = bool(self.gauge.low_confirmed and
-                                 self.percent <= 5 and not self.docked)
+            self.low = bool(self.gauge.low_confirmed and not self.docked)
+            self.critical = bool(self.gauge.critical_confirmed and not self.docked)
             if self.low:
                 self.needs_charge = True
             elif self.docked and self.percent >= 30:
