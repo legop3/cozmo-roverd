@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Standalone PyCozmo bridge to MultiRoombaRover"
 requires-python = ">=3.11"
 dependencies = [
-  "pycozmo @ git+https://github.com/zayfod/pycozmo.git",
+  "pycozmo @ git+https://github.com/zayfod/pycozmo.git@26b23c099c835fc86bcf9b7f454eb1110ec07488",
   "websockets>=13,<17",
   "Pillow>=10",
 ]
