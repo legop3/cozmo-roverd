@@ -182,3 +182,37 @@ def status_image(*, voltage=None, percent=None, charging=None, docked=None,
     # image encoder accepts the resulting exact 128x32 1-bit PIL image.
     reduced = canvas.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
     return reduced.point(lambda v: 255 if v >= 105 else 0, mode="1")
+
+
+
+def compact_status_image(*, voltage=None, percent=None, charging=None,
+                         last_tts="", scroll=0, battery_only=False):
+    """A simpler *generated graphic* for small firmware animation buffers.
+
+    Cozmo's internal animation-keyframe buffer is separate from the UDP
+    payload limit. Keep a battery gauge and voltage at the top, and the last
+    TTS message when there is enough room for it. Use sparse vector geometry
+    and the same supersampled scalable font as the full dashboard.
+    """
+    canvas = Image.new("L", (WIDTH*SCALE, HEIGHT*SCALE), PAPER)
+    draw = ImageDraw.Draw(canvas)
+    _battery(draw, percent, charging)
+    try:
+        voltage_label = f"{float(voltage):.2f}V" if math.isfinite(float(voltage)) else "--.--V"
+    except (ValueError, TypeError):
+        voltage_label = "--.--V"
+    _text(draw, (32, 2), voltage_label, _BOLD)
+    if not battery_only:
+        _status_icon(draw, 3, 20, "speaker")
+        # Only the first portion is displayed per image; the caller may
+        # advance scroll on subsequent status updates.
+        msg = " ".join(str(last_tts or "").split())
+        if msg:
+            msg = msg[:256]
+            position = scroll % (len(msg) + 3)
+            msg = (msg + "   " + msg)[position:position + 14]
+        else:
+            msg = "READY"
+        _text(draw, (17, 20), msg, _SMALL)
+    reduced = canvas.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
+    return reduced.point(lambda v: 255 if v >= 105 else 0, mode="1")
