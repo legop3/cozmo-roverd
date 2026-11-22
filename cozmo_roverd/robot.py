@@ -147,13 +147,30 @@ class Robot:
             self.client.set_lift_height(32.0 + (92.0 - 32.0) * percent / 100.0)
 
     def light(self, enabled):
+        """Control Cozmo's actual head light, the MRR headlight role."""
+        with self.lock:
+            if self.client is None: raise RuntimeError("Cozmo disconnected")
+            self.client.set_head_light(enabled)
+            self.headlight = enabled
+        self.on_state()
+
+    def backpack(self, enabled):
+        """Backpack LEDs are independent of the front-facing head light."""
         with self.lock:
             if self.client is None: raise RuntimeError("Cozmo disconnected")
             import pycozmo
             self.client.set_all_backpack_lights(
                 pycozmo.lights.white_light if enabled else pycozmo.lights.off_light)
-            self.headlight = enabled
-        self.on_state()
+
+    def volume(self, percent):
+        with self.lock:
+            if self.client is None: raise RuntimeError("Cozmo disconnected")
+            self.client.set_volume(round(65535 * percent / 100))
+
+    def clear_face(self):
+        with self.lock:
+            if self.client is None: raise RuntimeError("Cozmo disconnected")
+            self.client.clear_screen()
 
     def face(self, text):
         image = Image.new("1", (128, 32), color=0)
