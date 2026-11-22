@@ -123,6 +123,7 @@
         <div class="field"><label for="speed">Max driving speed (Cozmo max: 200 mm/s)</label><select id="speed"></select></div>
         <div class="field wide"><div class="switch-row"><div><strong>Private rover</strong><p class="hint">Use MRR’s private rover mode for Cozmo.</p></div><input type="checkbox" id="private" aria-label="Enable private rover"></div></div>
         <div class="field wide"><div class="switch-row"><div><strong>Live camera</strong><p class="hint">Stream Cozmo's camera to MRR over H.264 RTSP.</p></div><input type="checkbox" id="video" checked aria-label="Enable live camera"></div></div>
+        <div class="field wide"><div class="switch-row"><div><strong>In-video telemetry HUD</strong><p class="hint">Show battery, charger, head/lift, wheel speeds and cliff on the camera feed, including reconnect status. Drawn before encoding.</p></div><input type="checkbox" id="hud" checked aria-label="Overlay live telemetry on camera"></div></div>
         <div class="field"><label for="fps">Camera frame rate</label><select id="fps"></select></div>
         <div class="field"><label for="camera-mode">Camera exposure</label><select id="camera-mode"><option value="auto">Automatic</option><option value="bright">Bright</option><option value="lowlight">Low light (higher exposure)</option></select><p class="hint">Controls Cozmo's camera gain and exposure directly.</p></div>
       </div>
