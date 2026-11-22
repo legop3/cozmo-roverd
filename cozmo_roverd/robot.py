@@ -13,8 +13,14 @@ from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
-    def __init__(self, *, max_speed, on_state, on_sensor, on_frame):
+    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="bright"):
         self.max_speed = max_speed
+        self.camera_mode = camera_mode
+        self.docking_phase = None
+        self.dock_assist = False
+        self.undock_active = False
+        self._undock_cancel = threading.Event()
+        self._undock_thread = None
         self.on_state, self.on_sensor, self.on_frame = on_state, on_sensor, on_frame
         self.client = None
         self.lock = threading.RLock()
@@ -35,7 +41,7 @@ class Robot:
 
     def connect(self):
         import pycozmo
-        cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
+        cli = pycozmo.Client(enable_animations=True, enable_procedural_face=False)
         cli.start()
         try:
             cli.connect()
@@ -53,6 +59,9 @@ class Robot:
             cli.add_handler(pycozmo.protocol_encoder.RobotState,
                             lambda _client, pkt: self._packet(cli, pkt))
             cli.enable_camera(enable=True, color=True)
+            cli.set_volume(50000)
+            cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=True))
+            self.configure_camera(cli)
             with self.lock:
                 self.client = cli
                 self.last_sensor = time.monotonic()
@@ -102,6 +111,10 @@ class Robot:
             data["battery_tracking"] = battery.diagnostic()
             data["packet_count"] = self.packets_received
             self.latest = data
+            if self.dock_assist and self.on_charger:
+                self.stop_drive()
+                self.dock_assist = False
+                self.docking_phase = None
             changed = old != (self.on_charger, self.charging, self.voltage,
                              self.cliff, self.picked_up)
             if changed:
@@ -216,6 +229,10 @@ class Robot:
             self.ready = False
             self.moving = False
             self.battery = BatteryTracker()
+            self._undock_cancel.set()
+            self.undock_active = False
+            self.docking_phase = None
+            self.dock_assist = False
             self.latest = {}
             self.voltage = None
             self.on_charger = None
