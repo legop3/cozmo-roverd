@@ -315,7 +315,8 @@ class Bridge:
                 LOG.warning("Cozmo hardware unavailable: %s", exc)
             finally:
                 self.hardware_ready.clear()
-                self.robot.stop_drive()
+                # The hardware connection is gone; close() owns cleanup.
+                # Do not issue an extra drive-stop from the supervisor.
                 await asyncio.to_thread(self.robot.close)
                 # Keep the MRR session alive but immediately advertise that
                 # the underlying robot is currently unavailable.
