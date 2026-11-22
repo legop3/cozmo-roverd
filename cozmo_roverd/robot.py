@@ -4,7 +4,8 @@ import logging
 import math
 import threading
 import time
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
+from .telemetry import snapshot
 LOG = logging.getLogger(__name__)
 
 class Robot:
@@ -14,15 +15,16 @@ class Robot:
         self.client = None
         self.lock = threading.RLock()
         self.charging = None
+        self.on_charger = None
         self.cliff = None
         self.picked_up = False
+        self.latest = {}
         self.headlight = False
         self.voltage = None
         self.last_sensor = 0.0
         self.last_drive = 0.0
         self.moving = False
         self.ready = False
-        self._last_battery_state = None
 
     def connect(self):
         import pycozmo
@@ -60,23 +62,28 @@ class Robot:
     def _cliff(self, value):
         self.cliff = value
         if value: self.stop_drive()
-        self.on_sensor()
 
     def _picked_up(self, value):
         self.picked_up = value
         if value: self.stop_drive()
-        self.on_sensor()
 
     def _sample(self, cli):
-        from .protocol import battery_percent
-        self.voltage = cli.battery_voltage if cli.battery_voltage > 0 else None
+        # PyCozmo publishes the complete state in EvtRobotStateUpdated. Pull
+        # all values from that packet, including charger flags, without using
+        # separate callbacks as a required prerequisite for reporting state.
+        data = snapshot(cli)
+        old_state = (self.charging, self.on_charger, self.cliff,
+                     self.picked_up, self.voltage)
+        self.latest = data
+        self.voltage = data["battery_voltage_v"]
+        self.on_charger = data["on_charger"]
+        self.charging = data["charging"]
+        self.cliff = data["cliff_detected"]
+        self.picked_up = data["picked_up"]
         self.last_sensor = time.monotonic()
-        self.on_sensor()
-        percent = battery_percent(self.voltage)
-        # Emit battery state changes when the displayed percentage changes;
-        # raw voltage continues to stream independently as sensor telemetry.
-        if percent != self._last_battery_state:
-            self._last_battery_state = percent
+        new_state = (self.charging, self.on_charger, self.cliff,
+                     self.picked_up, self.voltage)
+        if old_state != new_state:
             self.on_state()
 
     def is_healthy(self):
@@ -146,6 +153,11 @@ class Robot:
             cli, self.client = self.client, None
             self.ready = False
             self.moving = False
+            self.latest = {}
+            self.voltage = None
+            self.on_charger = None
+            self.charging = None
+            self.cliff = None
             if cli is None: return
             try:
                 cli.drive_wheels(0, 0)
