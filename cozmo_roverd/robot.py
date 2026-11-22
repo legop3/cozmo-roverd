@@ -9,7 +9,7 @@ import threading
 import time
 from PIL import Image, ImageDraw
 from .face import status_image, compact_status_image
-from .status_lights import light_states, light_signature, charger_lights, charger_signature
+from .status_lights import charger_lights, charger_signature
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
@@ -435,32 +435,29 @@ class Robot:
         self.on_state()
 
     def refresh_status_lights(self, mrr_connected=False):
-        """Apply one event-driven hardware pattern, never software-blink.
+        """Send one minimal side-LED packet only when link status changes.
 
-        Do not congest PyCozmo's reliable command channel during recovery.
-        Connection state is measured separately from dock/contact telemetry.
+        Previous implementation sent both LightStateCenter and LightStateSide,
+        including firmware-paced color animations. During the new lighting
+        rollout Cozmo stopped ACKing commands. Start with the supported
+        red-only side LEDs and avoid touching the center LEDs entirely.
         """
         with self.lock:
             if self.client is None or not self.ready:
                 return False
-            signature = light_signature(
-                robot_online=True, mrr_online=mrr_connected,
-                docked=self.battery.docked, charging=self.battery.charging,
-                docking=bool(self.dock_assist or self.undock_active))
+            import pycozmo
+            signature = bool(mrr_connected)
             if signature == self._status_light_signature:
                 return False
-            sender = getattr(getattr(self.client, "conn", None), "send_thread", None)
-            if sender is not None:
-                with sender.lock:
-                    pending = ((sender.window.next_seq - sender.window.expected_seq)
-                               % sender.window.max_seq)
-                if pending >= 8 or sender.queue.qsize() >= 8:
-                    return False
-            states = light_states(
-                robot_online=True, mrr_online=mrr_connected,
-                docked=self.battery.docked, charging=self.battery.charging,
-                docking=bool(self.dock_assist or self.undock_active))
-            self.client.set_backpack_lights(*states)
+            if not self._lights_transport_ready(self.client):
+                return False
+            # The side LEDs have only red emitters. Two steady states are
+            # unambiguous and require no animation timing on the firmware.
+            red = pycozmo.lights.red_light
+            off = pycozmo.lights.off_light
+            self.client.conn.send(
+                pycozmo.protocol_encoder.LightStateSide(
+                    states=(red, red if mrr_connected else off)))
             self._status_light_signature = signature
             return True
 
