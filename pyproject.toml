@@ -18,9 +18,13 @@ test = ["pytest>=8"]
 
 [project.scripts]
 cozmo-roverd = "cozmo_roverd.main:main"
+cozmo-roverd-setup = "cozmo_roverd.setup:main"
 
 [tool.setuptools.packages.find]
 include = ["cozmo_roverd*"]
+
+[tool.setuptools.package-data]
+cozmo_roverd = ["web/*.html", "web/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
