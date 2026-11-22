@@ -109,6 +109,30 @@ def test_commanded_speed_is_recorded_for_anki_remote_control_rate():
     assert robot.commanded_wheels == (250, 250)
 
 
+def test_charger_detection_does_not_issue_stop_during_assist():
+    robot, _ = fake_robot()
+    robot.dock_assist = True
+    robot.drive(120, 120)
+    from cozmo_roverd.robot_packet import BatteryTracker
+    robot.battery = BatteryTracker()
+    packet = NS(
+        status=0x1000, battery_voltage=3.9, timestamp=123,
+        lwheel_speed_mmps=120, rwheel_speed_mmps=120,
+        head_angle_rad=0, lift_height_mm=40,
+        pose_x=0, pose_y=0, pose_z=0,
+        pose_angle_rad=0, pose_pitch_rad=0,
+        pose_origin_id=1, pose_frame_id=1,
+        accel_x=0, accel_y=0, accel_z=9.8,
+        gyro_x=0, gyro_y=0, gyro_z=0,
+        cliff_data_raw=(1, 1, 1, 1),
+        backpack_touch_sensor_raw=0, curr_path_segment=0,
+    )
+    client = NS(robot_status=0x1000)
+    robot._packet(client, packet)
+    assert robot.client.drives[-1] == (120, 120)
+    assert robot.dock_assist is False
+
+
 def test_pickup_and_docked_status_never_block_direct_driving():
     robot, _ = fake_robot()
     robot.on_charger = True
