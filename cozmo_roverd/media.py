@@ -260,6 +260,23 @@ class Publisher:
                       message, fill=color)
         return image
 
+    def _encoder_quality_args(self):
+        """Keep Cozmo's already compressed camera frames intact on RTSP.
+
+        libx264 supports quality-based CRF control; other encoders need
+        explicit rates rather than relying on their unknown defaults.
+        """
+        if self.encoder == "libx264":
+            return ["-preset", "veryfast", "-tune", "zerolatency",
+                    "-threads", "2", "-crf", "17"]
+        if self.encoder == "libopenh264":
+            return ["-b:v", "2500k", "-maxrate", "3500k",
+                    "-bufsize", "3500k"]
+        if self.encoder == "h264_vaapi":
+            return ["-b:v", "2500k", "-maxrate", "3500k",
+                    "-bufsize", "3500k"]
+        return []
+
     def _run(self):
         while self.running.is_set():
             command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
@@ -270,9 +287,10 @@ class Publisher:
                         "-an"]
             if self.device:
                 command += ["-vf", "format=nv12,hwupload"]
-            if self.encoder == "libx264":
-                command += ["-preset", "ultrafast", "-tune", "zerolatency", "-threads", "2"]
-            command += ["-c:v", self.encoder, "-pix_fmt", "yuv420p"] if not self.device else ["-c:v", self.encoder]
+            command += ["-c:v", self.encoder]
+            command += self._encoder_quality_args()
+            if not self.device:
+                command += ["-pix_fmt", "yuv420p"]
             command += ["-g", str(self.fps), "-bf", "0", "-fps_mode", "passthrough",
                         "-flush_packets", "1", "-muxdelay", "0", "-muxpreload", "0",
                         "-f", "rtsp", "-rtsp_transport", "tcp", self.url]
