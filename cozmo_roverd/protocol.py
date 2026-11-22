@@ -47,7 +47,7 @@ def state(*, charging=None, docked=None, voltage=None, headlight=False, driving=
     phase = docking_phase or ("charging" if charging else "docked" if docked else "idle" if docked is False else "unknown")
     return {
         "type": "roverState", "state": {
-            "drivingMode": driving, "dockAssist": dock_assist, "docking": bool(dock_assist),
+            "drivingMode": driving, "dockAssist": dock_assist, "docking": False,
             "docked": docked,
             "dockingStatus": {"phase": phase, "movementLocked": phase == "undocking" or bool(docked),
                               "cameraLocked": bool(dock_assist), "error": None},
