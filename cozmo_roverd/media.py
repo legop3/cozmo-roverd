@@ -74,7 +74,7 @@ class Publisher:
     def submit(self, image: Image.Image):
         if not self.running.is_set():
             return
-        frame = image.convert("rgb").resize((320, 240)).tobytes()
+        frame = image.convert("RGB").resize((320, 240)).tobytes()
         if self.frames.full():
             try: self.frames.get_nowait()
             except queue.Empty: pass
