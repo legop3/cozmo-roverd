@@ -55,6 +55,17 @@ Camera images are published via FFmpeg to the server's existing MediaMTX RTSP en
 
 The bridge uses **upstream PyCozmo unchanged at runtime**: no send-thread or animation-controller method replacements. The unused experimental UDP frame-batching patch and failed animation/audio monkey-patch have been removed. Since upstream's animation controller would continuously enqueue display and silence frames, this bridge disables animation playback and sends its static face image directly as a standard `DisplayImage` packet with a limited `OutputSilence` clock (up to 4 Hz) and an image refresh when needed. The face path checks the reliable send window before enqueueing traffic. This preserves the existing HUD, camera, driving, and other control paths without invasive patches.
 
+## Persistent reconnect diagnostics
+
+The bridge writes **persistent, size-bounded diagnostics** to `/var/log/cozmo-roverd/`, independently of the systemd journal. These survive a service restart or a robot disconnect:
+
+- `incidents.jsonl` (plus `.1` through `.9`): structured JSON events for Wi-Fi/robot/MRR connection stages and full disconnect snapshots **before** PyCozmo is cleaned up. Each snapshot contains the last 120 bridge events (including recent commanded wheel speeds and lift/head actions), 90 seconds of sampled reliable-ACK/send-window/RobotState/camera metrics, and metadata for the last 300 PyCozmo packet send/receive events.
+- `protocol.log` (plus `.1` through `.4`): timestamped PyCozmo protocol-level send/receive packet types, IDs and lengths, as well as its own protocol messages. Payloads are **not** included. "Sent" means the packet was queued by PyCozmo for transmission, not independently confirmed received or acknowledged by Cozmo; compare its timing to the transport counters in an incident to determine where communication stalled.
+
+Files rotate automatically (roughly 20 MiB incident budget and 40 MiB protocol budget). Protocol logging is buffered on a dedicated, bounded queue; it never blocks Cozmo's packet callbacks on file I/O. Recent protocol metadata is additionally kept in memory and synchronously written into a disconnect snapshot, including before a forced service restart. TTS contents, Wi-Fi passwords, connection URLs and complete MRR message payloads are not intentionally recorded. **These logs are still sensitive operational data** (timings, activity, and device state); review before sharing. Set `COZMO_LOG_DIR` on the rover service to change the directory. The stock PyCozmo sender, receiver and animation methods are not modified for logging.
+
+To examine the latest failure, use `sudo tail -n 1 /var/log/cozmo-roverd/incidents.jsonl | python3 -m json.tool`; for the preceding packet activity use `sudo tail -n 150 /var/log/cozmo-roverd/protocol.log`.
+
 ## TTS safety: hardware speaker disabled
 
 **Hardware TTS is deliberately disabled in the normal Cozmo bridge.** Sending PyCozmo `OutputAudio` repeatedly stalled the reliable control channel, often forcing a robot disconnect. The reference audio example working in isolation was not sufficient evidence that it could work safely in a continuously controlled rover. Further experiments must be performed in a separate, isolated test and not silently re-enabled on this bridge.
