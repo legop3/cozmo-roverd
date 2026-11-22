@@ -149,8 +149,11 @@ class Robot:
         try:
             data = snapshot_packet(pkt)
             battery = self.battery.observe(pkt.battery_voltage, pkt.status, now)
-            old = (self.on_charger, self.charging, self.voltage, self.cliff,
-                   self.picked_up)
+            # Only control-relevant transitions should trigger full MRR
+            # roverState updates. Raw voltage changes every hardware sample,
+            # but MRR already receives bounded voltage sensor telemetry.
+            old = (self.on_charger, self.charging, self.cliff,
+                   self.picked_up, self.dock_assist)
             self.voltage = battery.voltage
             self.on_charger = battery.docked
             self.charging = battery.charging
@@ -172,8 +175,8 @@ class Robot:
                 # override a driver command. End the assist status only.
                 self.dock_assist = False
                 self.docking_phase = None
-            changed = old != (self.on_charger, self.charging, self.voltage,
-                             self.cliff, self.picked_up)
+            changed = old != (self.on_charger, self.charging, self.cliff,
+                             self.picked_up, self.dock_assist)
             if changed:
                 self.on_state()
         except Exception as exc:
