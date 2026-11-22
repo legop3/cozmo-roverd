@@ -151,11 +151,6 @@ class Robot:
     def drive(self, left, right):
         with self.lock:
             if self.client is None: raise RuntimeError("Cozmo disconnected")
-            if self.on_charger and not self.undock_active and (left or right):
-                raise RuntimeError("Use undock to leave charging contacts")
-            if self.dock_assist:
-                left = max(-60, min(60, left))
-                right = max(-60, min(60, right))
             # Request a rapid hardware transition, not a software ramp.
             # High acceleration is explicit; no command timeout is introduced.
             self.client.drive_wheels(left, right, lwheel_acc=10000.0, rwheel_acc=10000.0)
