@@ -100,8 +100,9 @@ def test_cliff_alert_does_not_stop_motors_or_block_drive():
     assert robot.moving is True
 
 
-def test_commanded_speed_is_recorded_at_full_pyc_maximum():
+def test_commanded_speed_is_recorded_for_anki_remote_control_rate():
     robot, _ = fake_robot()
-    robot.drive(200, 200)
-    assert robot.client.drives[-1] == (200, 200)
-    assert robot.commanded_wheels == (200, 200)
+    robot.max_speed = 250
+    robot.drive(250, 250)
+    assert robot.client.drives[-1] == (250, 250)
+    assert robot.commanded_wheels == (250, 250)
