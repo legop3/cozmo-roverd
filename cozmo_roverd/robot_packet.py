@@ -122,6 +122,25 @@ class BatteryTracker:
             "stale": self.stale(),
         }
 
+def lift_height_from_robot_state(value):
+    """Convert firmware lift-angle readings to actual lift height in mm.
+
+    Although pycozmo names RobotState's field `lift_height_mm`, Cozmo
+    firmware 2381 reports approximately -0.20 to +0.79 here: these are
+    radians of lift-arm rotation, *not* millimeters. Preserve compatibility
+    with actual millimeter samples if ever received. Geometry matches
+    pycozmo.robot: pivot 45 mm, arm length 66 mm.
+    """
+    raw = finite_float(value)
+    if raw is None:
+        return None
+    if -0.4 <= raw <= 1.2:
+        return max(32.0, min(92.0, 45.0 + 66.0 * math.sin(raw)))
+    if 20.0 <= raw <= 110.0:
+        return raw
+    return None
+
+
 def snapshot_packet(pkt):
     """Safely extract every scalar/array from protocol_encoder.RobotState."""
     flags = int(pkt.status)
@@ -141,7 +160,7 @@ def snapshot_packet(pkt):
             "center": finite_float((pkt.lwheel_speed_mmps + pkt.rwheel_speed_mmps)/2),
         },
         "head_angle_deg": finite_float(math.degrees(pkt.head_angle_rad)),
-        "lift_height_mm": finite_float(pkt.lift_height_mm),
+        "lift_height_mm": lift_height_from_robot_state(pkt.lift_height_mm),
         "pose": {
             "x_mm": finite_float(pkt.pose_x),
             "y_mm": finite_float(pkt.pose_y),
@@ -158,6 +177,7 @@ def snapshot_packet(pkt):
         "status_raw": flags,
         "raw_robot_state": {
             "robot_timestamp": int(pkt.timestamp),
+            "lift_raw": finite_float(pkt.lift_height_mm),
             "battery_voltage_v": voltage,
             "status": flags,
             "cliff_channels": [int(v) for v in pkt.cliff_data_raw],
