@@ -21,7 +21,7 @@ def status_image(*, voltage=None, percent=None, charging=None, docked=None,
     draw.text((1, 0), f"{power} {voltage_text} {charge_text}", font=font, fill=1)
 
     left, right = wheels or (0, 0)
-    flags = ("C" if cliff else "-") + ("P" if picked_up else "-")
+    flags = ("C" if cliff else "-") + ("P" if picked_up else "-") + ("!" if audio_error else "-")
     draw.text((1, 10), f"L{left:+.0f} R{right:+.0f} {flags}", font=font, fill=1)
 
     msg = " ".join(str(last_tts).split())
