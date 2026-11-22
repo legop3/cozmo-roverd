@@ -171,6 +171,7 @@ class Robot:
                     and self.ready and self.client is not None):
                 self._dock_contact_handled = True
                 self.stop_drive()
+                self.lift(100)
             elif not contact and battery.docked is False:
                 self._dock_contact_handled = False
             self.cliff = data["cliff_detected"]
@@ -379,6 +380,8 @@ class Robot:
             self.docking_phase = "undocking"
             self.dock_assist = False
             self._undock_cancel.clear()
+            self.head(0)
+            self.lift(0)
         self.on_state()
 
         def worker():
@@ -429,6 +432,7 @@ class Robot:
             self.docking_phase = "assisting"
             self.stop_drive()
             self.head(-25)
+            self.lift(100)
         self.on_state()
 
     def cancel_docking(self):
