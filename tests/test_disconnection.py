@@ -201,6 +201,9 @@ def test_manual_reconnect_uses_existing_hardware_supervisor():
             bridge.execute({"type": "peripheral", "peripheral": {
                 "id": "cozmo", "control": "reconnect", "value": True}})
             await asyncio.wait_for(connected_twice.wait(), timeout=7)
+            # The fake connect() runs on a worker thread; its callback can
+            # fire just before _hardware marks the connection ready.
+            await asyncio.wait_for(bridge.hardware_ready.wait(), timeout=2)
             assert bridge.hardware_ready.is_set()
             assert calls[:4] == ["wifi", "connect", "close", "wifi"]
             assert calls.count("connect") == 2
