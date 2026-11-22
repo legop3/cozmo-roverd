@@ -130,6 +130,16 @@
     </section>
     <section id="monitor">
       <div class="section-head"><span class="section-number">✓</span><div><h2>Bridge status</h2><p>Live service state and recent diagnostic output.</p></div></div>
+      <div class="heading-row"><h3>Live Cozmo telemetry</h3><span class="hint" id="telemetry-age">Waiting for robot…</span></div>
+      <div class="grid" id="telemetry-cards" aria-live="off" style="margin:12px 0 23px">
+        <div class="switch-row"><div><strong>Battery &amp; charger</strong><p class="hint">Waiting for telemetry…</p></div></div>
+        <div class="switch-row"><div><strong>Motion &amp; position</strong><p class="hint">Waiting for telemetry…</p></div></div>
+      </div>
+      <details>
+        <summary>All PyCozmo diagnostics (pose, IMU, status flags, video)</summary>
+        <pre class="log" id="telemetry-raw" aria-label="Raw robot telemetry">Waiting for robot…</pre>
+      </details>
+      <div style="height:20px"></div>
       <div class="heading-row"><h3 id="service-label">Checking service…</h3><button class="btn sm" type="button" id="refresh-status">↻ Refresh</button></div>
       <div class="actions"><button id="start-service" class="btn" type="button">Start bridge</button><button id="stop-service" class="btn danger" type="button">Stop bridge</button></div>
       <label style="margin-top:24px" for="logs">Recent service logs</label><div class="log" id="logs" role="log" aria-live="off">Loading logs…</div>
