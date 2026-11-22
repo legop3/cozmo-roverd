@@ -6,6 +6,9 @@ dnf install -y python3 python3-pip python3-devel gcc git NetworkManager ffmpeg-f
   echo "Fedora ffmpeg-free package unavailable; install a Fedora-compatible ffmpeg providing libx264 and retry." >&2
   exit 1
 }
+if ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -Eq "libx264|libopenh264"; then
+  echo "No H.264 encoder available. Install Fedora openh264 (fedora-cisco-openh264) or a full FFmpeg build before enabling video." >&2
+fi
 install -d /opt/cozmo-roverd
 # Install from the working checkout; do not overwrite user config on upgrades.
 python3 -m venv /opt/cozmo-roverd/.venv
