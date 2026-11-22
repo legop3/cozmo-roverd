@@ -128,7 +128,7 @@ function applyConfig(config, options) {
       : "Enter the password shown on Cozmo.";
   $("video").checked = !!config.video;
   $("hud").checked = config.hud !== false;
-  $("camera-mode").value = config.camera_mode || "bright";
+  $("camera-mode").value = config.camera_mode || "auto";
   $("rtsp-url").value = config.rtsp_url;
   selectOptions($("speed"), options.speeds.map(n => ({value:n,label:`${n} mm/s`})), config.max_speed);
   selectOptions($("fps"), options.fps.map(n => ({value:n,label:`${n} FPS`})), config.fps);
