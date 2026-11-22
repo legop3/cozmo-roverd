@@ -15,9 +15,10 @@ from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
-    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="bright"):
+    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto"):
         self.max_speed = max_speed
         self.camera_mode = camera_mode
+        self.manual_exposure_ms = 10
         self.docking_phase = None
         self.dock_assist = False
         self.undock_active = False
@@ -209,25 +210,57 @@ class Robot:
             self.client.move_lift(2.0 * main / 127.0)
 
     def configure_camera(self, cli=None):
+        """Apply real firmware auto exposure or a bounded manual setting.
+
+        The AE flag belongs to SetCameraParams (packet 0x57), not to the
+        image encoder. Make the mode switch immediate without restarting
+        the camera, and keep it across robot reconnections.
+        """
         import pycozmo
         with self.lock:
             client = cli or self.client
             if client is None:
                 raise RuntimeError("Cozmo disconnected")
-            presets = {"auto": (1.0, 0, True),
-                       "bright": (4.0, 40, False),
-                       "lowlight": (6.0, 60, False)}
-            gain, exposure, automatic = presets[self.camera_mode]
-            if not automatic and client.camera_config is not None:
-                c = client.camera_config
-                gain = max(c.min_gain, min(c.max_gain, gain))
-                exposure = max(c.min_exposure_time_ms,
-                               min(c.max_exposure_time_ms, exposure))
+            config = client.camera_config
+            if self.camera_mode == "auto":
+                # Firmware controls both exposure and analog gain in AE mode.
+                # These gain/exposure fields are ignored when AE is enabled.
+                gain, exposure, automatic = 1.0, 0, True
+            elif self.camera_mode == "manual":
+                gain, exposure, automatic = 0.1, self.manual_exposure_ms, False
+            elif self.camera_mode == "bright":
+                gain, exposure, automatic = 4.0, 40, False
+            elif self.camera_mode == "lowlight":
+                gain, exposure, automatic = 6.0, 60, False
+            else:
+                raise ValueError(f"Unknown camera mode {self.camera_mode!r}")
+            if config is not None and not automatic:
+                gain = max(config.min_gain, min(config.max_gain, gain))
+                exposure = max(config.min_exposure_time_ms,
+                               min(config.max_exposure_time_ms, exposure))
             client.conn.send(pycozmo.protocol_encoder.SetCameraParams(
                 gain=float(gain), exposure_ms=int(exposure),
                 auto_exposure_enabled=automatic))
-            LOG.info("Camera mode %s: gain %.2f, exposure %dms, auto=%s",
+            LOG.info("Camera settings applied: mode=%s gain=%.3f exposure=%sms auto=%s",
                      self.camera_mode, gain, exposure, automatic)
+            return True
+
+    def set_camera_auto_exposure(self):
+        with self.lock:
+            if self.client is None or not self.ready:
+                raise RuntimeError("Cozmo disconnected")
+            self.camera_mode = "auto"
+            self.configure_camera()
+
+    def set_camera_manual_exposure(self, exposure_ms):
+        if type(exposure_ms) is not int or not 1 <= exposure_ms <= 67:
+            raise ValueError("Manual exposure must be 1–67 ms")
+        with self.lock:
+            if self.client is None or not self.ready:
+                raise RuntimeError("Cozmo disconnected")
+            self.manual_exposure_ms = exposure_ms
+            self.camera_mode = "manual"
+            self.configure_camera()
 
     def start_undock(self, command_id, backoff, completed):
         """Drive forward off Cozmo charging contacts, then report completion."""
