@@ -79,6 +79,7 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_keyframe_gating = False  # diagnostic; gate disabled for normal audio
     controller._cozmo_tts_requested_at = 0.0
     controller._cozmo_resume_camera = None
+    controller._cozmo_on_speech_abort = None
     controller._cozmo_camera_paused_for_speech = False
     controller._cozmo_tts_camera_restores = 0
 
@@ -139,6 +140,9 @@ def _limit_animation_idle_traffic(cli):
                 q.audio_queue.clear()
             self.playing_audio = False
             self._cozmo_audio_aborted = True
+            callback = self._cozmo_on_speech_abort
+            if callable(callback):
+                callback("Audio reliable transport stalled during TTS")
             self._cozmo_resume_video()
             self._cozmo_audio_abort_reason = (
                 f"transport congested: {pending} unacknowledged, {queued} queued")
@@ -238,6 +242,8 @@ class Robot:
         self.packet_status = {}
         self.last_tts = ""
         self.last_tts_error = None
+        self._tts_transport_faulted = False
+        self._tts_last_stream_at = 0.0
         self.last_tts_frames = 0
         self.last_tts_played_at = None
         self.face_frames_sent = 0
@@ -271,6 +277,7 @@ class Robot:
             cli.add_handler(pycozmo.protocol_encoder.RobotState,
                             lambda _client, pkt: self._packet(cli, pkt))
             cli.enable_camera(enable=True, color=True)
+            cli.anim_controller._cozmo_on_speech_abort = self.mark_speech_unstable
             cli.set_volume(50000)
             cli.enable_animations(True)
             cli.enable_procedural_face(False)
@@ -551,6 +558,7 @@ class Robot:
                 "backpressure_ticks": getattr(cli.anim_controller, "_cozmo_audio_backpressure_ticks", 0) if cli else None,
                 "frames_submitted_to_transport": getattr(cli.anim_controller, "_cozmo_audio_frames_submitted", 0) if cli else None,
                 "playback_counter_at_speech_start": getattr(cli.anim_controller, "_cozmo_audio_played_baseline", None) if cli else None,
+                "speaker_disabled_after_transport_failure": self._tts_transport_faulted,
                 "camera_paused_for_speech": getattr(cli.anim_controller, "_cozmo_camera_paused_for_speech", False) if cli else None,
                 "camera_restores_after_speech": getattr(cli.anim_controller, "_cozmo_tts_camera_restores", 0) if cli else None,
                 "firmware_keyframes_received": getattr(cli.anim_controller, "_cozmo_keyframes_received", None) if cli else None,
@@ -669,9 +677,25 @@ class Robot:
             self.face_last_error = None
             return True
 
+    def mark_speech_unstable(self, reason):
+        """Disable speaker output until service restart after transport failure.
+
+        A failed OutputAudio can freeze Cozmo's reliable command channel.
+        Keep the rover usable and retain latest message text; do not retry
+        the same dangerous packet repeatedly on every new TTS request.
+        """
+        with self.lock:
+            self._tts_transport_faulted = True
+            self.last_tts_error = str(reason)[:180]
+        LOG.error("Cozmo speaker disabled for this service session: %s", reason)
+
     def speak(self, text, *, speed=1.0):
         """Generate eSpeak audio and queue validated frames to Cozmo's speaker."""
         import pycozmo
+        if self._tts_transport_faulted:
+            raise RuntimeError(
+                "Cozmo speaker disabled after a transport stall; "
+                "restart service to test speaker again")
         message = " ".join(str(text).split())[:512]
         if not message:
             raise ValueError("TTS text is empty")
@@ -752,6 +776,7 @@ class Robot:
                     if self.client is not cli or not self.ready:
                         raise RuntimeError("Cozmo disconnected during speech setup")
                     controller.play_audio(frames)
+                    self._tts_last_stream_at = time.monotonic()
                     self.last_tts_frames = len(frames)
                     self.last_tts_played_at = time.time()
                     self.last_tts_error = None
