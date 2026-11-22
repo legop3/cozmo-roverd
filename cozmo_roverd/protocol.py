@@ -3,10 +3,11 @@ from __future__ import annotations
 import math
 import time
 
-def hello(name: str, description: str, color: str, max_speed: int, video: bool = True) -> dict:
+def hello(name: str, description: str, color: str, max_speed: int, video: bool = True, private: bool = False) -> dict:
     return {
         "type": "hello", "name": name, "description": description,
         "color": color, "maxWheelSpeed": max_speed,
+        "private": {"enabled": private},
         "cameraServo": {"enabled": True, "minAngle": -25, "maxAngle": 44,
                         "homeAngle": 10, "nudgeDegrees": 5, "allowRawPulse": False,
                         "invert": False, "minPulseUs": 1000, "maxPulseUs": 2000,
