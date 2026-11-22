@@ -67,6 +67,10 @@ def _limit_animation_idle_traffic(cli):
                     q.audio_queue.clear()
                 self._cozmo_audio_aborted = True
                 self._cozmo_audio_blocked_at = None
+                # No additional OutputSilence is enqueued into a stalled
+                # channel. Mark the interrupted stream inactive, so the
+                # animation timer doesn't repeat the same abort forever.
+                self.playing_audio = False
                 LOG.warning(
                     "Aborted Cozmo TTS after 2s without ACK for speech "
                     "(%d unacked, %d queued commands, %d audio frames discarded)",
