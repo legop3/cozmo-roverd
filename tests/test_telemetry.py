@@ -256,3 +256,42 @@ def test_hud_uses_corrected_lift_reading_from_live_robot_packet():
     low = publisher.render_frame(frame, bridge.hud_state())
     assert normal.crop((175, 3, 202, 31)).tobytes() != (
         low.crop((175, 3, 202, 31)).tobytes())
+
+
+
+def test_battery_percentage_does_not_flicker_with_voltage_jitter():
+    from cozmo_roverd.robot_packet import BatteryTracker
+    tracker = BatteryTracker()
+    tracker.observe(3.90, 0, now=0.0)
+    initial = tracker.percent
+    for index in range(1, 601):
+        # The raw voltage continues to jitter while the published percent
+        # should remain stable over an entire minute.
+        tracker.observe(3.895 if index % 2 else 3.905,
+                        0, now=index * 0.1)
+        assert tracker.percent == initial
+    assert tracker.voltage in (3.895, 3.905)
+
+
+def test_battery_percentage_follows_real_sustained_charge_change():
+    from cozmo_roverd.robot_packet import BatteryTracker
+    tracker = BatteryTracker()
+    tracker.observe(3.80, 0, now=0.0)
+    baseline = tracker.percent
+    for index in range(1, 601):
+        tracker.observe(4.00, 0, now=index * 0.1)
+    assert tracker.percent > baseline + 20
+    assert tracker.percent <= 80
+    assert tracker.diagnostic()["smoothed_voltage_v"] > 3.97
+
+
+def test_battery_spike_and_invalid_voltage_do_not_move_smoothed_percent():
+    from cozmo_roverd.robot_packet import BatteryTracker
+    tracker = BatteryTracker()
+    for index in range(100):
+        tracker.observe(3.85, 0, now=index * 0.1)
+    previous = tracker.percent
+    tracker.observe(4.40, 0, now=10.1)
+    tracker.observe(0.0, 0, now=10.2)
+    assert tracker.percent == previous
+    assert tracker.voltage == 4.40
