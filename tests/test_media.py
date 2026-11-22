@@ -179,3 +179,23 @@ def test_recovery_slate_handles_unknown_errors_and_counter_types():
         "mrr_connected": False})
     assert image.size == (320, 240)
     assert image.mode == "RGB"
+
+
+def test_x264_encoding_has_explicit_high_quality_and_low_latency():
+    publisher = Publisher("rtsp://localhost:8554/cozmo")
+    publisher.encoder = "libx264"
+    args = publisher._encoder_quality_args()
+    assert args[args.index("-crf") + 1] == "17"
+    assert args[args.index("-preset") + 1] == "veryfast"
+    assert "zerolatency" in args
+    assert "-b:v" not in args
+
+
+def test_fallback_encoders_do_not_use_uncontrolled_default_bitrates():
+    publisher = Publisher("rtsp://localhost:8554/cozmo")
+    for encoder in ("libopenh264", "h264_vaapi"):
+        publisher.encoder = encoder
+        args = publisher._encoder_quality_args()
+        assert args[args.index("-b:v") + 1] == "2500k"
+        assert "-maxrate" in args
+        assert "-bufsize" in args
