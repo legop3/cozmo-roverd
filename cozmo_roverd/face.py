@@ -146,43 +146,74 @@ def _ticker(canvas, message, scroll, audio_error):
 def status_image(*, voltage=None, percent=None, charging=None, docked=None,
                  cliff=None, picked_up=None, moving=None, wheels=(0, 0),
                  last_tts="", scroll=0, audio_error=None):
-    """Return one fully composed binary face image for PyCozmo."""
-    canvas = Image.new("L", (WIDTH*SCALE, HEIGHT*SCALE), PAPER)
+    """Legible two-line status with a prominent voltage and speech ticker.
+
+    Cozmo physically interlaces 128x32 pixels across its 128x64 OLED.
+    Thin 6-pixel glyphs and a three-row HUD looked like broken scan lines
+    on the robot. Render fewer, larger elements instead of cramming 3 rows
+    of tiny text and horizontal rules into the available 32 pixels.
+    """
+    canvas = Image.new("L", (WIDTH * SCALE, HEIGHT * SCALE), PAPER)
     d = ImageDraw.Draw(canvas)
+
+    # Battery and voltage are the operator's primary continuous status.
     _battery(d, percent, charging)
     try:
-        voltage_label = f"{float(voltage):.2f}V" if math.isfinite(float(voltage)) else "--.--V"
+        voltage_label = (f"{float(voltage):.2f}V"
+                         if math.isfinite(float(voltage)) else "--.--V")
     except (TypeError, ValueError):
         voltage_label = "--.--V"
-    _text(d, (30, 1), voltage_label, _BOLD)
+    big_font = _font(10)
+    voltage_bbox = d.textbbox((0, 0), voltage_label, font=big_font)
+    d.text((_p(29), _p(1) - voltage_bbox[1]),
+           voltage_label, font=big_font, fill=INK)
     try:
         percent_label = f"{float(percent):.0f}%"
     except (TypeError, ValueError):
         percent_label = "--%"
-    _text(d, (77, 2), percent_label, _SMALL)
-    if docked:
-        _status_icon(d, 114, 2, "dock")
-    _line(d, (2, 12, 126, 12), fill=INK)
+    _text(d, (94, 2), percent_label, _SMALL)
 
+    # A deliberately sparse mid-row: meaningful state, no dense rules.
     left, right = wheels if wheels is not None else (0, 0)
-    _wheel(d, 3, 15, left, "L")
-    _wheel(d, 45, 15, right, "R")
+    _wheel(d, 3, 13, left, "L")
+    _wheel(d, 45, 13, right, "R")
+    if docked:
+        _status_icon(d, 91, 12, "dock")
     if cliff:
-        _status_icon(d, 90, 14, "cliff")
+        _status_icon(d, 102, 12, "cliff")
     if picked_up:
-        _status_icon(d, 102, 14, "pickup")
+        _status_icon(d, 115, 12, "pickup")
     if audio_error:
-        _status_icon(d, 116, 14, "error")
-    _line(d, (2, 22, 126, 22), fill=INK)
+        _status_icon(d, 115, 12, "error")
 
-    _status_icon(d, 3, 23, "speaker")
-    _ticker(canvas, last_tts, scroll, audio_error)
+    # Speech text is a major part of the face, not a tiny footer. Only
+    # this viewport scrolls, preserving the latest message persistently.
+    msg = " ".join(str(last_tts or "").split())
+    if not msg:
+        msg = "TTS ERROR" if audio_error else "NO TTS YET"
+    font = _font(10)
+    left_px = _p(3)
+    top_px = _p(21)
+    width_px = _p(122)
+    height_px = _p(11)
+    bbox = d.textbbox((0, 0), msg, font=font)
+    text_width = bbox[2] - bbox[0]
+    strip = Image.new("L", (width_px, height_px), PAPER)
+    if text_width <= width_px:
+        ImageDraw.Draw(strip).text((0, -bbox[1]), msg, fill=INK, font=font)
+    else:
+        gap = _p(14)
+        period = text_width + gap
+        track = Image.new("L", (period * 2 + width_px, height_px), PAPER)
+        track_draw = ImageDraw.Draw(track)
+        track_draw.text((0, -bbox[1]), msg, fill=INK, font=font)
+        track_draw.text((period, -bbox[1]), msg, fill=INK, font=font)
+        offset = (_p(scroll) * 4) % period
+        strip = track.crop((offset, 0, offset + width_px, height_px))
+    canvas.paste(strip, (left_px, top_px))
 
-    # Anti-aliased geometry is reduced into one monochrome image. Cozmo's
-    # image encoder accepts the resulting exact 128x32 1-bit PIL image.
     reduced = canvas.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
     return reduced.point(lambda v: 255 if v >= 105 else 0, mode="1")
-
 
 
 def compact_status_image(*, voltage=None, percent=None, charging=None,
