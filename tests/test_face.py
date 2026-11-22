@@ -502,3 +502,82 @@ def test_tts_played_counter_is_read_from_animation_controller():
         queue=NS(lock=Lock(), audio_queue=[]),
     )
     assert robot.speaker_diagnostics()["robot_reported_audio_frames"] == 57
+
+
+
+def test_audio_waits_for_fresh_firmware_keyframe_not_just_udp_ack():
+    from collections import deque
+    from threading import Lock
+    from queue import Queue
+    from types import SimpleNamespace as NS
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+    from pycozmo import protocol_encoder
+    import time
+
+    callbacks = {}
+    sent = []
+    class AudioQueue:
+        def __init__(self):
+            self.lock = Lock()
+            self.audio_queue = deque(["audio1", "audio2"])
+        def get(self):
+            with self.lock:
+                return self.audio_queue.popleft() if self.audio_queue else None, None, None
+    window = NS(next_seq=0, expected_seq=0, max_seq=65534)
+    sender = NS(lock=Lock(), window=window, queue=Queue())
+    controller = NS(queue=AudioQueue(), animations_enabled=True,
+                    playing_audio=False, image_displayed=False,
+                    procedural_face_enabled=False, playing_animation=False)
+    cli = NS(anim_controller=controller,
+             conn=NS(send=sent.append, send_thread=sender, post_event=lambda *a: None),
+             add_handler=lambda packet, callback: callbacks.setdefault(packet, callback))
+    _limit_animation_idle_traffic(cli)
+    assert protocol_encoder.Keyframe in callbacks
+    controller._cozmo_last_idle_silence_at = time.monotonic()
+    controller._cozmo_keyframe_consumed = controller._cozmo_keyframes_received
+    controller._run_frame()
+    assert "audio1" not in sent
+    assert len(controller.queue.audio_queue) == 2
+    callbacks[protocol_encoder.Keyframe](cli, protocol_encoder.Keyframe())
+    controller._run_frame()
+    assert sent[-1] == "audio1"
+    controller._run_frame()
+    assert sent.count("audio1") == 1 and "audio2" not in sent
+    callbacks[protocol_encoder.Keyframe](cli, protocol_encoder.Keyframe())
+    controller._run_frame()
+    assert sent[-1] == "audio2"
+    assert controller._cozmo_keyframes_received == 2
+
+
+def test_speech_never_sends_audio_when_firmware_produces_no_keyframes():
+    from collections import deque
+    from threading import Lock
+    from queue import Queue
+    from types import SimpleNamespace as NS
+    from unittest.mock import patch
+    from cozmo_roverd.robot import _limit_animation_idle_traffic
+
+    sent = []
+    class AudioQueue:
+        def __init__(self):
+            self.lock = Lock()
+            self.audio_queue = deque(["one-utterance-frame"])
+        def get(self):
+            with self.lock:
+                return self.audio_queue.popleft() if self.audio_queue else None, None, None
+    controller = NS(queue=AudioQueue(), animations_enabled=True,
+                    playing_audio=False, image_displayed=False,
+                    procedural_face_enabled=False, playing_animation=False)
+    window = NS(next_seq=0, expected_seq=0, max_seq=65534)
+    sender = NS(lock=Lock(), window=window, queue=Queue())
+    cli = NS(anim_controller=controller,
+             conn=NS(send=sent.append, send_thread=sender, post_event=lambda *a: None),
+             add_handler=lambda *a: None)
+    _limit_animation_idle_traffic(cli)
+    controller._cozmo_last_idle_silence_at = 12.0
+    with patch("cozmo_roverd.robot.time.monotonic", side_effect=[12.1, 14.5]):
+        controller._run_frame()
+        controller._run_frame()
+    assert controller._cozmo_audio_aborted
+    assert len(controller.queue.audio_queue) == 0
+    assert "one-utterance-frame" not in sent
