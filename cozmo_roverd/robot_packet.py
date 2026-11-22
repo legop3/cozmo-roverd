@@ -94,15 +94,21 @@ class BatteryTracker:
                              (self.docked and self._last_charging_true is not None
                               and now - self._last_charging_true < 2.0))
         if self.percent is not None:
-            self.low = self.percent <= 15
-            self.critical = self.percent <= 5
+            # SOC inferred while charging or moving is too uncertain to
+            # trigger MRR's low/critical indicators. Low requires a sustained
+            # low-voltage rest period; charging clears the active warning.
+            self.low = bool(self.gauge.low_confirmed and
+                            self.percent <= 15 and not self.docked)
+            self.critical = bool(self.gauge.low_confirmed and
+                                 self.percent <= 5 and not self.docked)
             if self.low:
                 self.needs_charge = True
             elif self.docked and self.percent >= 30:
-                # Do not release the need-to-charge latch on a single high
-                # reading. Releasing it requires sustained dock contact below.
-                if self._contact_started is not None and now - self._contact_started >= 120:
+                if (self._contact_started is not None
+                        and now - self._contact_started >= 120):
                     self.needs_charge = False
+            elif not self.docked and self.percent >= 25:
+                self.needs_charge = False
         return self
 
     def age_seconds(self, now=None):
