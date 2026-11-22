@@ -61,3 +61,41 @@ def test_robot_state_event_updates_battery_and_charger():
     assert robot.on_charger is False
     assert robot.charging is False
     assert events == ["state", "state"]
+
+
+def test_bridge_state_sender_resends_snapshot_and_never_needs_sensor_queue():
+    import asyncio
+    import json
+    from cozmo_roverd.main import Bridge
+    class Socket:
+        def __init__(self):
+            self.messages = []
+        async def send(self, value):
+            self.messages.append(json.loads(value))
+    async def exercise():
+        bridge = object.__new__(Bridge)
+        bridge.hardware_ready = asyncio.Event()
+        bridge.hardware_ready.set()
+        bridge.stop_event = asyncio.Event()
+        bridge.state_dirty = asyncio.Event()
+        bridge.robot = NS(
+            charging=False, on_charger=True, headlight=False,
+            voltage=3.9, ready=True,
+            latest={"battery_voltage_v": 3.9, "cliff_detected": False,
+                    "wheel_speeds_mmps": {"left": 8, "right": 9}},
+        )
+        socket = Socket()
+        task = asyncio.create_task(bridge._send(socket))
+        await asyncio.sleep(0.3)
+        bridge.hardware_ready.clear()
+        await task
+        return socket.messages
+    messages = asyncio.run(exercise())
+    state_msgs = [m for m in messages if m["type"] == "roverState"]
+    sensor_msgs = [m for m in messages if m["type"] == "sensor"]
+    assert state_msgs
+    assert state_msgs[0]["state"]["docked"] is True
+    assert state_msgs[0]["state"]["battery"]["percent"] is not None
+    assert state_msgs[0]["state"]["battery"]["charging"] is False
+    assert sensor_msgs
+    assert sensor_msgs[0]["sensors"]["voltageMv"] == 3900
