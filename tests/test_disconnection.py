@@ -149,7 +149,8 @@ def test_mrr_availability_watcher_expires_only_after_grace():
         watching.cancel()
         await asyncio.gather(watching, return_exceptions=True)
         # When grace is exhausted, registration should end immediately.
-        bridge._hardware_offline_since = 0.0
+        import time
+        bridge._hardware_offline_since = time.monotonic() - 601.0
         # Force a sufficiently long elapsed period without changing clocks.
         assert bridge._mrr_offline_remaining() == 0
         await asyncio.wait_for(bridge._watch_mrr_hardware(), timeout=0.2)
