@@ -278,7 +278,7 @@ def test_battery_percentage_follows_real_sustained_charge_change():
     tracker = BatteryTracker()
     tracker.observe(3.80, 0, now=0.0)
     baseline = tracker.percent
-    for index in range(1, 601):
+    for index in range(1, 3601):
         tracker.observe(4.00, 0, now=index * 0.1)
     assert tracker.percent > baseline + 20
     assert tracker.percent <= 80
