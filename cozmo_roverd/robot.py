@@ -353,6 +353,26 @@ class Robot:
             self.client.set_all_backpack_lights(
                 pycozmo.lights.white_light if enabled else pycozmo.lights.off_light)
 
+    def transport_diagnostics(self):
+        """Read PyCozmo's reliable packet window without changing it."""
+        cli = self.client
+        if cli is None:
+            return None
+        sender = cli.conn.send_thread
+        with sender.lock:
+            window = sender.window
+            pending = (window.next_seq - window.expected_seq) % window.max_seq
+            expected_seq = window.expected_seq
+        return {
+            "pending_reliable_packets": pending,
+            "send_window_size": window.size,
+            "next_ack_expected": expected_seq,
+            "outgoing_packets": sender.outgoing_packets,
+            "transmitted_packets_including_retries": sender.sent_packets,
+            "pending_application_commands": sender.queue.qsize(),
+            "received_frames": cli.conn.recv_thread.received_frames,
+        }
+
     def speaker_diagnostics(self):
         """Distinguish TTS synthesis/queueing from actual playback reports."""
         with self.lock:
@@ -392,6 +412,18 @@ class Robot:
             # The incoming 4 Hz ticker does not need to send four new
             # DisplayImage packets every second; cap actual transfers to 1 Hz.
             if time.monotonic() - self._face_sent_at < 1.0:
+                return False
+            # Display updates are lower priority than actual wheel/audio
+            # commands. When the reliable send window fills, adding a new
+            # image only increases retransmissions and blocks controls.
+            sender = getattr(getattr(self.client, "conn", None), "send_thread", None)
+            if sender is not None:
+                with sender.lock:
+                    pending = (sender.window.next_seq - sender.window.expected_seq) % sender.window.max_seq
+                if pending >= 8 or sender.queue.qsize() >= 8:
+                    return False
+            controller = getattr(self.client, "anim_controller", None)
+            if controller is not None and getattr(controller, "playing_audio", False):
                 return False
             battery = self.battery
             image = status_image(
