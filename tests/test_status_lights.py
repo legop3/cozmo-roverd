@@ -94,3 +94,24 @@ def test_charger_led_semantics_and_signature():
         charger_signature(docked=True, charging=False, docking=False))
     assert len(charger_lights(docked=True, charging=True)) == 4
     assert len(charger_lights(docked=False, charging=False)) == 4
+
+
+def test_side_status_leds_use_red_channel_only():
+    """Cozmo's outer two backpack LEDs are physically red-only."""
+    from cozmo_roverd.status_lights import light_states
+    for robot_online in (True, False):
+        for mrr_online in (True, False):
+            left, front, middle, rear, right = light_states(
+                robot_online=robot_online, mrr_online=mrr_online,
+                docked=False, charging=False)
+            for side in (left, right):
+                assert side.on_color & 0x7c00, "red channel must be illuminated"
+                assert side.on_color & 0x03ff == 0, "side LEDs cannot emit green or blue"
+            if robot_online:
+                assert left.on_color == left.off_color
+            else:
+                assert left.on_color != left.off_color
+            if mrr_online:
+                assert right.on_color == right.off_color
+            else:
+                assert right.on_color != right.off_color
