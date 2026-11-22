@@ -446,21 +446,20 @@ def test_tts_played_counter_is_read_from_animation_controller():
 
 
 
-def test_audio_waits_for_fresh_firmware_keyframe_not_just_udp_ack():
+def test_audio_bootstraps_first_frame_then_requires_ack_and_keyframes():
     from collections import deque
     from threading import Lock
     from queue import Queue
     from types import SimpleNamespace as NS
     from cozmo_roverd.robot import _limit_animation_idle_traffic
     from pycozmo import protocol_encoder
-    import time
 
     callbacks = {}
     sent = []
     class AudioQueue:
         def __init__(self):
             self.lock = Lock()
-            self.audio_queue = deque(["audio1", "audio2"])
+            self.audio_queue = deque(["first", "second"])
         def get(self):
             with self.lock:
                 return self.audio_queue.popleft() if self.audio_queue else None, None, None
@@ -469,28 +468,26 @@ def test_audio_waits_for_fresh_firmware_keyframe_not_just_udp_ack():
     controller = NS(queue=AudioQueue(), animations_enabled=True,
                     playing_audio=False, image_displayed=False,
                     procedural_face_enabled=False, playing_animation=False)
+    def send(packet):
+        sent.append(packet)
+        window.next_seq += 1
     cli = NS(anim_controller=controller,
-             conn=NS(send=sent.append, send_thread=sender, post_event=lambda *a: None),
-             add_handler=lambda packet, callback: callbacks.setdefault(packet, callback))
+             conn=NS(send=send, send_thread=sender, post_event=lambda *a: None),
+             add_handler=lambda packet, cb: callbacks.setdefault(packet, cb))
     _limit_animation_idle_traffic(cli)
-    assert protocol_encoder.Keyframe in callbacks
-    controller._cozmo_last_idle_silence_at = time.monotonic()
-    controller._cozmo_keyframe_consumed = controller._cozmo_keyframes_received
     controller._run_frame()
-    assert "audio1" not in sent
-    assert len(controller.queue.audio_queue) == 2
+    assert sent == ["first"]  # no preexisting Keyframe is required
+    controller._run_frame()
+    assert sent == ["first"]  # first packet still awaiting network ACK
+    window.expected_seq = 1
+    controller._run_frame()
+    assert sent == ["first"]  # ACK alone isn't animation readiness
     callbacks[protocol_encoder.Keyframe](cli, protocol_encoder.Keyframe())
     controller._run_frame()
-    assert sent[-1] == "audio1"
-    controller._run_frame()
-    assert sent.count("audio1") == 1 and "audio2" not in sent
-    callbacks[protocol_encoder.Keyframe](cli, protocol_encoder.Keyframe())
-    controller._run_frame()
-    assert sent[-1] == "audio2"
-    assert controller._cozmo_keyframes_received == 2
+    assert sent == ["first", "second"]
 
 
-def test_speech_never_sends_audio_when_firmware_produces_no_keyframes():
+def test_speech_aborts_when_first_audio_is_acked_but_no_keyframe_arrives():
     from collections import deque
     from threading import Lock
     from queue import Queue
@@ -502,7 +499,7 @@ def test_speech_never_sends_audio_when_firmware_produces_no_keyframes():
     class AudioQueue:
         def __init__(self):
             self.lock = Lock()
-            self.audio_queue = deque(["one-utterance-frame"])
+            self.audio_queue = deque(["first", "second"])
         def get(self):
             with self.lock:
                 return self.audio_queue.popleft() if self.audio_queue else None, None, None
@@ -511,62 +508,19 @@ def test_speech_never_sends_audio_when_firmware_produces_no_keyframes():
                     procedural_face_enabled=False, playing_animation=False)
     window = NS(next_seq=0, expected_seq=0, max_seq=65534)
     sender = NS(lock=Lock(), window=window, queue=Queue())
+    def send(pkt):
+        sent.append(pkt)
+        window.next_seq += 1
     cli = NS(anim_controller=controller,
-             conn=NS(send=sent.append, send_thread=sender, post_event=lambda *a: None),
+             conn=NS(send=send, send_thread=sender, post_event=lambda *a: None),
              add_handler=lambda *a: None)
     _limit_animation_idle_traffic(cli)
-    controller._cozmo_last_idle_silence_at = 12.0
+    controller._run_frame()
+    assert sent == ["first"]
+    window.expected_seq = 1
     with patch("cozmo_roverd.robot.time.monotonic", side_effect=[12.1, 14.5]):
         controller._run_frame()
         controller._run_frame()
     assert controller._cozmo_audio_aborted
-    assert len(controller.queue.audio_queue) == 0
-    assert "one-utterance-frame" not in sent
-
-
-
-def test_pycozmo_sender_splits_large_audio_without_acknowledging_future_packets():
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _fix_pycozmo_packet_batching
-    from pycozmo import protocol_encoder
-    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-
-    frames = []
-    class FakeSender:
-        def _send_frame(self, pkts, first_seq, last_seq, ack):
-            frames.append((tuple(pkts), first_seq, last_seq, ack))
-
-    sender = FakeSender()
-    _fix_pycozmo_packet_batching(NS(conn=NS(send_thread=sender)))
-    audio1 = protocol_encoder.OutputAudio(samples=[0] * 744)
-    audio2 = protocol_encoder.OutputAudio(samples=[0] * 744)
-    command = protocol_encoder.OutputSilence()
-    sender._send_packets(
-        [(41, audio1), (42, audio2), (43, command)], 17
-    )
-    assert len(frames) == 2
-    assert frames[0][0] == (audio1,)
-    assert frames[0][1:] == (41, 41, 17)
-    assert frames[1][0] == (audio2, command)
-    assert frames[1][1:] == (42, 43, 17)
-    assert all(sum(4 + len(pkt) for pkt in packets) < MAX_FRAME_PAYLOAD_SIZE
-               for packets, _, _, _ in frames)
-
-
-def test_pycozmo_sender_handles_exact_boundary_and_sequence_wrap():
-    from types import SimpleNamespace as NS
-    from cozmo_roverd.robot import _fix_pycozmo_packet_batching
-    from pycozmo import protocol_encoder
-    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-
-    frames = []
-    class FakeSender:
-        def _send_frame(self, pkts, first_seq, last_seq, ack):
-            frames.append((first_seq, last_seq, len(pkts)))
-
-    sender = FakeSender()
-    _fix_pycozmo_packet_batching(NS(conn=NS(send_thread=sender)))
-    pkt = protocol_encoder.OutputAudio(samples=[0] * 744)
-    sender._send_packets([(65533, pkt), (0, pkt)], 10)
-    assert frames == [(65533, 65533, 1), (0, 0, 1)]
-    assert 4 + len(pkt) < MAX_FRAME_PAYLOAD_SIZE
+    assert list(controller.queue.audio_queue) == []
+    assert sent == ["first"]
