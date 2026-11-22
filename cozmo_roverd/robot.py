@@ -8,7 +8,7 @@ import math
 import threading
 import time
 from PIL import Image, ImageDraw
-from .face import status_image
+from .face import status_image, compact_status_image
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
@@ -411,9 +411,10 @@ class Robot:
         with self.lock:
             if self.client is None or not self.ready:
                 return False
-            # The incoming 4 Hz ticker does not need to send four new
-            # DisplayImage packets every second; cap actual transfers to 1 Hz.
-            if time.monotonic() - self._face_sent_at < 1.0:
+            # The firmware stores DisplayImage as an animation keyframe,
+            # not just a UDP payload. Refresh slowly to avoid its small
+            # animation-keyframe ring filling while video is active.
+            if time.monotonic() - self._face_sent_at < 5.0:
                 return False
             # Display updates are lower priority than actual wheel/audio
             # commands. When the reliable send window fills, adding a new
@@ -438,34 +439,33 @@ class Robot:
                 last_tts=self.last_tts, audio_error=self.last_tts_error,
                 scroll=self._face_scroll,
             )
-            # Cozmo silently discards an oversized UDP engine frame.
-            # A complicated generated bitmap can exceed the 1037-byte
-            # protocol payload limit once RLE-compressed, causing a blank
-            # face and an unacknowledged packet in the reliable window.
+            # A legal UDP packet can still overrun Cozmo's much smaller
+            # animation *keyframe* buffer. Logs show keyframes of 280-370
+            # bytes being rejected even with 69-298 bytes remaining.
+            # Prefer the full graphic only when compact enough; otherwise
+            # switch to a designed minimal bitmap. Never enqueue a known
+            # oversized frame and jam the reliable command channel.
             from pycozmo.image_encoder import ImageEncoder
             from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+            max_image_size = min(160, MAX_FRAME_PAYLOAD_SIZE - 6)
             encoded = bytes(ImageEncoder(image).encode())
-            # 4 bytes packet header + 2 bytes DisplayImage array length.
-            max_image_size = MAX_FRAME_PAYLOAD_SIZE - 6
             if len(encoded) > max_image_size:
-                from PIL import ImageDraw
-                LOG.warning("Face bitmap encodes to %d bytes (max %d); "
-                            "using compact status image", len(encoded), max_image_size)
-                # Keep useful battery and last speech text visible in a
-                # sparse fallback that uses far less of the protocol frame.
-                image = Image.new("1", (128, 32), 0)
-                draw = ImageDraw.Draw(image)
-                voltage = (f"{battery.voltage:.2f}V"
-                           if battery.voltage is not None else "--.--V")
-                draw.rectangle((1, 1, 126, 11), outline=1)
-                draw.text((5, 1), "BAT " + voltage, fill=1)
-                draw.line((1, 15, 126, 15), fill=1)
-                draw.text((3, 19), self.last_tts[:19] if self.last_tts else "READY",
-                          fill=1)
+                image = compact_status_image(
+                    voltage=battery.voltage, percent=battery.percent,
+                    charging=battery.charging, last_tts=self.last_tts,
+                    scroll=self._face_scroll)
                 encoded = bytes(ImageEncoder(image).encode())
-                if len(encoded) > max_image_size:
-                    self.face_last_error = "Face bitmap exceeds protocol frame limit"
-                    return False
+            if len(encoded) > max_image_size:
+                image = compact_status_image(
+                    voltage=battery.voltage, percent=battery.percent,
+                    charging=battery.charging, battery_only=True)
+                encoded = bytes(ImageEncoder(image).encode())
+            if len(encoded) > max_image_size:
+                self.face_last_error = (
+                    f"Cannot fit face keyframe into {max_image_size} bytes "
+                    f"(smallest generated image is {len(encoded)})")
+                LOG.warning("%s", self.face_last_error)
+                return False
             self.face_last_encoded_bytes = len(encoded)
             content = image.tobytes()
             self._face_scroll += 1
