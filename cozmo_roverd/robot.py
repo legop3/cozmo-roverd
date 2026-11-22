@@ -150,7 +150,11 @@ class Robot:
         self.last_sensor = now
         try:
             data = snapshot_packet(pkt)
-            battery = self.battery.observe(pkt.battery_voltage, pkt.status, now)
+            battery = self.battery.observe(
+                pkt.battery_voltage, pkt.status, now,
+                moving=(abs(pkt.lwheel_speed_mmps) > 5
+                        or abs(pkt.rwheel_speed_mmps) > 5
+                        or any(abs(v) > 5 for v in self.commanded_wheels)))
             # Only control-relevant transitions should trigger full MRR
             # roverState updates. Raw voltage changes every hardware sample,
             # but MRR already receives bounded voltage sensor telemetry.
