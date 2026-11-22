@@ -31,7 +31,7 @@ SAVE_LOCK = Lock()
 IFACE_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,32}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,48}$")
 COLORS = ("#3ba8ff", "#32c49b", "#ffb44c", "#b48cff", "#ff6f8a", "#f4f4f5")
-SPEEDS = (40, 60, 80, 100, 120, 150, 180, 200)
+SPEEDS = (40, 60, 80, 100, 120, 150, 180, 200, 220, 250)
 FPS = (5, 10, 15)
 MAX_BODY = 8192
 
@@ -174,7 +174,7 @@ def public_config(path: str) -> dict:
         "interface": wifi.get("interface", ""),
         "ssid": wifi.get("ssid", ""),
         "has_password": bool(wifi.get("password")),
-        "max_speed": rover.get("max_speed", 200),
+        "max_speed": rover.get("max_speed", 250),
         "camera_mode": media.get("camera_mode", "bright"),
         "hud": media.get("hud", True),
         "video": media.get("enabled", True),
