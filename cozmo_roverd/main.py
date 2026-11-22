@@ -39,7 +39,7 @@ class Bridge:
         self.loop.call_soon_threadsafe(add)
 
     def publish_state(self):
-        self.enqueue(state(charging=self.robot.charging, headlight=self.robot.headlight))
+        self.enqueue(state(charging=self.robot.charging, headlight=self.robot.headlight, voltage=self.robot.voltage))
 
     def publish_sensor(self):
         if time.monotonic() - self.robot.last_sensor > 5:
