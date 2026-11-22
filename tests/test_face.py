@@ -54,17 +54,17 @@ def test_face_updates_only_on_change_but_last_message_is_persistent():
 
 
 
-def test_face_changes_only_with_voltage_or_last_tts():
-    baseline = status_image(voltage=3.8, last_tts="Hello")
-    visible_robot_status_changed = status_image(
-        voltage=3.8, last_tts="Hello", percent=95, charging=True,
-        docked=True, wheels=(250, -250), cliff=True, picked_up=True,
-        audio_error="speech playback failed")
-    assert baseline.size == visible_robot_status_changed.size == (128, 32)
-    assert baseline.mode == visible_robot_status_changed.mode == "1"
-    assert baseline.tobytes() == visible_robot_status_changed.tobytes()
-    assert status_image(voltage=4.2, last_tts="Hello").tobytes() != baseline.tobytes()
-    assert status_image(voltage=3.8, last_tts="Goodbye").tobytes() != baseline.tobytes()
+def test_face_shows_battery_state_in_distinct_panel():
+    baseline = status_image(voltage=3.8, percent=30, last_tts="Hello")
+    alternate = status_image(
+        voltage=3.8, percent=90, charging=True, last_tts="Hello")
+    assert baseline.size == alternate.size == (128, 32)
+    assert baseline.mode == alternate.mode == "1"
+    assert baseline.tobytes() != alternate.tobytes()
+    assert status_image(voltage=4.2, percent=30, last_tts="Hello").tobytes() != baseline.tobytes()
+    assert status_image(voltage=3.8, percent=30, last_tts="Goodbye").tobytes() != baseline.tobytes()
+    # Battery status must not encroach on the TTS panel.
+    assert baseline.crop((0, 0, 90, 32)).tobytes() == alternate.crop((0, 0, 90, 32)).tobytes()
 
 
 def test_generated_face_has_no_content_outside_128x32_canvas():
@@ -199,28 +199,22 @@ def test_tts_played_counter_is_read_from_animation_controller():
 
 
 
-def test_operator_face_wraps_tts_and_places_voltage_in_corner():
-    from cozmo_roverd.face import _pages, _MESSAGE_FONT
+def test_operator_face_has_independent_battery_panel_and_adaptive_pages():
+    from cozmo_roverd.face import _layout
     from PIL import ImageDraw
-    image = status_image(voltage=3.98, last_tts="HELLO WORLD THIS MESSAGE WRAPS")
-    no_message = status_image(voltage=3.98, last_tts="")
-    assert image.crop((0, 0, 75, 11)).getbbox() is not None
-    assert image.crop((0, 11, 128, 32)).getbbox() is not None
-    # Speech occupies the left side of row one; battery is not a header row.
-    assert image.crop((82, 0, 128, 11)).getbbox() is not None
-    assert image.tobytes() != no_message.tobytes()
-    # Long text is paginated, not a one-line ticker.
-    msg = "A VERY LONG MESSAGE THAT SHOULD WRAP OVER SEVERAL FULL SCREEN PAGES"
-    first = status_image(voltage=3.98, last_tts=msg, scroll=0)
-    second = status_image(voltage=3.98, last_tts=msg, scroll=1)
+    short = status_image(voltage=3.98, percent=80, last_tts="HELLO")
+    long_message = "A VERY LONG MESSAGE THAT SHOULD WRAP OVER SEVERAL READABLE PAGES"
+    first = status_image(voltage=3.98, percent=80, last_tts=long_message, scroll=0)
+    second = status_image(voltage=3.98, percent=80, last_tts=long_message, scroll=1)
     assert first.tobytes() != second.tobytes()
-    assert first.crop((96, 0, 128, 11)).tobytes() == (
-        second.crop((96, 0, 128, 11)).tobytes())
-    sample = Image.new("1", (128, 32))
-    draw = ImageDraw.Draw(sample)
-    pages = _pages(msg, draw, (78, 128, 128))
+    # The entire battery panel stays unchanged as the message pages rotate.
+    assert first.crop((91, 0, 128, 32)).tobytes() == second.crop((91, 0, 128, 32)).tobytes()
+    assert short.crop((0, 0, 88, 32)).getbbox() is not None
+    canvas = Image.new("1", (128, 32))
+    font, pages, step = _layout(long_message, ImageDraw.Draw(canvas))
     assert len(pages) >= 2
-    assert all(len(page) <= 3 for page in pages)
+    assert step >= 12
+    assert font is not None
 
 
 def test_wire_encoded_face_is_not_a_single_pixel():
@@ -319,44 +313,59 @@ def test_pycozmo_runtime_method_replacements_are_gone():
     assert not hasattr(robot_module, "_fix_pycozmo_packet_batching")
 
 
-def test_headless_fedora_without_any_truetype_fonts_still_draws_readable_face(monkeypatch):
+def test_headless_fedora_without_truetype_fonts_still_draws_face(monkeypatch):
     import cozmo_roverd.face as face_module
     monkeypatch.setattr(face_module, "_FONT_CHOICES", ())
-    monkeypatch.setattr(face_module, "_VOLTAGE_FONT", face_module._font(9, ()))
-    monkeypatch.setattr(face_module, "_MESSAGE_FONT", face_module._font(12, ()))
-    image = face_module.status_image(voltage=3.98, last_tts="Hello Cozmo")
+    monkeypatch.setattr(face_module, "_VOLTAGE_CHOICES", ())
+    image = face_module.status_image(voltage=3.98, percent=50, last_tts="Hello Cozmo")
     assert image.mode == "1"
     assert image.size == (128, 32)
-    assert sum(image.getdata()) >= 40
-    assert image.crop((0, 0, 128, 18)).getbbox() is not None
-    assert image.crop((0, 11, 128, 32)).getbbox() is not None
-    # More than a single bright dot or a 4x-shrunk glyph.
+    assert image.crop((0, 0, 90, 32)).getbbox() is not None
+    assert image.crop((92, 0, 128, 32)).getbbox() is not None
     occupied_columns = sum(
         image.crop((x, 0, x + 1, 32)).getbbox() is not None
         for x in range(128))
     assert occupied_columns >= 25
 
 
-def test_large_status_uses_all_rows_and_preserves_interlacing():
-    image = status_image(voltage=3.91, last_tts="HELLO FROM THE COZMO ROBOT")
+def test_large_status_preserves_native_scanline_bitmap():
+    image = status_image(voltage=3.91, percent=60, last_tts="HELLO FROM COZMO")
     assert image.size == (128, 32)
-    # The caption may extend into three physical bands, no reserved voltage row.
-    assert image.crop((0, 0, 75, 11)).getbbox() is not None
-    assert image.crop((0, 11, 128, 22)).getbbox() is not None
-    assert image.crop((0, 22, 128, 32)).getbbox() is not None
-    # Firmware handles alternate physical OLED rows; don't pre-drop bitmap rows.
-    assert any(image.crop((0, y, 128, y+1)).getbbox() is not None
+    assert image.crop((0, 0, 90, 32)).getbbox() is not None
+    assert image.crop((92, 0, 128, 32)).getbbox() is not None
+    # No pre-interlacing: both even and odd rows contain image data.
+    assert any(image.crop((0, y, 128, y + 1)).getbbox() is not None
                for y in range(0, 32, 2))
-    assert any(image.crop((0, y, 128, y+1)).getbbox() is not None
+    assert any(image.crop((0, y, 128, y + 1)).getbbox() is not None
                for y in range(1, 32, 2))
 
 
 def test_wrap_splits_long_unbroken_words_without_clipping():
-    from cozmo_roverd.face import _pages
+    from cozmo_roverd.face import _wrap, _font, _FONT_CHOICES
     from PIL import ImageDraw
-    image = Image.new("1", (128, 32))
-    draw = ImageDraw.Draw(image)
-    text = "SUPERCALIFRAGILISTICEXPIALIDOCIOUS" * 2
-    pages = _pages(text, draw, (70, 128, 128))
-    assert len(pages) > 0
-    assert "".join("".join(page) for page in pages) == text
+    canvas = Image.new("1", (128, 32))
+    draw = ImageDraw.Draw(canvas)
+    message = "SUPERCALIFRAGILISTICEXPIALIDOCIOUS" * 2
+    lines = _wrap(message, draw, _font(15, _FONT_CHOICES), 85)
+    assert len(lines) >= 2
+    assert "".join(lines) == message
+
+
+def test_short_message_uses_larger_font_than_paginated_long_message():
+    from cozmo_roverd.face import _layout, _height
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(Image.new("1", (128, 32)))
+    big_font, _, _ = _layout("HI", draw)
+    long_font, pages, _ = _layout("A speech message that cannot fit on one small screen" * 3, draw)
+    assert _height(draw, big_font) > _height(draw, long_font)
+    assert len(pages) > 1
+
+
+def test_battery_gauge_fill_and_voltage_change_independently_of_speech():
+    speech = "Ready"
+    empty = status_image(voltage=3.2, percent=0, last_tts=speech)
+    full = status_image(voltage=3.2, percent=100, last_tts=speech)
+    charging = status_image(voltage=3.2, percent=100, charging=True, last_tts=speech)
+    assert empty.crop((0, 0, 90, 32)).tobytes() == full.crop((0, 0, 90, 32)).tobytes()
+    assert empty.crop((94, 19, 128, 32)).tobytes() != full.crop((94, 19, 128, 32)).tobytes()
+    assert full.tobytes() != charging.tobytes()
