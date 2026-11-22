@@ -241,3 +241,21 @@ def test_face_records_encoding_size_after_display():
     assert robot.face_last_encoded_bytes is not None
     assert robot.face_last_encoded_bytes > 0
     assert robot.face_last_error is None
+
+
+
+def test_face_never_submits_a_keyframe_larger_than_160_bytes(monkeypatch):
+    """A legal UDP packet can still exceed Cozmo's animation buffer."""
+    import cozmo_roverd.robot as robot_module
+    from pycozmo.image_encoder import ImageEncoder
+    noise = Image.new("1", (128, 32))
+    for y in range(32):
+        for x in range(128):
+            noise.putpixel((x, y), ((x * 57 + y * 91 + x*y) % 7 < 3))
+    assert len(ImageEncoder(noise).encode()) > 160
+    monkeypatch.setattr(robot_module, "status_image", lambda **kwargs: noise)
+    robot = robot_with_face()
+    assert robot.refresh_face()
+    assert robot.face_last_encoded_bytes <= 160
+    assert len(robot.client.images) == 1
+    assert robot.client.images[0].tobytes() != noise.tobytes()
