@@ -43,6 +43,7 @@ class Robot:
             cli.enable_camera(enable=True, color=True)
             with self.lock:
                 self.client = cli
+                self.last_sensor = time.monotonic()
                 self.ready = True
             self.on_state()
             LOG.info("Cozmo connected")
@@ -71,7 +72,7 @@ class Robot:
         self.on_sensor()
 
     def is_healthy(self):
-        return self.ready and (time.monotonic() - self.last_sensor < 5.0 if self.last_sensor else True)
+        return self.ready and time.monotonic() - self.last_sensor < 5.0
 
     def stop_drive(self):
         with self.lock:
