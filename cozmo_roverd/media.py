@@ -243,46 +243,20 @@ class Publisher:
         return title, detail
 
     def _offline_frame(self, data=None):
-        """Persistent RTSP recovery slate, updated from the hardware supervisor.
-
-        This is separate from the optional in-video HUD: connection status
-        remains visible even when the regular telemetry overlay is disabled.
-        """
+        """Simple, animated reconnecting message while RTSP stays live."""
         st = data or {}
         image = Image.new("RGB", (320, 240), (12, 17, 23))
         draw = ImageDraw.Draw(image)
-        title, detail = self._recovery_status(
-            st, had_video=self.frame_count > 0)
-        draw.rounded_rectangle((22, 66, 298, 175), radius=9,
-                               fill=(20, 31, 40), outline=(65, 87, 101), width=1)
-        # A small animated signal indicates the stream is still alive.
-        dots = 1 + (int(time.monotonic()) % 3)
-        draw.text((35, 78), "LINK " + ("*" * dots),
-                  fill=(83, 241, 204))
-        draw.text((35, 102), title, fill=(245, 250, 251))
-        draw.text((35, 126), detail, fill=(169, 191, 201))
-        attempts = st.get("hardware_reconnect_attempts", 0)
-        try:
-            attempts = max(0, int(attempts))
-        except (TypeError, ValueError, OverflowError):
-            attempts = 0
-        if attempts:
-            draw.text((35, 150), f"Reconnect attempts: {attempts}",
-                      fill=(122, 163, 181))
-        # Keep the last real error visible without allowing long log strings
-        # to overflow the 320-pixel frame.
-        error = st.get("last_hardware_error")
-        if error and not st.get("connected", False):
-            msg = str(error).replace("\n", " ")
-            while msg and draw.textbbox((0, 0), msg)[2] > 270:
-                msg = msg[:-1]
-            if msg:
-                draw.text((25, 190), msg, fill=(216, 158, 128))
-        # MRR registration is independent of the physical robot connection.
-        mrr = st.get("mrr_connected")
-        if mrr is not None:
-            draw.text((25, 218), "MRR: CONNECTED" if mrr else "MRR: RECONNECTING",
-                      fill=(113, 205, 174) if mrr else (220, 173, 110))
+        title, _ = self._recovery_status(st, had_video=self.frame_count > 0)
+        # The viewer is already on MRR: no duplicate MRR status, counters,
+        # diagnostics, labels or dashboard-like panels in the video.
+        dots = "." * (1 + int(time.monotonic() * 1.5) % 3)
+        message = title + dots
+        bbox = draw.textbbox((0, 0), message)
+        width = bbox[2] - bbox[0]
+        height = bbox[3] - bbox[1]
+        draw.text(((320 - width) // 2, (240 - height) // 2 - bbox[1]),
+                  message, fill=(235, 243, 245))
         return image
 
     def _run(self):
