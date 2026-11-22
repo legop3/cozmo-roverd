@@ -107,6 +107,7 @@ function configFromUI() {
     password: field("password"),
     max_speed: Number(field("speed")),
     camera_mode: field("camera-mode"),
+    hud: $("hud").checked,
     fps: Number(field("fps")),
     video: $("video").checked,
     rtsp_url: field("rtsp-url").trim(),
@@ -126,6 +127,7 @@ function applyConfig(config, options) {
       ? "Saved password exists. Leave blank to keep it, unless changing Wi-Fi network or adapter."
       : "Enter the password shown on Cozmo.";
   $("video").checked = !!config.video;
+  $("hud").checked = config.hud !== false;
   $("camera-mode").value = config.camera_mode || "bright";
   $("rtsp-url").value = config.rtsp_url;
   selectOptions($("speed"), options.speeds.map(n => ({value:n,label:`${n} mm/s`})), config.max_speed);
