@@ -175,6 +175,11 @@ class Bridge:
             control, value = p.get("control"), p.get("value")
             if control == "lift" and type(value) is int and 0 <= value <= 100:
                 self.robot.lift(value)
+            elif control == "camera_auto_exposure" and type(value) is bool:
+                if value:
+                    self.robot.set_camera_auto_exposure()
+            elif control == "camera_manual_exposure" and type(value) is int and 1 <= value <= 67:
+                self.robot.set_camera_manual_exposure(value)
             else:
                 raise ValueError("unsupported peripheral value")
         else:
@@ -291,6 +296,7 @@ class Bridge:
                     "max_speed_config_mmps": self.cfg.max_speed,
                     "commanded_wheels_mmps": {"left": self.robot.commanded_wheels[0],
                                               "right": self.robot.commanded_wheels[1]},
+                    "camera_exposure": {"mode": self.robot.camera_mode, "manual_ms": self.robot.manual_exposure_ms},
                     "camera_fov": {"horizontal_deg": self.robot.latest.get("camera", {}).get("fov_x_deg"),
                                    "vertical_deg": self.robot.latest.get("camera", {}).get("fov_y_deg")},
                     "telemetry_stale": self.robot.battery.stale(),
