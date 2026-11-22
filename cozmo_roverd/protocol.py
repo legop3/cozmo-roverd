@@ -38,13 +38,14 @@ def battery_percent(voltage):
     return 100
 
 
-def state(*, charging=None, docked=None, voltage=None, headlight=False) -> dict:
+def state(*, charging=None, docked=None, voltage=None, headlight=False, driving=True) -> dict:
     percent = battery_percent(voltage)
+    phase = "charging" if charging else "docked" if docked else "idle" if docked is False else "unknown"
     return {
         "type": "roverState", "state": {
-            "drivingMode": True, "dockAssist": None, "docking": None,
+            "drivingMode": driving, "dockAssist": None, "docking": None,
             "docked": docked,
-            "dockingStatus": {"phase": "unknown", "movementLocked": False,
+            "dockingStatus": {"phase": phase, "movementLocked": False,
                               "cameraLocked": False, "error": None},
             "battery": {"percent": percent, "charging": charging,
                         "low": percent <= 15 if percent is not None else None,
