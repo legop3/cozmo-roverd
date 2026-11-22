@@ -6,6 +6,8 @@ def test_hello_registers_custom_rover():
     assert h["type"] == "hello"
     assert h["peripherals"][0]["id"] == "cozmo"
     assert h["cameraServo"]["enabled"]
+    assert h["private"] == {"enabled": False}
+    assert hello("cozmo", "Cozmo", "#ffffff", 100, private=True)["private"]["enabled"] is True
 
 def test_state_contains_required_leaves():
     s = state()["state"]
