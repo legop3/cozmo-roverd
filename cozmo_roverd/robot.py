@@ -689,8 +689,9 @@ class Robot:
                     raise RuntimeError("Cozmo disconnected")
                 cli = self.client
                 controller = cli.anim_controller
-                audio_q = getattr(controller.queue, "audio_queue", None)
-                if (controller.playing_audio or
+                audio_q = getattr(
+                    getattr(controller, "queue", None), "audio_queue", None)
+                if (getattr(controller, "playing_audio", False) or
                         (audio_q is not None and len(audio_q))):
                     raise RuntimeError("Cozmo speech already playing")
                 controller.enable_animations(True)
@@ -701,7 +702,8 @@ class Robot:
                 controller._cozmo_audio_backpressure_ticks = 0
                 controller._cozmo_audio_played_baseline = getattr(
                     controller, "num_audio_frames_played", None)
-                controller._cozmo_keyframe_consumed = controller._cozmo_keyframes_received
+                controller._cozmo_keyframe_consumed = getattr(
+                    controller, "_cozmo_keyframes_received", 0)
                 controller._cozmo_tts_requested_at = time.monotonic()
 
             # Keep this work outside the robot command lock: the entire
