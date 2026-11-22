@@ -46,21 +46,46 @@ def test_charger_contact_distinct_from_actively_charging():
     assert output["dockingStatus"]["phase"] == "docked"
 
 
-def test_robot_state_event_updates_battery_and_charger():
+def fake_packet(flags=0x1000, battery=3.87):
+    return NS(status=flags, battery_voltage=battery, timestamp=42,
+              lwheel_speed_mmps=50.0, rwheel_speed_mmps=-20.0,
+              head_angle_rad=0.25, lift_height_mm=70.0,
+              pose_x=120.0, pose_y=-30.0, pose_z=3.0,
+              pose_angle_rad=0.5, pose_pitch_rad=0.1,
+              pose_origin_id=7, pose_frame_id=12,
+              accel_x=1.0, accel_y=2.0, accel_z=3.0,
+              gyro_x=0.1, gyro_y=-0.2, gyro_z=0.3,
+              cliff_data_raw=(120, 150, 170, 200),
+              backpack_touch_sensor_raw=220, curr_path_segment=4)
+
+
+def test_robot_packet_updates_battery_and_charger():
     events = []
     robot = Robot(max_speed=100, on_state=lambda: events.append("state"),
                   on_sensor=lambda: events.append("sensor"),
                   on_frame=lambda frame: None)
-    robot._sample(fake_client(0x1000 | 0x2000, 3.9))
+    robot._packet(fake_client(flags=0x3000, battery=3.9), fake_packet(0x3000, 3.9))
     assert robot.on_charger is True
     assert robot.charging is True
     assert robot.voltage == 3.9
-    assert robot.latest["status_raw"] == (0x1000 | 0x2000)
-    assert events == ["state"]
-    robot._sample(fake_client(0x0, 3.9))
-    assert robot.on_charger is False
-    assert robot.charging is False
-    assert events == ["state", "state"]
+    assert robot.latest["status_raw"] == 0x3000
+    assert robot.latest["raw_robot_state"]["backpack_touch_raw"] == 220
+    assert robot.packets_received == 1
+    robot._packet(fake_client(flags=0, battery=3.9), fake_packet(0, 3.9))
+    assert robot.packets_received == 2
+    assert robot.on_charger is True
+    assert events
+
+
+def test_battery_tracker_rejects_spikes_and_stale_state():
+    from cozmo_roverd.robot_packet import BatteryTracker
+    tracker = BatteryTracker()
+    for v in (3.82, 3.81, 3.83, 4.40, 3.82):
+        tracker.observe(v, 0, now=100)
+    assert tracker.percent is not None
+    assert tracker.percent < 70
+    assert not tracker.stale(now=101)
+    assert tracker.stale(now=104)
 
 
 def test_bridge_state_sender_resends_snapshot_and_never_needs_sensor_queue():
