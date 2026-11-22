@@ -273,62 +273,50 @@ def test_hardware_tts_disabled_without_touching_camera_or_speaker():
     assert "speech disabled" in robot.last_tts_error.lower()
 
 
-def test_display_only_sender_clears_accidental_audio_packets_and_never_sends_them():
+def test_static_face_uses_transport_packets_not_animation_controller_queue():
+    from pycozmo.protocol_encoder import DisplayImage, OutputSilence
     from types import SimpleNamespace as NS
-    from collections import deque
-    from threading import Lock
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
 
     sent = []
-    class Q:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque(["DO_NOT_SEND_AUDIO"])
-            self.image_queue = deque(["test-image"])
-        def get(self):
-            with self.lock:
-                return (self.audio_queue.popleft() if self.audio_queue else None,
-                        self.image_queue.popleft() if self.image_queue else None, None)
-    q = Q()
-    ctl = NS(queue=q, animations_enabled=True, image_displayed=True,
-             last_image_pkt=None)
-    cli = NS(anim_controller=ctl,
-             conn=NS(send=sent.append))
-    _limit_animation_idle_traffic(cli)
-    ctl._run_frame()
-    assert "DO_NOT_SEND_AUDIO" not in sent
-    assert "test-image" in sent
-    assert not q.audio_queue
+    robot = robot_with_face()
+    robot.client.conn = NS(send=sent.append)
+    robot.client.anim_controller = NS(
+        display_image=lambda *args: (_ for _ in ()).throw(
+            AssertionError("animation queue must not be used")),
+        animations_enabled=False)
+    assert robot.refresh_face()
+    assert len(sent) == 1
+    assert isinstance(sent[0], DisplayImage)
+    assert robot.advance_face_display()
+    assert isinstance(sent[1], OutputSilence)
+    # The clock sends nothing again immediately and never queues audio.
+    assert not robot.advance_face_display()
+    assert len(sent) == 2
 
 
-def test_display_only_sender_clocks_image_without_30hz_image_flood():
+def test_static_face_clock_suppresses_sends_on_congested_transport():
     from types import SimpleNamespace as NS
-    from collections import deque
     from threading import Lock
-    from unittest.mock import patch
-    from cozmo_roverd.robot import _limit_animation_idle_traffic
-    import pycozmo
+    from queue import Queue
 
+    robot = robot_with_face()
     sent = []
-    class Q:
-        def __init__(self):
-            self.lock = Lock()
-            self.audio_queue = deque()
-            self.image_queue = deque(["img"])
-        def get(self):
-            with self.lock:
-                return None, self.image_queue.popleft() if self.image_queue else None, None
-    ctl = NS(queue=Q(), animations_enabled=True, image_displayed=True,
-             last_image_pkt="blank")
-    cli = NS(anim_controller=ctl, conn=NS(send=sent.append))
-    _limit_animation_idle_traffic(cli)
-    with patch("cozmo_roverd.robot.time.monotonic", side_effect=[1.0, 1.05, 1.30]):
-        for _ in range(3):
-            ctl._run_frame()
-    assert sent.count("img") == 1
-    assert sent.count("blank") == 0
-    assert sum(isinstance(p, pycozmo.protocol_encoder.OutputSilence) for p in sent) == 2
+    sender = NS(lock=Lock(), window=NS(next_seq=12, expected_seq=0,
+                                      max_seq=65536), queue=Queue())
+    robot.client.conn = NS(send=sent.append, send_thread=sender)
+    assert not robot.refresh_face()
+    assert not robot.advance_face_display()
+    assert sent == []
+    sender.window.expected_seq = 12
+    assert robot.refresh_face()
+    assert robot.advance_face_display()
+    assert len(sent) == 2
 
+
+def test_pycozmo_runtime_method_replacements_are_gone():
+    import cozmo_roverd.robot as robot_module
+    assert not hasattr(robot_module, "_limit_animation_idle_traffic")
+    assert not hasattr(robot_module, "_fix_pycozmo_packet_batching")
 
 
 def test_headless_fedora_without_any_truetype_fonts_still_draws_readable_face(monkeypatch):
