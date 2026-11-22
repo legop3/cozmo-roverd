@@ -55,6 +55,7 @@ class Robot:
         self._state_queue = queue.Queue(maxsize=1)
         self._state_worker = None
         self._state_stop = threading.Event()
+        self._had_packet_workers = False
         self.state_packets_coalesced = 0
         self._camera_analysis_queue = queue.Queue(maxsize=1)
         self._camera_analysis_worker = None
@@ -169,6 +170,7 @@ class Robot:
         self.picked_up = value
 
     def _start_packet_workers(self):
+        self._had_packet_workers = True
         self._state_stop.clear()
         self._camera_analysis_stop.clear()
         self._camera_analysis_last_queued_at = 0.0
@@ -232,8 +234,8 @@ class Robot:
         """Keep PyCozmo's receive callback bounded and nonblocking."""
         self.packets_received += 1
         self.last_sensor = time.monotonic()
-        if self._state_stop.is_set():
-            return  # A late callback from the old client during cleanup.
+        if self._state_stop.is_set() and self._had_packet_workers:
+            return  # A late callback from a closed real client.
         if self._state_worker is not None and self._state_worker.is_alive():
             if self._put_latest(self._state_queue, (cli, pkt)):
                 self.state_packets_coalesced += 1
