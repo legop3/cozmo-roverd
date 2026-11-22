@@ -213,3 +213,29 @@ def test_manual_reconnect_uses_existing_hardware_supervisor():
             bridge.stop_event.set()
             await asyncio.wait_for(supervisor, timeout=4)
     asyncio.run(run())
+
+
+def test_independent_maintenance_is_not_delayed_by_blocked_task():
+    async def run():
+        import threading
+        bridge = disconnected_bridge()
+        started = threading.Event()
+        release = threading.Event()
+        fast = asyncio.Event()
+        def blocked():
+            started.set()
+            release.wait(2)
+        def quick():
+            fast.set()
+        slow_task = asyncio.create_task(bridge._maintenance(blocked, 10))
+        fast_task = asyncio.create_task(bridge._maintenance(quick, 10))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            # The quick callback is not held behind the blocked one.
+            await asyncio.wait_for(fast.wait(), timeout=0.5)
+        finally:
+            release.set()
+            bridge.stop_event.set()
+            await asyncio.wait_for(
+                asyncio.gather(slow_task, fast_task), timeout=2)
+    asyncio.run(run())
