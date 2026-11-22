@@ -52,15 +52,16 @@ class Publisher:
         codecs = probe.stdout
         self.encoder, self.device = None, None
         render = Path("/dev/dri")
-        if "h264_vaapi" in codecs and render.is_dir():
+        # The Cozmo camera is only 320x240. Software H.264 is cheap and
+        # avoids Haswell VA-API failures when i965 cannot initialize i915.
+        for encoder in ("libx264", "libopenh264"):
+            if encoder in codecs and self._test_encoder(encoder):
+                self.encoder = encoder
+                break
+        if self.encoder is None and "h264_vaapi" in codecs and render.is_dir():
             for device in sorted(render.glob("renderD*")):
                 if self._test_encoder("h264_vaapi", device=str(device)):
                     self.encoder, self.device = "h264_vaapi", str(device)
-                    break
-        if self.encoder is None:
-            for encoder in ("libx264", "libopenh264"):
-                if encoder in codecs and self._test_encoder(encoder):
-                    self.encoder = encoder
                     break
         if self.encoder is None:
             raise RuntimeError("No working H.264 encoder. Check FFmpeg and VA-API drivers.")
