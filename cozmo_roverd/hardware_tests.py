@@ -108,14 +108,138 @@ def _summarize(directory, returncode):
     return result
 
 
+def _read_records(path):
+    if not path.exists():
+        return []
+    records = []
+    with path.open(encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
+
+
+def _fmt_value(value):
+    return "?" if value is None else str(value)
+
+
 def _print_summary(case, result, directory):
-    print(f"  {result['status']}: {case} — {result['reason']}", flush=True)
-    if result.get("pending") is not None:
-        print(f"     ACK {result['ack_before']} -> {result['ack_after']} | "
-              f"pending {result['pending']} | queued {result['queued']} | "
-              f"received frames {result['received_frames']} | "
-              f"audio frames {result['audio_frames']}", flush=True)
-    print(f"     Detailed evidence: {directory}", flush=True)
+    """Print evidence, not merely a verdict. The JSONL remains unabridged."""
+    records = _read_records(directory / "measurements.jsonl")
+    print(f"\n=== {case} ===", flush=True)
+    print(f"Outcome: {result['status']} — {result['reason']} (exit {result['returncode']})")
+    print("Events:")
+    interesting = {
+        "test_started", "connecting_wifi", "robot_ready",
+        "pre_command_transport", "pre_command_stable", "command_about_to_send",
+        "command_issued", "stalled", "audio_not_reported_played",
+        "outstanding_commands_at_end", "test_exception",
+        "parent_killed_hung_worker", "test_finished", "cleanup_error",
+    }
+    command = next((r for r in records if r.get("event") == "command_issued"), None)
+    start = next((r for r in records if r.get("event") == "pre_command_stable"), None)
+    origin = (command or start or (records[0] if records else {})).get("utc")
+    from datetime import datetime
+    def relative(row):
+        try:
+            return (datetime.fromisoformat(row["utc"]) -
+                    datetime.fromisoformat(origin)).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            return None
+    def when(row):
+        offset = relative(row)
+        return f"T{offset:+.2f}s" if offset is not None else "T+?"
+    for row in records:
+        if row.get("event") not in interesting:
+            continue
+        metrics = row.get("transport")
+        details = []
+        if row.get("action"):
+            details.append(str(row["action"]))
+        if row.get("message"):
+            details.append(str(row["message"])[:250])
+        if isinstance(metrics, dict):
+            details.append("ACK=" + _fmt_value(metrics.get("next_ack_expected")))
+            details.append("pending=" + _fmt_value(metrics.get("pending_reliable_packets")))
+            details.append("queued=" + _fmt_value(metrics.get("queued_app_commands")))
+            details.append("tx=" + _fmt_value(metrics.get("outgoing_packets")))
+            details.append("rx_frames=" + _fmt_value(metrics.get("received_frames")))
+            details.append("audio_played=" + _fmt_value(metrics.get("audio_frames_reported_played")))
+        print(f"  {when(row):>9} {row['event']}: " + ", ".join(details))
+    samples = [r for r in records if r.get("event") == "sample"
+               and isinstance(r.get("transport"), dict)]
+    if samples:
+        print(f"Transport progression ({len(samples)} real samples, shown at "
+              "roughly 1s intervals plus changes near failure):")
+        last_at = float("-inf")
+        selected = []
+        for row in samples:
+            t = relative(row)
+            if t is None:
+                continue
+            metrics = row["transport"]
+            prev = selected[-1]["transport"] if selected else {}
+            critical = (metrics.get("pending_reliable_packets", 0) >= 50
+                        and prev.get("pending_reliable_packets", 0) < 50)
+            if t - last_at >= 0.95 or critical or row is samples[-1]:
+                selected.append(row)
+                last_at = t
+        for row in selected:
+            m = row["transport"]
+            print(
+                f"  {when(row):>9} ACK={_fmt_value(m.get('next_ack_expected')):>5}"
+                f" pending={_fmt_value(m.get('pending_reliable_packets')):>3}/62"
+                f" queue={_fmt_value(m.get('queued_app_commands')):>5}"
+                f" tx={_fmt_value(m.get('outgoing_packets')):>5}"
+                f" retry_tx={_fmt_value(m.get('sent_packets_including_retries')):>5}"
+                f" rx_frames={_fmt_value(m.get('received_frames')):>5}"
+                f" rx_packets={_fmt_value(m.get('received_packets')):>5}"
+                f" audio={_fmt_value(m.get('audio_frames_reported_played')):>4}"
+            )
+        # The stall is a lack of outbound ACK progress, not necessarily Wi-Fi
+        # disconnection. Explicitly report independent inbound progress.
+        first = samples[0]["transport"]
+        last = samples[-1]["transport"]
+        rx_change = last.get("received_frames", 0) - first.get("received_frames", 0)
+        ack_change = ((last.get("next_ack_expected", 0) -
+                       first.get("next_ack_expected", 0)) % 65536)
+        print(f"Observed during test: ACK advanced {ack_change} sequence values; "
+              f"received {rx_change} additional inbound frames.")
+        print(f"Final queued={last.get('queued_app_commands', '?')}, "
+              f"pending={last.get('pending_reliable_packets', '?')}/62, "
+              f"audio frames reported={last.get('audio_frames_reported_played', '?')}.")
+    # Packet events are captured by pycozmo itself and sanitized by Recorder.
+    # Show transmitted command types (including repeated audio/silence),
+    # grouped, plus the exact most recent command sequence.
+    packet_records = []
+    incident_path = directory / "incidents.jsonl"
+    for row in reversed(_read_records(incident_path)):
+        if row.get("event") == "disconnection_snapshot":
+            packet_records = row.get("recent_protocol_packets", [])
+            break
+    if not packet_records:
+        for line in (directory / "protocol.log").read_text(
+                encoding="utf-8", errors="replace").splitlines() if (
+                    directory / "protocol.log").exists() else []:
+            if "wire tx " in line:
+                packet_records.append({"direction": "tx", "packet":
+                    line.split("wire tx ", 1)[1].split(" bytes=", 1)[0],
+                    "utc": line.split(" ", 1)[0]})
+    sent = [p for p in packet_records if p.get("direction") == "tx"]
+    if sent:
+        from collections import Counter
+        types = Counter(p.get("packet", "unknown") for p in sent)
+        print("Recent outgoing packet types: " +
+              ", ".join(f"{name}={count}" for name, count in types.most_common(12)))
+        print("Last 20 queued-to-send packet types (not proof of robot receipt):")
+        for p in sent[-20:]:
+            print(f"  {p.get('utc', '?')}  {p.get('packet', '?')} "
+                  f"id={p.get('id', '?')} bytes={p.get('bytes', '?')}")
+    elif result["status"] == "FAIL":
+        print("Packet trace: no parsed outgoing packet metadata available.")
+    print(f"Full records: {directory}", flush=True)
 
 
 def _run_case(case, args, suite_dir):
