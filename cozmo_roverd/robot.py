@@ -59,6 +59,7 @@ class Robot:
         self._camera_analysis_queue = queue.Queue(maxsize=1)
         self._camera_analysis_worker = None
         self._camera_analysis_stop = threading.Event()
+        self._camera_analysis_last_queued_at = 0.0
         self.camera_analysis_skipped = 0
         self.last_packet_error = None
         self.packet_status = {}
@@ -170,6 +171,7 @@ class Robot:
     def _start_packet_workers(self):
         self._state_stop.clear()
         self._camera_analysis_stop.clear()
+        self._camera_analysis_last_queued_at = 0.0
         self._state_worker = threading.Thread(
             target=self._state_worker_loop, name="cozmo-state", daemon=True)
         self._camera_analysis_worker = threading.Thread(
@@ -215,24 +217,28 @@ class Robot:
                     LOG.exception("Camera brightness sampling failed")
 
     def queue_camera_analysis(self, image):
-        """Never analyze image pixels in the camera event callback."""
-        if self._camera_analysis_worker is not None and self._camera_analysis_worker.is_alive():
-            if self._put_latest(self._camera_analysis_queue, image):
-                self.camera_analysis_skipped += 1
-        else:
-            # Unit/test harnesses without worker threads can opt in directly.
+        """Sample at most every 0.8s, without blocking the camera callback."""
+        if self._camera_analysis_worker is None or not self._camera_analysis_worker.is_alive():
             return False
+        now = time.monotonic()
+        if now - self._camera_analysis_last_queued_at < 0.8:
+            return False
+        self._camera_analysis_last_queued_at = now
+        if self._put_latest(self._camera_analysis_queue, image):
+            self.camera_analysis_skipped += 1
         return True
 
     def _packet(self, cli, pkt):
         """Keep PyCozmo's receive callback bounded and nonblocking."""
         self.packets_received += 1
         self.last_sensor = time.monotonic()
+        if self._state_stop.is_set():
+            return  # A late callback from the old client during cleanup.
         if self._state_worker is not None and self._state_worker.is_alive():
             if self._put_latest(self._state_queue, (cli, pkt)):
                 self.state_packets_coalesced += 1
-        else:
-            # Test-only direct packet processing with no active connection.
+        elif self.client is None:
+            # Unit-test direct processing; real connections use the worker.
             self._process_packet(cli, pkt)
 
     def _process_packet(self, cli, pkt):
