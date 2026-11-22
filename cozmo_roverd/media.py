@@ -1,6 +1,7 @@
 """Feed latest PyCozmo PIL camera frames to ffmpeg/MediaMTX as low-latency H264."""
 from __future__ import annotations
 import logging
+import math
 import os
 from pathlib import Path
 import queue
@@ -114,34 +115,82 @@ class Publisher:
         except (ValueError, TypeError):
             return "--"
 
+    @staticmethod
+    def imu_tilt(accel):
+        """Return gravity-derived roll/pitch in degrees, or unknown.
+
+        These angles are inferred from the instantaneous accelerometer;
+        they are not a fused orientation solution and can wobble during motion.
+        """
+        if not isinstance(accel, dict):
+            return None
+        try:
+            ax, ay, az = (float(accel[axis]) for axis in ("x", "y", "z"))
+        except (TypeError, ValueError, KeyError):
+            return None
+        if not all(math.isfinite(v) for v in (ax, ay, az)):
+            return None
+        norm = math.sqrt(ax * ax + ay * ay + az * az)
+        if norm < 0.001:
+            return None
+        roll = math.degrees(math.atan2(ay, az))
+        pitch = math.degrees(math.atan2(-ax, math.hypot(ay, az)))
+        return (roll, pitch)
+
     def render_frame(self, image, data=None):
-        """Composite directly in the encoding worker; never buffer extra frames."""
-        if image.size != (320, 240):
-            output = image.convert("RGB").resize((320, 240))
-        else:
-            output = image.convert("RGB")
+        """Draw a compact top-center tilt compass on the existing frame."""
+        output = image.convert("RGB")
+        if output.size != (320, 240):
+            output = output.resize((320, 240))
         if not self.hud:
             return output
         st = data or {}
+        # A single lightweight Pillow drawing pass, executed by the encoder
+        # thread after dequeue. No additional frame queue or encoding pass.
         draw = ImageDraw.Draw(output, "RGBA")
-        # Small, high contrast strips preserve as much of the full 4:3
-        # camera view as possible, without cropping or scaling the image.
-        draw.rectangle((0, 0, 319, 28), fill=(0, 0, 0, 165))
-        draw.rectangle((0, 209, 319, 239), fill=(0, 0, 0, 165))
-        connected = st.get("connected", False)
-        status = "COZMO ONLINE" if connected else "COZMO RECONNECTING"
-        draw.text((5, 3), status, fill=(100, 255, 160, 255) if connected
-                  else (255, 190, 95, 255))
-        battery = self._format(st.get("battery_pct"), 0, "%")
-        voltage = self._format(st.get("voltage"), 2, "V")
-        charging = " CHG" if st.get("charging") else " DOCK" if st.get("docked") else ""
-        draw.text((5, 16), f"BAT {battery}  {voltage}{charging}", fill=(255, 255, 255, 255))
-        wheels = f"L{self._format(st.get('left'))} R{self._format(st.get('right'))}"
-        head = self._format(st.get("head"), 0, "d")
-        lift = self._format(st.get("lift"), 0, "mm")
-        draw.text((5, 212), f"WHEELS {wheels} mm/s", fill=(255, 255, 255, 255))
-        draw.text((5, 226), f"HEAD {head} LIFT {lift} CLIFF {self._format(st.get('cliff'))}",
-                  fill=(255, 255, 255, 255))
+        cx, cy, radius = 160, 37, 26
+        draw.rounded_rectangle((107, 2, 213, 100), radius=9,
+                               fill=(9, 17, 23, 165),
+                               outline=(210, 228, 233, 120), width=1)
+        draw.ellipse((cx-radius, cy-radius, cx+radius, cy+radius),
+                     fill=(17, 34, 43, 190), outline=(194, 222, 225, 225), width=1)
+        draw.line((cx-radius+4, cy, cx+radius-4, cy),
+                  fill=(125, 155, 166, 125), width=1)
+        draw.line((cx, cy-radius+4, cx, cy+radius-4),
+                  fill=(125, 155, 166, 125), width=1)
+        draw.text((cx-3, cy-radius-10), "N", fill=(228, 243, 246, 255))
+        tilt = self.imu_tilt(st.get("accel"))
+        if tilt is not None:
+            roll, pitch = tilt
+            # Bubble position is a gravity tilt indicator, not planar
+            # displacement. Clamp only the drawing, not the measurements.
+            dx = max(-19, min(19, roll * 0.34))
+            dy = max(-19, min(19, pitch * 0.34))
+            scale = min(1.0, 19.0 / max(math.hypot(dx, dy), 1e-6))
+            bx, by = int(round(cx + dx*scale)), int(round(cy + dy*scale))
+            draw.ellipse((bx-4, by-4, bx+4, by+4), fill=(78, 239, 210, 255),
+                         outline=(234, 255, 251, 255), width=1)
+        else:
+            roll = pitch = None
+            draw.text((cx-8, cy-4), "IMU", fill=(255, 182, 103, 255))
+        # Heading from wheel odometry is separate from gravity tilt; indicate
+        # the current robot yaw as a small amber pointer on the circle.
+        heading = st.get("heading")
+        if isinstance(heading, (float, int)) and math.isfinite(heading):
+            theta = math.radians(heading)
+            hx = int(round(cx + 21 * math.sin(theta)))
+            hy = int(round(cy - 21 * math.cos(theta)))
+            draw.ellipse((hx-2, hy-2, hx+2, hy+2), fill=(255, 193, 83, 255))
+        draw.text((cx-45, 69), f"R {self._format(roll, 0)} P {self._format(pitch, 0)}",
+                  fill=(223, 241, 244, 255))
+        pct = self._format(st.get("battery_pct"), 0, "%")
+        charging = "+" if st.get("charging") else "D" if st.get("docked") else ""
+        draw.text((cx-45, 84), f"{pct}{charging}  HDG {self._format(heading, 0)}",
+                  fill=(156, 235, 218, 255))
+        if not st.get("connected", False):
+            draw.rounded_rectangle((108, 44, 212, 58), radius=3,
+                                   fill=(117, 36, 27, 225))
+            draw.text((113, 46), "RECONNECTING", fill=(255, 236, 223, 255))
         return output
 
     def _offline_frame(self):
