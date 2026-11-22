@@ -212,7 +212,7 @@ class Robot:
                 self._face_last_content = None
                 self._face_sent_at = 0.0
                 self._status_light_signature = None
-                        self._charger_factory_id = None
+                self._charger_factory_id = None
                 self._charger_object_id = None
                 self._charger_connect_at = 0.0
                 self._charger_last_signature = None
@@ -750,7 +750,7 @@ class Robot:
             self.docking_phase = None
             self.dock_assist = False
             self._status_light_signature = None
-                self._charger_factory_id = None
+            self._charger_factory_id = None
             self._charger_object_id = None
             self._charger_connect_at = 0.0
             self._charger_last_signature = None
