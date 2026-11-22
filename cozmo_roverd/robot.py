@@ -54,11 +54,11 @@ def _fix_pycozmo_packet_batching(cli):
 def _limit_animation_idle_traffic(cli):
     """Send native-rate Cozmo speaker audio with bounded transport congestion.
 
-    PyCozmo's stock animation timer emits OutputSilence and the last display
-    bitmap at 30 Hz while idle, and emits audio at 30 Hz without checking
-    Cozmo's reliable send window. Keep the normal animation queue/timer but
-    send TTS only when acknowledged and not ahead of firmware playback.
-    Send sparse idle silence for the face clock and guard bitmap keepalives.
+    PyCozmo's stock controller sends 744-sample audio chunks at 30 Hz,
+    which is required for continuous speech. Retain that timing, cap
+    reliable-transport congestion, and greatly reduce idle face/silence
+    traffic. KEYFRAME and playback counters are recorded for diagnostics,
+    not used as per-packet gates.
     """
     import types
     from pycozmo import event, protocol_encoder
@@ -75,13 +75,13 @@ def _limit_animation_idle_traffic(cli):
     controller._cozmo_keyframes_received = 0
     controller._cozmo_last_keyframe_at = 0.0
     controller._cozmo_keyframe_consumed = 0
-    controller._cozmo_keyframe_gating = callable(getattr(cli, "add_handler", None))
+    controller._cozmo_keyframe_gating = False  # diagnostic; gate disabled for normal audio
     controller._cozmo_tts_requested_at = 0.0
 
-    if controller._cozmo_keyframe_gating:
-        # Keyframe is distinct from transport ACK. It is Cozmo's signal
-        # that its animation player is ready for another audio/display tick.
-        # Network ACK alone does not establish playback readiness.
+    if callable(getattr(cli, "add_handler", None)):
+        # Track firmware KEYFRAME events for diagnosing audio issues.
+        # Do not require one for each chunk: ordinary PyCozmo playback
+        # uses the animation clock, not strict KEYFRAME handshaking.
         def on_keyframe(_client, _packet):
             controller._cozmo_keyframes_received += 1
             controller._cozmo_last_keyframe_at = time.monotonic()
