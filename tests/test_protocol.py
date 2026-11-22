@@ -5,6 +5,8 @@ def test_hello_registers_custom_rover():
     h = hello("cozmo", "Cozmo", "#ffffff", 100)
     assert h["type"] == "hello"
     assert h["peripherals"][0]["id"] == "cozmo"
+    control_ids = {entry["id"] for entry in h["peripherals"][0]["controls"]}
+    assert control_ids == {"lift", "light"}
     assert h["cameraServo"]["enabled"]
     assert h["private"]["enabled"] is False
     assert h["private"]["safety"]["cliffEnabled"] is False
