@@ -28,8 +28,45 @@ def _limit_animation_idle_traffic(cli):
 
     controller = cli.anim_controller
     controller._cozmo_image_refresh_at = 0.0
+    controller._cozmo_audio_blocked_at = None
+    controller._cozmo_audio_aborted = False
+    controller._cozmo_audio_backpressure_ticks = 0
 
     def run_frame(self):
+        # Each OutputAudio frame is a 744-byte reliable packet, sent at
+        # 30 Hz. Do not outpace reliable acknowledgements and fill the
+        # PyCozmo send window, blocking motor/head commands.
+        sender = getattr(getattr(self.cli, "conn", None), "send_thread", None)
+        q = self.queue
+        audio_waiting = False
+        if hasattr(q, "audio_queue") and hasattr(q, "lock"):
+            with q.lock:
+                audio_waiting = bool(q.audio_queue)
+        if audio_waiting and sender is not None:
+            with sender.lock:
+                pending = ((sender.window.next_seq - sender.window.expected_seq)
+                           % sender.window.max_seq)
+            backlog = sender.queue.qsize()
+            if pending >= 4 or backlog >= 3:
+                now = time.monotonic()
+                self._cozmo_audio_backpressure_ticks += 1
+                if self._cozmo_audio_blocked_at is None:
+                    self._cozmo_audio_blocked_at = now
+                if now - self._cozmo_audio_blocked_at < 2.0:
+                    return
+                # Audio is optional. Abort a stalled utterance instead of
+                # letting its backlog block motor commands indefinitely.
+                with q.lock:
+                    discarded = len(q.audio_queue)
+                    q.audio_queue.clear()
+                self._cozmo_audio_aborted = True
+                self._cozmo_audio_blocked_at = None
+                LOG.warning(
+                    "Aborted Cozmo TTS after 2s without audio capacity "
+                    "(%d unacked, %d queued commands, %d audio frames discarded)",
+                    pending, backlog, discarded)
+                return
+            self._cozmo_audio_blocked_at = None
         audio_pkt, image_pkt, pkts = self.queue.get()
         if not self.animations_enabled:
             return
@@ -392,6 +429,8 @@ class Robot:
                 "last_queued_at": self.last_tts_played_at,
                 "robot_reported_audio_frames": played,
                 "queued_frames_remaining": queue_size,
+                "aborted_due_to_congestion": getattr(cli.anim_controller, "_cozmo_audio_aborted", False) if cli else None,
+                "backpressure_ticks": getattr(cli.anim_controller, "_cozmo_audio_backpressure_ticks", 0) if cli else None,
             }
 
     def note_tts(self, text):
@@ -513,6 +552,8 @@ class Robot:
                     raise RuntimeError("Cozmo disconnected")
                 controller = self.client.anim_controller
                 controller.enable_animations(True)
+                controller._cozmo_audio_aborted = False
+                controller._cozmo_audio_blocked_at = None
                 # Explicitly use the same 30-FPS output-audio queue that the
                 # built-in PyCozmo playback uses, with a verified nonempty WAV.
                 controller.play_audio(frames)
