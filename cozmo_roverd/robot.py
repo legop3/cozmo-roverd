@@ -94,8 +94,11 @@ def _limit_animation_idle_traffic(cli):
         # bug is fixed by _fix_pycozmo_packet_batching().
         sender = getattr(getattr(self.cli, "conn", None), "send_thread", None)
         q = self.queue
-        with q.lock:
-            audio_waiting = bool(q.audio_queue)
+        if hasattr(q, "lock") and hasattr(q, "audio_queue"):
+            with q.lock:
+                audio_waiting = bool(q.audio_queue)
+        else:
+            audio_waiting = False
         pending = 0
         queued = 0
         if sender is not None:
