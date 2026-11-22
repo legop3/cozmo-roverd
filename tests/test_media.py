@@ -43,11 +43,11 @@ def test_hud_renders_telemetry_without_changing_frame_size():
     })
     assert result.size == (320, 240)
     assert result.mode == "RGB"
-    assert result.getpixel((160, 37)) != frame.getpixel((160, 37))
-    # The original camera picture stays unchanged between the HUD strips.
+    assert result.getpixel((160, 17)) != frame.getpixel((160, 17))
+    # No text panels: the picture is unchanged outside a 30px IMU ball.
     assert result.getpixel((160, 120)) == (30, 50, 80)
     assert result.getpixel((20, 8)) == (30, 50, 80)
-    assert frame.getpixel((160, 37)) == (30, 50, 80)
+    assert frame.getpixel((160, 17)) == (30, 50, 80)
 
 
 def test_hud_can_be_disabled_without_crop():
