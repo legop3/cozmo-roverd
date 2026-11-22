@@ -17,6 +17,8 @@ def robot_with_face():
                   on_frame=lambda frame: None)
     robot.client = FakeDisplay()
     robot.ready = True
+    # Tests exercise the renderer independently of real-hardware transport.
+    robot._face_transport_enabled = True
     return robot
 
 
@@ -369,3 +371,14 @@ def test_battery_gauge_fill_and_voltage_change_independently_of_speech():
     assert empty.crop((0, 0, 90, 32)).tobytes() == full.crop((0, 0, 90, 32)).tobytes()
     assert empty.crop((94, 19, 128, 32)).tobytes() != full.crop((94, 19, 128, 32)).tobytes()
     assert full.tobytes() != charging.tobytes()
+
+
+def test_live_face_transport_is_disabled_to_protect_wheel_command_acks():
+    robot = Robot(max_speed=250, on_state=lambda: None,
+                  on_sensor=lambda: None, on_frame=lambda frame: None)
+    robot.client = FakeDisplay()
+    robot.ready = True
+    assert robot._face_transport_enabled is False
+    assert robot.refresh_face() is False
+    assert robot.advance_face_display() is False
+    assert robot.client.images == []
