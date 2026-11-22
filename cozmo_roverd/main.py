@@ -366,7 +366,8 @@ class Bridge:
                     # while the camera continues arriving. Watch for a real
                     # lack of ACK progress, rather than treating every brief
                     # packet/telemetry pause as a disconnection.
-                    transport = self.robot.transport_diagnostics()
+                    transport = (self.robot.transport_diagnostics()
+                                 if hasattr(self.robot, "transport_diagnostics") else None)
                     if transport:
                         expected = transport["next_ack_expected"]
                         pending = transport["pending_reliable_packets"]
