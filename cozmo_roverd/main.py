@@ -317,12 +317,30 @@ class Bridge:
                 await asyncio.to_thread(self.robot.connect)
                 LOG.info("Cozmo hardware ready")
                 self.hardware_ready.set()
+                # State updates can pause during charging, exposure changes,
+                # camera traffic, or transient radio congestion. Do not tear
+                # down an otherwise-associated robot after five seconds.
+                # NetworkManager is queried only every 2 seconds; require
+                # repeated loss before reactivating the Wi-Fi profile.
+                wifi_misses = 0
+                last_wifi_check = 0.0
                 while not self.stop_event.is_set():
-                    if not self.wifi.active():
-                        raise RuntimeError("Cozmo Wi-Fi link lost")
-                    if not self.robot.is_healthy():
-                        raise RuntimeError("Cozmo state stream lost while off charger")
-                    await asyncio.sleep(0.1)
+                    now = time.monotonic()
+                    if now - last_wifi_check >= 2.0:
+                        if self.wifi.active():
+                            wifi_misses = 0
+                        else:
+                            wifi_misses += 1
+                            if wifi_misses >= 3:
+                                raise RuntimeError("Cozmo Wi-Fi association lost (3 checks)")
+                        last_wifi_check = now
+                    # A prolonged silence indicates a stuck PyCozmo session,
+                    # not a brief telemetry pause. Keep the Wi-Fi association
+                    # and reconnect the client only after this grace period.
+                    if self.robot.last_sensor and not self.robot.battery.docked and (
+                        now - self.robot.last_sensor > 45.0):
+                        raise RuntimeError("No Cozmo RobotState for 45 seconds; restarting PyCozmo only")
+                    await asyncio.sleep(0.25)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
