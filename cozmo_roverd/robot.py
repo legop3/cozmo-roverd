@@ -52,157 +52,72 @@ def _fix_pycozmo_packet_batching(cli):
 
 
 def _limit_animation_idle_traffic(cli):
-    """Send native-rate Cozmo speaker audio with bounded transport congestion.
+    """Stable, display-only PyCozmo animation loop.
 
-    PyCozmo's stock controller sends 744-sample audio chunks at 30 Hz,
-    which is required for continuous speech. Retain that timing, cap
-    reliable-transport congestion, and greatly reduce idle face/silence
-    traffic. KEYFRAME and playback counters are recorded for diagnostics,
-    not used as per-packet gates.
+    The optional speaker path is disabled: it repeatedly froze the reliable
+    Cozmo channel. Do not patch audio pacing or touch the camera here.
+    A new bitmap is sent once, with low-rate OutputSilence frames to advance
+    Cozmo's animation/display subsystem. Keep the last bitmap alive every
+    10 seconds. No unconditional 30 Hz image or silence flooding.
     """
     import types
-    from pycozmo import event, protocol_encoder
+    from pycozmo import protocol_encoder
 
     controller = cli.anim_controller
     controller._cozmo_image_refresh_at = 0.0
-    controller._cozmo_audio_blocked_at = None
+    controller._cozmo_last_idle_silence_at = 0.0
     controller._cozmo_audio_aborted = False
-    controller._cozmo_audio_abort_reason = None
+    controller._cozmo_audio_abort_reason = "Hardware TTS disabled for stability"
     controller._cozmo_audio_backpressure_ticks = 0
     controller._cozmo_audio_frames_submitted = 0
     controller._cozmo_audio_played_baseline = None
-    controller._cozmo_last_idle_silence_at = 0.0
-    controller._cozmo_last_image_at = 0.0
     controller._cozmo_keyframes_received = 0
-    controller._cozmo_last_keyframe_at = 0.0
-    controller._cozmo_keyframe_consumed = 0
-    controller._cozmo_keyframe_gating = False  # diagnostic; gate disabled for normal audio
-    controller._cozmo_tts_requested_at = 0.0
-    controller._cozmo_resume_camera = None
-    controller._cozmo_on_speech_abort = None
+    controller._cozmo_keyframe_gating = False
     controller._cozmo_camera_paused_for_speech = False
     controller._cozmo_tts_camera_restores = 0
 
-    def resume_video(self):
-        callback = self._cozmo_resume_camera
-        self._cozmo_resume_camera = None
-        self._cozmo_camera_paused_for_speech = False
-        if callback is not None:
-            try:
-                callback()
-                self._cozmo_tts_camera_restores += 1
-            except Exception:
-                LOG.exception("Failed to resume Cozmo camera after speech")
-
-    controller._cozmo_resume_video = types.MethodType(resume_video, controller)
-
-    if callable(getattr(cli, "add_handler", None)):
-        # Track firmware KEYFRAME events for diagnosing audio issues.
-        # Do not require one for each chunk: ordinary PyCozmo playback
-        # uses the animation clock, not strict KEYFRAME handshaking.
-        def on_keyframe(_client, _packet):
-            controller._cozmo_keyframes_received += 1
-            controller._cozmo_last_keyframe_at = time.monotonic()
-        cli.add_handler(protocol_encoder.Keyframe, on_keyframe)
-
     def run_frame(self):
-        # Run at PyCozmo's native 30 Hz animation cadence. OutputAudio is
-        # time-based: waiting for one KEYFRAME or network ACK between every
-        # 744-sample chunk starves the speaker. The separate sender framing
-        # bug is fixed by _fix_pycozmo_packet_batching().
-        sender = getattr(getattr(self.cli, "conn", None), "send_thread", None)
+        if not self.animations_enabled:
+            return
+        now = time.monotonic()
+        # TTS must not be sent, including anything accidentally queued.
         q = self.queue
         if hasattr(q, "lock") and hasattr(q, "audio_queue"):
             with q.lock:
-                audio_waiting = bool(q.audio_queue)
-        else:
-            audio_waiting = False
-        pending = 0
-        queued = 0
+                q.audio_queue.clear()
+        _, image_pkt, pkts = q.get()
+        sender = getattr(getattr(self.cli, "conn", None), "send_thread", None)
+        pending, waiting = 0, 0
         if sender is not None:
             with sender.lock:
-                pending = ((sender.window.next_seq - sender.window.expected_seq)
-                           % sender.window.max_seq)
-            queued = sender.queue.qsize()
+                pending = (
+                    (sender.window.next_seq - sender.window.expected_seq)
+                    % sender.window.max_seq)
+            waiting = sender.queue.qsize()
 
-        now = time.monotonic()
-        # Keep the reliable queue bounded, but never wait for a robot
-        # KEYFRAME or frame-playback count. Those events are diagnostics,
-        # not a documented condition for sending each audio chunk.
-        if (audio_waiting or self.playing_audio) and (pending >= 6 or queued >= 3):
-            self._cozmo_audio_backpressure_ticks += 1
-            if self._cozmo_audio_blocked_at is None:
-                self._cozmo_audio_blocked_at = now
-            if now - self._cozmo_audio_blocked_at < 1.5:
-                return
-            with q.lock:
-                dropped = len(q.audio_queue)
-                q.audio_queue.clear()
-            self.playing_audio = False
-            self._cozmo_audio_aborted = True
-            callback = self._cozmo_on_speech_abort
-            if callable(callback):
-                callback("Audio reliable transport stalled during TTS")
-            self._cozmo_resume_video()
-            self._cozmo_audio_abort_reason = (
-                f"transport congested: {pending} unacknowledged, {queued} queued")
-            self._cozmo_audio_blocked_at = None
-            LOG.warning(
-                "Cozmo speech aborted to protect controls: "
-                "%d unacknowledged packets, %d application packets, "
-                "%d speech chunks discarded, %d chunks submitted",
-                pending, queued, dropped, self._cozmo_audio_frames_submitted)
-            return
-        self._cozmo_audio_blocked_at = None
+        # Always accept a fresh operator status image unless the radio is
+        # already seriously congested; avoid losing it from the image queue.
+        if image_pkt is not None:
+            if pending >= 12 or waiting >= 8:
+                if hasattr(q, "image_queue") and hasattr(q, "lock"):
+                    with q.lock:
+                        q.image_queue.appendleft(image_pkt)
+            else:
+                self.last_image_pkt = image_pkt
+                self.cli.conn.send(image_pkt)
+                self._cozmo_image_refresh_at = now
 
-        if not self.animations_enabled:
-            return
-        audio_pkt, image_pkt, pkts = q.get()
-        if audio_pkt is not None:
-            self.cli.conn.send(audio_pkt)
-            self._cozmo_audio_frames_submitted += 1
-            self.playing_audio = True
-        elif self.playing_audio:
-            self.playing_audio = False
+        # PyCozmo normally sends OutputSilence at 30 Hz; slow this to 4 Hz
+        # while preserving the animation clock needed to show images.
+        if (self.image_displayed and pending < 12 and waiting < 8
+                and now - self._cozmo_last_idle_silence_at >= 0.25):
             self.cli.conn.send(protocol_encoder.OutputSilence())
             self._cozmo_last_idle_silence_at = now
-            self.cli.conn.post_event(event.EvtAudioCompleted, self.cli)
-            self._cozmo_resume_video()
-        elif (self.image_displayed and not audio_waiting
-              and getattr(self.cli.conn, "state", None) ==
-                  getattr(self.cli.conn, "CONNECTED", object())):
-            # A fresh DisplayImage needs animation clocks to actually
-            # advance on the robot. Previously suppressing silence when
-            # even ONE drive packet was unacknowledged starved the face
-            # indefinitely, leaving partial pixels on the OLED.
-            # Clock at 10 Hz for the first second after a new image, then
-            # 1 Hz while idle. Never inject silence into a congested link.
-            warmup = now - self._cozmo_last_image_at < 1.0
-            interval = 0.10 if warmup else 1.0
-            if (now - self._cozmo_last_idle_silence_at >= interval
-                    and pending < 8 and queued < 4):
-                self.cli.conn.send(protocol_encoder.OutputSilence())
-                self._cozmo_last_idle_silence_at = now
 
-        # Camera and controls must not contend with TTS for large reliable
-        # messages. Preserve pending face images until speech is finished.
-        if (audio_pkt is not None or self.playing_audio or audio_waiting):
-            if image_pkt is not None:
-                with q.lock:
-                    q.image_queue.appendleft(image_pkt)
-                image_pkt = None
-        elif image_pkt is None and self.procedural_face_enabled and (
-                not self.playing_animation and not self.image_displayed):
-            image_pkt = self._get_face_image()
-
-        if image_pkt is not None:
-            self.last_image_pkt = image_pkt
-            self.cli.conn.send(image_pkt)
-            self._cozmo_image_refresh_at = now
-            self._cozmo_last_image_at = now
-        elif (not self.playing_audio and not audio_waiting and self.image_displayed
-              and now - self._cozmo_image_refresh_at >= 10.0
-              and pending == 0 and queued == 0):
+        # Refresh only the last actual image, never the stock blank packet.
+        if (image_pkt is None and self.image_displayed and pending < 8
+                and waiting < 4 and
+                now - self._cozmo_image_refresh_at >= 10.0):
             self.cli.conn.send(self.last_image_pkt)
             self._cozmo_image_refresh_at = now
 
@@ -241,8 +156,8 @@ class Robot:
         self.last_packet_error = None
         self.packet_status = {}
         self.last_tts = ""
-        self.last_tts_error = None
-        self._tts_transport_faulted = False
+        self.last_tts_error = "Hardware speech disabled for robot stability"
+        self._tts_transport_faulted = True
         self._tts_last_stream_at = 0.0
         self.last_tts_frames = 0
         self.last_tts_played_at = None
@@ -258,7 +173,6 @@ class Robot:
     def connect(self):
         import pycozmo
         cli = pycozmo.Client(enable_animations=True, enable_procedural_face=False)
-        _fix_pycozmo_packet_batching(cli)
         _limit_animation_idle_traffic(cli)
         cli.start()
         try:
@@ -277,8 +191,8 @@ class Robot:
             cli.add_handler(pycozmo.protocol_encoder.RobotState,
                             lambda _client, pkt: self._packet(cli, pkt))
             cli.enable_camera(enable=True, color=True)
-            cli.anim_controller._cozmo_on_speech_abort = self.mark_speech_unstable
-            cli.set_volume(50000)
+            # Do not enable speaker playback or alter camera streaming
+            # in this stable driver. The last requested TTS remains visible.
             cli.enable_animations(True)
             cli.enable_procedural_face(False)
             cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
@@ -572,7 +486,7 @@ class Robot:
             return
         with self.lock:
             self.last_tts = message
-            self.last_tts_error = None
+            self.last_tts_error = "Hardware speech disabled for robot stability"
             self._face_scroll = 0
             self._face_last_content = None
             self._face_sent_at = 0.0
@@ -690,106 +604,10 @@ class Robot:
         LOG.error("Cozmo speaker disabled for this service session: %s", reason)
 
     def speak(self, text, *, speed=1.0):
-        """Generate eSpeak audio and queue validated frames to Cozmo's speaker."""
-        import pycozmo
-        if self._tts_transport_faulted:
-            raise RuntimeError(
-                "Cozmo speaker disabled after a transport stall; "
-                "restart service to test speaker again")
-        message = " ".join(str(text).split())[:512]
-        if not message:
-            raise ValueError("TTS text is empty")
-        speed = max(0.5, min(2.0, float(speed)))
-        try:
-            with tempfile.TemporaryDirectory(prefix="cozmo-speech-") as directory:
-                raw = str(Path(directory) / "raw.wav")
-                output = str(Path(directory) / "cozmo.wav")
-                subprocess.run(
-                    ["espeak-ng", "-s", str(round(175 * speed)), "-w", raw, message],
-                    check=True, capture_output=True, timeout=20)
-                subprocess.run(
-                    ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-                     "-i", raw, "-ar", "22050", "-ac", "1",
-                     "-c:a", "pcm_s16le", output],
-                    check=True, capture_output=True, timeout=20)
-                if not Path(output).is_file() or Path(output).stat().st_size <= 44:
-                    raise RuntimeError("TTS produced no PCM audio")
-                frames = pycozmo.audio.load_wav(output)
-                if not frames:
-                    raise RuntimeError("TTS produced no Cozmo audio frames")
-            with self.lock:
-                if self.client is None or not self.ready:
-                    raise RuntimeError("Cozmo disconnected")
-                cli = self.client
-                controller = cli.anim_controller
-                audio_q = getattr(
-                    getattr(controller, "queue", None), "audio_queue", None)
-                if (getattr(controller, "playing_audio", False) or
-                        (audio_q is not None and len(audio_q))):
-                    raise RuntimeError("Cozmo speech already playing")
-                controller.enable_animations(True)
-                controller._cozmo_audio_aborted = False
-                controller._cozmo_audio_abort_reason = None
-                controller._cozmo_audio_blocked_at = None
-                controller._cozmo_audio_frames_submitted = 0
-                controller._cozmo_audio_backpressure_ticks = 0
-                controller._cozmo_audio_played_baseline = getattr(
-                    controller, "num_audio_frames_played", None)
-                controller._cozmo_keyframe_consumed = getattr(
-                    controller, "_cozmo_keyframes_received", 0)
-                controller._cozmo_tts_requested_at = time.monotonic()
+        """Hardware speech is intentionally disabled after repeated crashes."""
+        self.last_tts_error = "Hardware speech disabled for robot stability"
+        raise RuntimeError(self.last_tts_error)
 
-            # Keep this work outside the robot command lock: the entire
-            # point is allowing drives and other control input to continue.
-            camera_pause = getattr(cli, "enable_camera", None)
-            if callable(camera_pause):
-                camera_pause(enable=False, color=True)
-                controller._cozmo_camera_paused_for_speech = True
-                controller._cozmo_resume_camera = (
-                    lambda client=cli: client.enable_camera(enable=True, color=True))
-                # A pause command merely queued for sending does not stop
-                # the incoming JPEG stream. Wait briefly for its ACK, then
-                # give the last camera fragment time to arrive. If Wi-Fi is
-                # congested, skip speech rather than forcing an audio packet.
-                sender = getattr(getattr(cli, "conn", None), "send_thread", None)
-                if sender is not None:
-                    deadline = time.monotonic() + 1.0
-                    cleared = False
-                    while time.monotonic() < deadline:
-                        with sender.lock:
-                            outstanding = (
-                                (sender.window.next_seq -
-                                 sender.window.expected_seq) %
-                                sender.window.max_seq)
-                        if outstanding == 0 and sender.queue.empty():
-                            cleared = True
-                            break
-                        time.sleep(0.025)
-                    if not cleared:
-                        controller._cozmo_resume_video()
-                        raise RuntimeError(
-                            "Cozmo speaker unavailable: camera pause not "
-                            "acknowledged; protecting the command channel")
-                    time.sleep(0.10)
-            try:
-                with self.lock:
-                    if self.client is not cli or not self.ready:
-                        raise RuntimeError("Cozmo disconnected during speech setup")
-                    controller.play_audio(frames)
-                    self._tts_last_stream_at = time.monotonic()
-                    self.last_tts_frames = len(frames)
-                    self.last_tts_played_at = time.time()
-                    self.last_tts_error = None
-            except Exception:
-                controller._cozmo_resume_video()
-                raise
-            LOG.info("Queued %d Cozmo speaker frames for TTS", len(frames))
-        except (OSError, subprocess.CalledProcessError,
-                subprocess.TimeoutExpired, ValueError, RuntimeError) as exc:
-            with self.lock:
-                self.last_tts_error = str(exc)[:180]
-            LOG.exception("Cozmo speaker TTS failed")
-            raise RuntimeError(f"Cozmo TTS failed: {exc}") from exc
 
     def close(self):
         """Release the robot promptly without network writes on a dead link.
