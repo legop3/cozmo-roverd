@@ -147,3 +147,35 @@ def test_pickup_and_docked_status_never_block_direct_driving():
     robot._picked_up(True)
     robot._cliff(True)
     assert robot.client.drives[-1] == (250, -250)
+
+
+def test_live_exposure_switch_uses_firmware_auto_flag_and_keeps_manual_gain_low():
+    from pycozmo.protocol_encoder import SetCameraParams
+    robot, _ = fake_robot(mode="bright")
+    robot.set_camera_auto_exposure()
+    assert robot.camera_mode == "auto"
+    pkt = robot.client.packets[-1]
+    assert isinstance(pkt, SetCameraParams)
+    assert pkt.auto_exposure_enabled is True
+    assert pkt.exposure_ms == 0
+    robot.set_camera_manual_exposure(2)
+    assert robot.camera_mode == "manual"
+    pkt = robot.client.packets[-1]
+    assert isinstance(pkt, SetCameraParams)
+    assert pkt.auto_exposure_enabled is False
+    assert pkt.exposure_ms == 2
+    assert pkt.gain == robot.client.camera_config.min_gain
+    robot.set_camera_auto_exposure()
+    assert robot.client.packets[-1].auto_exposure_enabled is True
+    assert robot.manual_exposure_ms == 2
+
+
+def test_camera_mode_is_remembered_for_reconnect():
+    robot, _ = fake_robot(mode="auto")
+    robot.configure_camera()
+    assert robot.client.packets[-1].auto_exposure_enabled is True
+    robot.set_camera_manual_exposure(7)
+    robot.client = DummyClient()
+    robot.configure_camera()
+    assert robot.client.packets[-1].auto_exposure_enabled is False
+    assert robot.client.packets[-1].exposure_ms == 7
