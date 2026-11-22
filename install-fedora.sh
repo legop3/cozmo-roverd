@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Do not request ffmpeg-free alongside RPM Fusion's ffmpeg: the packages conflict.
 # Preserve the host's existing FFmpeg installation and its encoders.
-dnf install -y python3 python3-pip python3-devel gcc git NetworkManager libva-intel-driver libva-utils espeak-ng
+dnf install -y python3 python3-pip python3-devel gcc git NetworkManager libva-intel-driver libva-utils espeak-ng dejavu-sans-fonts
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "FFmpeg not found; installing a Fedora-compatible build..."
   if ! dnf install -y ffmpeg; then
