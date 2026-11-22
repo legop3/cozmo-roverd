@@ -1,14 +1,19 @@
-"""Large wrapped speech text and a compact voltage label on Cozmo's 128x32 face.
+"""Readable adaptive Cozmo face at its native 128x32 monochrome resolution.
 
-The firmware handles its physical alternating OLED scanlines. Render at the
-native 1-bit protocol resolution without scaling, smoothing, or row duplication.
+Speech owns the left panel and is sized per message/page. The separate right
+panel shows actual measured voltage and an *estimated* charge bar. Physical
+OLED scanline interlacing belongs to Cozmo firmware, not to this bitmap.
 """
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFont
 
 WIDTH, HEIGHT = 128, 32
+PANEL_LEFT = 91
+TEXT_WIDTH = PANEL_LEFT - 4
+TEXT_HEIGHT = HEIGHT - 2
 
 _FONT_CHOICES = (
     "DejaVuSans-Bold.ttf",
@@ -25,21 +30,19 @@ _VOLTAGE_CHOICES = (
 )
 
 
+@lru_cache(maxsize=64)
 def _font(size, choices):
     for name in choices:
         try:
             return ImageFont.truetype(name, size)
         except (OSError, ValueError):
             continue
-    # Headless installations may lack system fonts; never downsample a
-    # fallback bitmap font (that previously produced near-invisible text).
-    return ImageFont.load_default()
-
-
-_MESSAGE_FONT = _font(12, _FONT_CHOICES)
-_VOLTAGE_FONT = _font(9, _VOLTAGE_CHOICES)
-_LINE_HEIGHT = 11
-_LINES_PER_PAGE = 3
+    # Pillow's scalable built-in font works even if Fedora has no TTFs.
+    # Older versions fall back to the native-size bitmap, never downsampled.
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _width(draw, value, font):
@@ -47,74 +50,121 @@ def _width(draw, value, font):
     return box[2] - box[0]
 
 
-def _pages(message, draw, widths):
-    """Pixel-measured word wrap, splitting even words wider than a line."""
+def _height(draw, font):
+    box = draw.textbbox((0, 0), "Agyp", font=font)
+    return max(1, box[3] - box[1])
+
+
+def _wrap(message, draw, font, width):
+    """Wrap by measured pixels and split long words without elision."""
     words = message.split()
-    pages, lines, line = [], [], ""
-    while words:
-        word = words.pop(0)
-        limit = widths[len(lines)]
+    lines = []
+    line = ""
+    for word in words:
         candidate = (line + " " + word).strip()
-        if _width(draw, candidate, _MESSAGE_FONT) <= limit:
+        if _width(draw, candidate, font) <= width:
             line = candidate
             continue
         if line:
             lines.append(line)
             line = ""
-        else:
-            # A word wider than the available row must be split, not clipped.
-            count = 1
-            while (count < len(word) and
-                   _width(draw, word[:count + 1], _MESSAGE_FONT) <= limit):
-                count += 1
-            lines.append(word[:count])
-            if count < len(word):
-                words.insert(0, word[count:])
-        if len(lines) == _LINES_PER_PAGE:
-            pages.append(lines)
-            lines = []
+        while word and _width(draw, word, font) > width:
+            take = 1
+            while (take < len(word) and
+                   _width(draw, word[:take + 1], font) <= width):
+                take += 1
+            lines.append(word[:take])
+            word = word[take:]
+        line = word
     if line:
         lines.append(line)
-    if lines:
-        pages.append(lines)
-    return pages or [["NO TTS YET"]]
+    return lines or ["NO MESSAGE"]
 
 
-def status_image(*, voltage=None, last_tts="", scroll=0, **_unused):
-    """Show three large wrapped TTS lines with voltage tucked in top-right."""
+def _layout(message, draw):
+    """Fit the entire message as large as possible, or paginate at 15px.
+
+    Short TTS can fill a line at 25px. Multi-line text uses the largest
+    font that fits in 30px. Long TTS stays readable instead of shrinking
+    the entire message into microscopic type.
+    """
+    for size in range(25, 13, -1):
+        font = _font(size, _FONT_CHOICES)
+        step = _height(draw, font) + 2
+        lines = _wrap(message, draw, font, TEXT_WIDTH)
+        if len(lines) * step - 2 <= TEXT_HEIGHT:
+            return font, [lines], step
+    font = _font(15, _FONT_CHOICES)
+    step = _height(draw, font) + 2
+    per_page = max(1, (TEXT_HEIGHT + 2) // step)
+    lines = _wrap(message, draw, font, TEXT_WIDTH)
+    return font, [lines[i:i + per_page] for i in range(0, len(lines), per_page)], step
+
+
+def _battery_panel(draw, voltage, percent, charging):
+    # Fixed separator and battery panel; speech never overlaps voltage.
+    draw.line((PANEL_LEFT, 1, PANEL_LEFT, HEIGHT - 2), fill=1)
     try:
-        val = float(voltage)
-        voltage_text = f"{val:.2f}V" if math.isfinite(val) else "--.--V"
+        v = float(voltage)
+        valid = math.isfinite(v) and 2.7 <= v <= 4.4
     except (ValueError, TypeError, OverflowError):
-        voltage_text = "--.--V"
+        valid = False
+        v = 0.0
+    label = f"{v:.2f}V" if valid else "--.--"
+    font = _font(10, _VOLTAGE_CHOICES)
+    box = draw.textbbox((0, 0), label, font=font)
+    tw = box[2] - box[0]
+    draw.text((PANEL_LEFT + 2 + max(0, (33 - tw) // 2), 2 - box[1]),
+              label, font=font, fill=1)
 
-    message = " ".join(str(last_tts or "").split()) or "NO TTS YET"
+    # Battery outline, terminal and four distinct charge segments.
+    x, y, w, h = PANEL_LEFT + 4, 19, 27, 10
+    draw.rectangle((x, y, x + w, y + h), outline=1)
+    draw.rectangle((x + w + 1, y + 3, x + w + 3, y + 7), fill=1)
+    try:
+        soc = float(percent)
+        valid_soc = math.isfinite(soc)
+    except (TypeError, ValueError, OverflowError):
+        valid_soc = False
+        soc = 0.0
+    if valid_soc:
+        count = min(4, max(0, math.ceil(max(0.0, min(100.0, soc)) / 25)))
+        for i in range(count):
+            x0 = x + 2 + i * 6
+            draw.rectangle((x0, y + 2, x0 + 4, y + h - 2), fill=1)
+    if charging:
+        # Lightning-shaped cutout distinguishes actively charging.
+        draw.line((x + 12, y + 1, x + 9, y + 6, x + 14, y + 6,
+                   x + 11, y + 9), fill=0, width=1)
+
+
+def status_image(*, voltage=None, percent=None, charging=False, last_tts="",
+                 scroll=0, **_unused):
+    """Render a dynamically fitted speech page and separate battery gauge."""
     image = Image.new("1", (WIDTH, HEIGHT), 0)
     draw = ImageDraw.Draw(image)
-    voltage_width = _width(draw, voltage_text, _VOLTAGE_FONT)
-    first_line_width = max(32, WIDTH - voltage_width - 5)
-    pages = _pages(message, draw, (first_line_width, WIDTH, WIDTH))
+    message = " ".join(str(last_tts or "").split()) or "NO MESSAGE"
+    font, pages, step = _layout(message, draw)
     lines = pages[int(scroll) % len(pages)]
-    # Draw text at its glyph bounds, rather than allowing font ascenders to
-    # consume blank protocol rows. Rows 0, 11, 22 share almost all the face.
-    for index, line in enumerate(lines):
-        box = draw.textbbox((0, 0), line, font=_MESSAGE_FONT)
-        draw.text((0, index * _LINE_HEIGHT - box[1]), line,
-                  font=_MESSAGE_FONT, fill=1)
-    # A small overlay in otherwise unused top-right space, not an entire row.
-    box = draw.textbbox((0, 0), voltage_text, font=_VOLTAGE_FONT)
-    draw.text((WIDTH - voltage_width, -box[1]), voltage_text,
-              font=_VOLTAGE_FONT, fill=1)
+    used = len(lines) * step - 2
+    y = max(0, (HEIGHT - used) // 2)
+    for line in lines:
+        bounds = draw.textbbox((0, 0), line, font=font)
+        tw = bounds[2] - bounds[0]
+        x = max(1, (PANEL_LEFT - tw) // 2)
+        draw.text((x - bounds[0], y - bounds[1]), line, font=font, fill=1)
+        y += step
+    _battery_panel(draw, voltage, percent, bool(charging))
     return image
 
 
-def compact_status_image(*, voltage=None, last_tts="", scroll=0,
-                         battery_only=False, message_limit=14, **_unused):
-    """Compact transport fallback, keeping a short readable speech excerpt."""
+def compact_status_image(*, voltage=None, percent=None, charging=False,
+                         last_tts="", scroll=0, battery_only=False,
+                         message_limit=14, **_unused):
+    """Lower-entropy fallback when encoded frame exceeds one transport packet."""
     if battery_only:
         last_tts = ""
     elif message_limit:
-        msg = " ".join(str(last_tts or "").split())
-        if len(msg) > message_limit:
-            last_tts = msg[:message_limit]
-    return status_image(voltage=voltage, last_tts=last_tts, scroll=0)
+        last_tts = " ".join(str(last_tts or "").split())[:message_limit]
+    return status_image(voltage=voltage, percent=percent, charging=charging,
+                        last_tts=last_tts, scroll=scroll)
