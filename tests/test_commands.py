@@ -1,4 +1,5 @@
 import pytest
+import threading
 from cozmo_roverd.main import Bridge
 
 class FakeRobot:
@@ -30,6 +31,7 @@ def bridge():
     b.cfg = type("Config", (), {"max_speed": 100})()
     b.robot = FakeRobot()
     b.head_degrees = 10
+    b._tts_synthesis_lock = threading.Lock()
     b.report_result = lambda command_id, error=None: b.robot.calls.append(("result", command_id, error))
     return b
 
@@ -80,8 +82,32 @@ def test_dock_assist_and_cancel(bridge):
 
 
 def test_tts_to_speaker(bridge):
-    bridge.execute({"type": "tts", "tts": {"speak": True, "text": "Hi", "speed": 1.1}})
+    bridge.execute({"id": "s1", "type": "tts",
+                    "tts": {"speak": True, "text": "Hi", "speed": 1.1}})
+    # Speech synthesis runs on its own thread, so wait for it to finish.
+    assert bridge._tts_synthesis_lock.acquire(timeout=2)
+    bridge._tts_synthesis_lock.release()
     assert bridge.robot.calls[-2:] == [("note_tts", "Hi"), ("tts", "Hi", 1.1)]
+
+
+def test_tts_synthesis_cannot_block_motor_commands(bridge):
+    started, finish = threading.Event(), threading.Event()
+    def slow_speech(text, speed=1):
+        started.set()
+        finish.wait(timeout=2)
+    bridge.robot.speak = slow_speech
+    try:
+        bridge.execute({"id": "s2", "type": "tts", "tts": {"text": "Hello"}})
+        assert started.wait(timeout=1)
+        # The WebSocket receiver is no longer waiting on eSpeak/FFmpeg,
+        # so it can apply the next motor command immediately.
+        bridge.execute({"id": "d2", "type": "drive",
+                        "driveDirect": {"left": 50, "right": -50}})
+        assert bridge.robot.calls[-1] == ("drive", 50, -50)
+    finally:
+        finish.set()
+    assert bridge._tts_synthesis_lock.acquire(timeout=2)
+    bridge._tts_synthesis_lock.release()
 
 
 def test_new_drive_interrupts_undock_instead_of_being_ignored(bridge):
