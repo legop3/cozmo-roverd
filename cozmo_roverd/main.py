@@ -23,13 +23,15 @@ class Bridge:
         self.stop_event = asyncio.Event()
         self.hardware_ready = asyncio.Event()
         self.state_dirty = asyncio.Event()
+        self.results = asyncio.Queue(maxsize=16)
         self.mrr_connected = False
         self.last_state_sent = 0.0
         self.loop = asyncio.get_running_loop()
         self.wifi = Wifi(config)
         self.publisher = Publisher(rtsp_target(config), config.fps) if config.video else None
         self.robot = Robot(max_speed=config.max_speed, on_state=self.publish_state,
-                           on_sensor=self.publish_sensor, on_frame=self.handle_frame)
+                           on_sensor=self.publish_sensor, on_frame=self.handle_frame,
+                           camera_mode=config.camera_mode)
         self.head_degrees = 10.0
 
     def publish_state(self):
@@ -42,13 +44,17 @@ class Bridge:
         if battery.stale() or not self.robot.ready:
             return state(charging=None, docked=None,
                          headlight=self.robot.headlight, voltage=None,
-                         driving=self.robot.ready)
+                         driving=self.robot.ready,
+                         dock_assist=self.robot.dock_assist,
+                         docking_phase=self.robot.docking_phase)
         return state(charging=battery.charging,
                      docked=battery.docked,
                      headlight=self.robot.headlight,
                      voltage=battery.voltage,
                      battery=battery.battery_state(),
-                     driving=self.robot.ready)
+                     driving=self.robot.ready,
+                     dock_assist=self.robot.dock_assist,
+                     docking_phase=self.robot.docking_phase)
 
     def current_sensor(self):
         latest = self.robot.latest
@@ -57,7 +63,9 @@ class Bridge:
         wheels = latest.get("wheel_speeds_mmps") or {}
         return sensor(voltage=latest.get("battery_voltage_v"),
                       left=wheels.get("left"), right=wheels.get("right"),
-                      on_charger=latest.get("on_charger"))
+                      on_charger=latest.get("on_charger"),
+                      cliff=latest.get("cliff_detected"),
+                      cliff_raw=latest.get("raw_robot_state", {}).get("cliff_channels"))
 
     def publish_sensor(self):
         # Sensors are sent at a bounded 5 Hz in _send, not for every hardware
@@ -75,7 +83,8 @@ class Bridge:
             if not isinstance(payload, dict): raise ValueError("driveDirect missing")
             left = bounded_speed(payload.get("left"), self.cfg.max_speed)
             right = bounded_speed(payload.get("right"), self.cfg.max_speed)
-            self.robot.drive(left, right)
+            if not self.robot.undock_active:
+                self.robot.drive(left, right)
         elif cmd == "servo":
             payload = msg.get("servo")
             if not isinstance(payload, dict): raise ValueError("servo payload missing")
