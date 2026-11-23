@@ -111,6 +111,7 @@ function configFromUI() {
     fps: Number(field("fps")),
     video: $("video").checked,
     camera_enabled: $("camera-enabled").checked,
+    diagnostic_minimal: $("diagnostic-minimal").checked,
     rtsp_url: field("rtsp-url").trim(),
   };
 }
@@ -129,6 +130,7 @@ function applyConfig(config, options) {
       : "Enter the password shown on Cozmo.";
   $("video").checked = !!config.video;
   $("camera-enabled").checked = config.camera_enabled !== false;
+  $("diagnostic-minimal").checked = config.diagnostic_minimal === true;
   $("hud").checked = config.hud !== false;
   $("rtsp-url").value = config.rtsp_url;
   selectOptions($("speed"), options.speeds.map(n => ({value:n,label:`${n} mm/s`})), config.max_speed);
