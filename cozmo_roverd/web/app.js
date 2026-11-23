@@ -112,7 +112,6 @@ function configFromUI() {
     video: $("video").checked,
     camera_enabled: $("camera-enabled").checked,
     diagnostic_minimal: $("diagnostic-minimal").checked,
-    face_enabled: $("face-enabled").checked,
     rtsp_url: field("rtsp-url").trim(),
   };
 }
@@ -132,7 +131,6 @@ function applyConfig(config, options) {
   $("video").checked = !!config.video;
   $("camera-enabled").checked = config.camera_enabled !== false;
   $("diagnostic-minimal").checked = config.diagnostic_minimal === true;
-  $("face-enabled").checked = config.face_enabled === true;
   $("hud").checked = config.hud !== false;
   $("rtsp-url").value = config.rtsp_url;
   selectOptions($("speed"), options.speeds.map(n => ({value:n,label:`${n} mm/s`})), config.max_speed);
