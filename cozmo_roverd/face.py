@@ -168,3 +168,44 @@ def compact_status_image(*, voltage=None, percent=None, charging=False,
         last_tts = " ".join(str(last_tts or "").split())[:message_limit]
     return status_image(voltage=voltage, percent=percent, charging=charging,
                         last_tts=last_tts, scroll=scroll)
+
+
+def wire_status_image(*, voltage=None, percent=None, charging=False,
+                      last_tts="", scroll=0, compact=False):
+    """Low-entropy fallback fitting Cozmo's small DisplayImage packet budget.
+
+    Prefer short 8px text over large outlined glyphs. Keep the last message
+    and voltage visibly separate. Use only sparse pixels to compress well.
+    """
+    image = Image.new("1", (WIDTH, HEIGHT), 0)
+    draw = ImageDraw.Draw(image)
+    font = _font(9 if not compact else 8, _FONT_CHOICES)
+    message = " ".join(str(last_tts or "").split()) or "NO MESSAGE"
+    # Paginate by width, keeping multiple pages available for long messages.
+    lines = _wrap(message, draw, font, 88)
+    per_page = 2
+    pages = [lines[i:i + per_page] for i in range(0, len(lines), per_page)]
+    page = pages[int(scroll) % len(pages)]
+    for i, line in enumerate(page):
+        box = draw.textbbox((0, 0), line, font=font)
+        draw.text((1 - box[0], i * 12 + 3 - box[1]), line, fill=1, font=font)
+    if voltage is not None:
+        try:
+            value = float(voltage)
+            label = f"{value:.1f}V" if math.isfinite(value) else "--V"
+        except (TypeError, ValueError, OverflowError):
+            label = "--V"
+    else:
+        label = "--V"
+    font_v = _font(8, _VOLTAGE_CHOICES)
+    draw.text((94, 2), label, fill=1, font=font_v)
+    try:
+        charge = min(100, max(0, float(percent)))
+    except (TypeError, ValueError, OverflowError):
+        charge = 0
+    if charge:
+        # Sparse bar instead of a high-entropy outlined battery.
+        draw.line((95, 22, 95 + int(charge * 0.28), 22), fill=1)
+    if charging:
+        draw.point((126, 22), fill=1)
+    return image
