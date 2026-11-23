@@ -78,7 +78,7 @@ class Robot:
         self.last_tts_frames = 0
         self.last_tts_played_at = None
         # Static face is enabled, but never run the 30 Hz animation sender.
-        self._face_transport_enabled = True
+        self._face_transport_enabled = False
         self._face_blocked_since = None
         self._face_suspended_until = 0.0
         self.face_frames_sent = 0
