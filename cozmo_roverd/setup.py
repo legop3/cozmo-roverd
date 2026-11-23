@@ -180,7 +180,6 @@ def public_config(path: str) -> dict:
         "video": media.get("enabled", True),
         "camera_enabled": media.get("camera_enabled", True),
         "diagnostic_minimal": media.get("diagnostic_minimal", False),
-        "face_enabled": media.get("face_enabled", False),
         "fps": media.get("fps", 15),
         "rtsp_url": media.get("rtsp_url", ""),
         "configured": bool(wifi.get("interface") and wifi.get("ssid") and wifi.get("password")
@@ -192,7 +191,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Invalid configuration")
     allowed = {"name", "description", "color", "private", "server_url", "interface", "ssid", "password",
-               "max_speed", "video", "camera_enabled", "diagnostic_minimal", "face_enabled", "fps", "rtsp_url", "camera_mode", "hud", "watchdog_seconds"}
+               "max_speed", "video", "camera_enabled", "diagnostic_minimal", "fps", "rtsp_url", "camera_mode", "hud", "watchdog_seconds"}
     if set(payload) - allowed:
         raise ValueError("Unknown configuration field")
     name = str(payload.get("name", "")).strip()
@@ -240,9 +239,6 @@ def validate_payload(payload: dict, current: dict) -> dict:
     hud = payload.get("hud", True)
     if type(hud) is not bool:
         raise ValueError("Video HUD setting must be on or off")
-    face_enabled = payload.get("face_enabled", current.get("media", {}).get("face_enabled", False))
-    if type(face_enabled) is not bool:
-        raise ValueError("Cozmo face display setting must be on or off")
     diagnostic_minimal = payload.get("diagnostic_minimal", current.get("media", {}).get("diagnostic_minimal", False))
     if type(diagnostic_minimal) is not bool:
         raise ValueError("Minimal traffic diagnostic setting must be on or off")
@@ -261,7 +257,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
                       "server_url": url, "max_speed": max_speed,
                       },
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
-            "media": {"enabled": video, "camera_enabled": camera_enabled, "diagnostic_minimal": diagnostic_minimal, "face_enabled": face_enabled, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud}}
+            "media": {"enabled": video, "camera_enabled": camera_enabled, "diagnostic_minimal": diagnostic_minimal, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud}}
 
 
 def render_toml(data: dict) -> str:
