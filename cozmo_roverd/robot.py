@@ -80,7 +80,7 @@ class Robot:
         # Static face is enabled, but never run the 30 Hz animation sender.
         self._face_transport_enabled = True
         self._face_blocked_since = None
-        self._face_suspended = False
+        self._face_suspended_until = 0.0
         self.face_frames_sent = 0
         self._face_scroll = 0
         self._face_last_content = None
@@ -138,7 +138,7 @@ class Robot:
                 self._face_last_content = None
                 self._face_sent_at = 0.0
                 self._face_blocked_since = None
-                self._face_suspended = False
+                self._face_suspended_until = 0.0
                 self._status_light_signature = None
                 self._dock_contact_handled = False
                 self._dock_lift_target = None
@@ -874,9 +874,11 @@ class Robot:
     def _refresh_face_unverified(self):
         """Render one clipped status screen without holding the motor lock."""
         with self.lock:
-            if self.client is None or not self.ready or self._face_suspended:
+            if self.client is None or not self.ready:
                 return False
             now = time.monotonic()
+            if now < self._face_suspended_until:
+                return False
             if now - self._face_sent_at < 5.0:
                 return False
             cli = self.client
@@ -912,7 +914,8 @@ class Robot:
         with self.lock:
             # A reconnect or a newer message invalidates the rendered frame.
             if (self.client is not cli or not self.ready
-                    or self._face_suspended or self.last_tts != message
+                    or time.monotonic() < self._face_suspended_until
+                    or self.last_tts != message
                     or time.monotonic() - self._face_sent_at < 5.0):
                 return False
             sender = getattr(getattr(cli, "conn", None), "send_thread", None)
@@ -925,8 +928,12 @@ class Robot:
                     if self._face_blocked_since is None:
                         self._face_blocked_since = now
                     elif now - self._face_blocked_since > 3:
-                        self._face_suspended = True
-                        self.face_last_error = "Display suspended: reliable send channel congested"
+                        # Back off temporarily rather than leaving the
+                        # display permanently disabled until reconnect.
+                        self._face_suspended_until = now + 10.0
+                        self._face_blocked_since = None
+                        self.face_last_error = (
+                            "Display cooling down for 10 seconds: reliable send queue busy")
                         LOG.warning("%s", self.face_last_error)
                     return False
                 self._face_blocked_since = None
