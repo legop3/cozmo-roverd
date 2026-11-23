@@ -13,6 +13,11 @@ from PIL import Image, ImageDraw, ImageFont
 LOG = logging.getLogger(__name__)
 
 class Publisher:
+    # One missed second is not a disconnected camera: Cozmo's JPEG images
+    # arrive in UDP chunks, and a brief loss can drop a complete frame.
+    # Keep last image for short gaps, but show the slate on sustained loss.
+    CAMERA_GAP_GRACE_SECONDS = 3.0
+
     def __init__(self, url: str, fps: int = 15, hud: bool = True):
         self.url, self.fps = url, fps
         self.hud = hud
@@ -31,6 +36,9 @@ class Publisher:
         self.ffmpeg_write_max_ms = 0.0
         self.ffmpeg_write_last_ms = 0.0
         self.last_frame_time = None
+        self.camera_gap_count = 0
+        self.camera_longest_gap_seconds = 0.0
+        self._camera_gap_started = None
         self.last_error = None
         self.device = None
         self._ffmpeg_log_file = None
@@ -90,8 +98,15 @@ class Publisher:
         # Keep only the newest frame; conversion belongs to the publisher
         # worker, never the Cozmo packet processing thread.
         if not self.running.is_set(): return
-        self.last_frame_time = time.monotonic()
-        self.camera_arrivals.append(self.last_frame_time)
+        received_at = time.monotonic()
+        if self.last_frame_time is not None:
+            gap = received_at - self.last_frame_time
+            if gap >= 1.0:
+                self.camera_gap_count += 1
+                self.camera_longest_gap_seconds = max(
+                    self.camera_longest_gap_seconds, gap)
+        self.last_frame_time = received_at
+        self.camera_arrivals.append(received_at)
         self.frame_count += 1
         if self.frames.full():
             try:
@@ -111,6 +126,9 @@ class Publisher:
         now = time.monotonic()
         return {
             "camera_input_fps_2s": self._recent_fps(self.camera_arrivals, now),
+            "camera_gaps_over_1s": self.camera_gap_count,
+            "camera_longest_gap_seconds": round(self.camera_longest_gap_seconds, 2),
+            "camera_gap_grace_seconds": self.CAMERA_GAP_GRACE_SECONDS,
             "rtsp_output_fps_2s": self._recent_fps(self.output_frames, now),
             "rtsp_unique_camera_frames": self.output_new_frames,
             "rtsp_repeated_camera_frames": self.output_repeated_frames,
@@ -366,7 +384,7 @@ class Publisher:
                     try:
                         data = self.state_provider() if self.state_provider is not None else {}
                         fresh = (self.last_frame_time is not None and
-                                 now - self.last_frame_time < 1.0)
+                                 now - self.last_frame_time < self.CAMERA_GAP_GRACE_SECONDS)
                         if fresh and data.get("connected", True):
                             if image is not None:
                                 latest_image = image
