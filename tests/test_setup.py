@@ -84,6 +84,13 @@ def test_existing_password_preserved_only_for_same_network():
     with patch.object(setup, "interfaces", return_value=[
             {"name":"wlan1", "selectable":True}]):
         assert setup.validate_payload(good,existing)["wifi"]["password"] == "savedpassword"
+        # The same Cozmo SSID must keep its credential across USB adapters.
+        alternate = {"name": "wlan2", "selectable": True}
+        with patch.object(setup, "interfaces", return_value=[alternate]):
+            switched = setup.validate_payload(
+                {**good, "interface": "wlan2"}, existing)
+        assert switched["wifi"]["password"] == "savedpassword"
+        assert switched["wifi"]["interface"] == "wlan2"
         with pytest.raises(ValueError,match="password"):
             setup.validate_payload({**good, "ssid":"New SSID"}, existing)
 
