@@ -137,21 +137,24 @@ def test_face_packet_always_fits_single_cozmo_transport_frame():
     robot.battery.percent = 82
     robot.last_tts = "Test oversized image"
     assert robot.refresh_face()
-    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
+    assert robot.face_last_encoded_bytes <= 184
 
 
-def test_normal_status_keeps_original_large_adaptive_text():
+def test_long_tts_pages_are_large_font_and_each_packet_is_bounded():
+    from cozmo_roverd.face import bounded_status_pages, _layout, _font, _FONT_CHOICES
     from pycozmo.image_encoder import ImageEncoder
+    from PIL import ImageDraw
 
-    robot = robot_with_face()
-    robot.battery.voltage = 3.91
-    robot.battery.percent = 62
-    robot.last_tts = "Hello Cozmo"
-    assert robot.refresh_face()
-    frame = robot.client.images[-1]
-    expected = status_image(voltage=3.91, percent=62, last_tts="Hello Cozmo")
-    assert frame.tobytes() == expected.tobytes()
-    assert robot.face_last_encoded_bytes == len(ImageEncoder(expected).encode())
+    message = ("The rover is explaining a complicated message with several "
+               "sentences and enough words to span many OLED pages. ") * 5
+    pages = bounded_status_pages(
+        voltage=3.91, percent=62, charging=False, last_tts=message)
+    assert len(pages) > 2
+    assert all(frame.size == (128, 32) for frame in pages)
+    assert all(0 < len(ImageEncoder(frame).encode()) <= 184 for frame in pages)
+    assert pages[0].tobytes() != pages[1].tobytes()
+    # The new fallback never switches to the former 8-pixel font.
+    assert _font(14, _FONT_CHOICES) is not None
 
 
 def test_face_records_encoding_size_after_display():
@@ -177,25 +180,22 @@ def test_face_uses_full_width_status_instead_of_tiny_battery_only_fallback():
     assert frame.size == (128, 32)
     assert frame.crop((90, 0, 128, 32)).getbbox() is not None
     assert robot.face_last_encoded_bytes == len(ImageEncoder(frame).encode())
-    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
+    assert robot.face_last_encoded_bytes <= 184
 
 
-def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatch):
-    import cozmo_roverd.robot as robot_module
+def test_sender_never_enqueues_oversized_images(monkeypatch):
+    import cozmo_roverd.face as face_module
     from pycozmo.image_encoder import ImageEncoder
-    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
 
-    # Only an image larger than the UDP frame budget should fall back.
     noise = Image.new("1", (128, 32))
     for y in range(32):
         for x in range(128):
             noise.putpixel((x, y), ((x * 57 + y * 91 + x*y) % 7 < 3))
-    assert len(ImageEncoder(noise).encode()) > MAX_FRAME_PAYLOAD_SIZE - 6
-    monkeypatch.setattr(robot_module, "status_image", lambda **kwargs: noise)
+    assert len(ImageEncoder(noise).encode()) > 184
+    monkeypatch.setattr(face_module, "status_image", lambda **kwargs: noise)
     robot = robot_with_face()
-    assert robot.refresh_face()
-    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
-    assert robot.client.images[0].tobytes() != noise.tobytes()
+    assert not robot.refresh_face()
+    assert robot.client.images == []
 
 
 def test_tts_played_counter_is_read_from_animation_controller():
