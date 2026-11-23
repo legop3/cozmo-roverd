@@ -81,7 +81,10 @@ class Wifi:
         nm("device", "set", self.cfg.interface, "managed", "yes")
         # Disable device autoconnect: do not fall back to personal/home Wi-Fi profiles.
         nm("device", "set", self.cfg.interface, "autoconnect", "no")
-        nm("connection", "up", self.profile, "ifname", self.cfg.interface, timeout=55)
+        # Bound each activation attempt so a replugged USB adapter gets
+        # another chance promptly instead of spending 55s in one stale attempt.
+        nm("--wait", "20", "connection", "up", self.profile,
+           "ifname", self.cfg.interface, timeout=25)
 
     def wait(self):
         """Re-use an existing Cozmo association; don't bounce a working link.
@@ -99,8 +102,8 @@ class Wifi:
                 self.connect()
                 return
             except Exception as exc:
-                LOG.warning("Cozmo Wi-Fi unavailable: %s; retry in 5 seconds", exc)
-                time.sleep(5)
+                LOG.warning("Cozmo Wi-Fi unavailable: %s; retry in 3 seconds", exc)
+                time.sleep(3)
 
     def active(self) -> bool:
         try:
