@@ -308,6 +308,33 @@ def test_static_face_respects_congested_transport():
     assert not robot.advance_face_display()
 
 
+def test_face_resumes_automatically_after_traffic_backoff(monkeypatch):
+    from types import SimpleNamespace as NS
+    from threading import Lock
+    from queue import Queue
+    import cozmo_roverd.robot as module
+
+    robot = robot_with_face()
+    sent = []
+    sender = NS(lock=Lock(), window=NS(next_seq=9, expected_seq=0,
+                                      max_seq=65536), queue=Queue())
+    robot.client.conn = NS(send=sent.append, send_thread=sender)
+    clock = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+
+    assert not robot.refresh_face()
+    clock[0] = 104.0
+    assert not robot.refresh_face()
+    assert robot._face_suspended_until == 114.0
+    sender.window.expected_seq = 9
+    clock[0] = 110.0
+    assert not robot.refresh_face()
+    clock[0] = 115.0
+    assert robot.refresh_face()
+    assert len(sent) == 3
+    assert robot._face_blocked_since is None
+
+
 def test_pycozmo_runtime_method_replacements_are_gone():
     import cozmo_roverd.robot as robot_module
     assert not hasattr(robot_module, "_limit_animation_idle_traffic")
