@@ -42,6 +42,10 @@ class Robot:
         # Actual lift height in RobotState determines whether to retry.
         self._dock_lift_target = None
         self._dock_lift_sent_at = 0.0
+        # Gentle idle keep-awake only while confirmed on charging contacts.
+        self._idle_activity_at = time.monotonic()
+        self._idle_wake_restore_at = None
+        self._idle_wake_count = 0
         self.cliff = None
         self.picked_up = False
         self.latest = {}
@@ -143,6 +147,8 @@ class Robot:
                 self._dock_contact_handled = False
                 self._dock_lift_target = None
                 self._dock_lift_sent_at = 0.0
+                self._idle_activity_at = time.monotonic()
+                self._idle_wake_restore_at = None
                 self._dock_light_owned = False
                 self._auto_gain = 1.0
                 self._auto_exposure_ms = 16
@@ -374,6 +380,55 @@ class Robot:
             self._dock_lift_sent_at = time.monotonic()
             return True
 
+    def note_driver_activity(self):
+        """Reset dock idle timer; called before an actual driver/motor action."""
+        with self.lock:
+            self._idle_activity_at = time.monotonic()
+            self._idle_wake_restore_at = None
+
+    def refresh_idle_wake(self):
+        """Gently move the parked lift every 5 minutes of dock inactivity.
+
+        The normal dock posture is 92mm. Temporarily request 86mm, then
+        restore it two seconds later. Never drive wheels, undock, or issue
+        the experimental display/audio packets. Only act on positively
+        confirmed charging contacts; never act on stale/offline telemetry.
+        This is an idle-sleep mitigation, not a firmware guarantee.
+        """
+        with self.lock:
+            now = time.monotonic()
+            if self.client is None or not self.ready or self.undock_active:
+                self._idle_wake_restore_at = None
+                return False
+            if (self.on_charger is not True or self.moving
+                    or self.dock_assist or self.battery.stale(now)):
+                self._idle_wake_restore_at = None
+                return False
+            if self._idle_wake_restore_at is not None:
+                if now < self._idle_wake_restore_at:
+                    return False
+                self._idle_wake_restore_at = None
+                self.client.set_lift_height(92.0)
+                self._dock_lift_target = 100
+                self._dock_lift_sent_at = now
+                return True
+            if now - self._idle_activity_at < 5 * 60:
+                return False
+            sender = getattr(getattr(self.client, "conn", None),
+                             "send_thread", None)
+            if sender is not None:
+                with sender.lock:
+                    pending = ((sender.window.next_seq - sender.window.expected_seq)
+                               % sender.window.max_seq)
+                if pending >= 4 or sender.queue.qsize() >= 4:
+                    return False
+            self.client.set_lift_height(86.0)
+            self._idle_wake_restore_at = now + 2.0
+            self._idle_activity_at = now
+            self._idle_wake_count += 1
+            LOG.info("Docked idle wake: gently lowering lift; restoring in 2s")
+            return True
+
     def refresh_dock_lift(self):
         """Correct a missed lift-up command using measured physical height.
 
@@ -398,6 +453,7 @@ class Robot:
 
     def drive(self, left, right):
         with self.lock:
+            self.note_driver_activity()
             if self.client is None:
                 raise RuntimeError("Cozmo disconnected")
             if self.dock_assist:
@@ -420,6 +476,7 @@ class Robot:
         if type(main) is not int or not -127 <= main <= 127:
             raise ValueError("main brush PWM must be -127..127")
         with self.lock:
+            self.note_driver_activity()
             if self.client is None:
                 raise RuntimeError("Cozmo disconnected")
             self.client.move_lift(2.0 * main / 127.0)
@@ -684,11 +741,13 @@ class Robot:
 
     def head(self, degrees):
         with self.lock:
+            self.note_driver_activity()
             if self.client is None: raise RuntimeError("Cozmo disconnected")
             self.client.set_head_angle(math.radians(max(-25, min(44, degrees))))
 
     def lift(self, percent):
         with self.lock:
+            self.note_driver_activity()
             if self.client is None: raise RuntimeError("Cozmo disconnected")
             # Cozmo's robot lift height is in millimeters.
             self.client.set_lift_height(32.0 + (92.0 - 32.0) * percent / 100.0)
