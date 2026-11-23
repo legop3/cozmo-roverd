@@ -51,8 +51,7 @@ class Bridge:
         self.publisher = Publisher(rtsp_target(config), config.fps, hud=config.hud) if config.video else None
         self.robot = Robot(max_speed=config.max_speed, on_state=self.publish_state,
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
-                           camera_mode=config.camera_mode, camera_enabled=config.camera_enabled,
-                           face_enabled=config.face_enabled)
+                           camera_mode=config.camera_mode, camera_enabled=config.camera_enabled)
         # Reuse recent SOC/sag learning across service restarts. Do not write
         # persistent files from the PyCozmo receive callback.
         self._gauge_file = Path("/var/log/cozmo-roverd/battery-gauge.json")
@@ -654,8 +653,8 @@ class Bridge:
             asyncio.create_task(self._maintenance(self.robot.refresh_status_lights, 0.5)),
             asyncio.create_task(self._maintenance(self.robot.refresh_charger_lights, 1.0)),
             ]
-        # Face packets are explicitly opt-in; minimal diagnostics suppress them.
-        if self.robot._face_transport_enabled and not self.cfg.diagnostic_minimal:
+        # Static face status is enabled normally; no repeating audio clock.
+        if self.robot._face_transport_enabled:
             tasks += [
                 asyncio.create_task(self._maintenance(self.robot.refresh_face, 0.25)),
             ]
