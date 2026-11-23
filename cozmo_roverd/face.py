@@ -172,7 +172,7 @@ def status_image(*, voltage=None, percent=None, charging=False, last_tts="",
 
 
 def static_status_image(*, voltage=None, percent=None, charging=False,
-                        last_tts="", max_encoded_bytes=184):
+                        last_tts="", max_encoded_bytes=None):
     """One large-text screen and the original battery icon; never paginate.
 
     Clip at the screen boundary, then shorten only the visible text if the
@@ -180,6 +180,9 @@ def static_status_image(*, voltage=None, percent=None, charging=False,
     incoming TTS length. Never use the tiny one-character page fallback.
     """
     from pycozmo.image_encoder import ImageEncoder
+    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+    if max_encoded_bytes is None:
+        max_encoded_bytes = MAX_FRAME_PAYLOAD_SIZE - 6
 
     message = " ".join(str(last_tts or "").split()) or "NO MESSAGE"
     # No part of the message after this prefix can appear on a single screen.
