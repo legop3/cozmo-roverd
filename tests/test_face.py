@@ -376,12 +376,12 @@ def test_battery_gauge_fill_and_voltage_change_independently_of_speech():
     assert full.tobytes() != charging.tobytes()
 
 
-def test_live_face_transport_is_disabled_by_default_to_protect_wheel_command_acks():
+def test_live_face_transport_is_enabled_by_default_without_periodic_clock():
     robot = Robot(max_speed=250, on_state=lambda: None,
                   on_sensor=lambda: None, on_frame=lambda frame: None)
     robot.client = FakeDisplay()
     robot.ready = True
-    assert robot._face_transport_enabled is False
-    assert robot.refresh_face() is False
+    assert robot._face_transport_enabled is True
+    assert robot.refresh_face() is True
     assert robot.advance_face_display() is False
-    assert robot.client.images == []
+    assert len(robot.client.images) == 1
