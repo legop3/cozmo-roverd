@@ -16,11 +16,11 @@ from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
-    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True, face_enabled=False):
+    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True):
         self.max_speed = max_speed
         self.camera_mode = camera_mode
         self.camera_enabled = camera_enabled
-        self._face_transport_enabled = face_enabled
+        self._face_transport_enabled = True
         self.manual_exposure_ms = 10
         self._auto_gain = 1.0
         self._auto_exposure_ms = 16
@@ -78,7 +78,7 @@ class Robot:
         self._tts_last_stream_at = 0.0
         self.last_tts_frames = 0
         self.last_tts_played_at = None
-        # Face transport is opt-in pending live hardware validation.
+        # Static face status is enabled; no periodic animation-clock packets.
         self.face_frames_sent = 0
         self._face_scroll = 0
         self._face_last_content = None
