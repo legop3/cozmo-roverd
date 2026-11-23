@@ -137,7 +137,7 @@ class Robot:
                 # The new robot display has no cached image from the old link.
                 self._face_last_content = None
                 self._face_sent_at = 0.0
-                        self._status_light_signature = None
+                self._status_light_signature = None
                 self._dock_contact_handled = False
                 self._dock_lift_target = None
                 self._dock_lift_sent_at = 0.0
