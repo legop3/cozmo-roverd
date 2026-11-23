@@ -51,7 +51,8 @@ class Bridge:
         self.publisher = Publisher(rtsp_target(config), config.fps, hud=config.hud) if config.video else None
         self.robot = Robot(max_speed=config.max_speed, on_state=self.publish_state,
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
-                           camera_mode=config.camera_mode, camera_enabled=config.camera_enabled)
+                           camera_mode=config.camera_mode, camera_enabled=config.camera_enabled,
+                           face_enabled=config.face_enabled)
         # Reuse recent SOC/sag learning across service restarts. Do not write
         # persistent files from the PyCozmo receive callback.
         self._gauge_file = Path("/var/log/cozmo-roverd/battery-gauge.json")
