@@ -17,6 +17,7 @@ class Config:
     max_speed: int = 250
     camera_mode: str = "auto"
     video: bool = True
+    camera_enabled: bool = True
     private: bool = False
     rtsp_url: str = ""
     fps: int = 15
@@ -35,11 +36,14 @@ def load(path: str) -> Config:
         # Legacy bright/lowlight settings now use fully adaptive auto.
         camera_mode="auto",
         video=bool(media.get("enabled", True)),
+        camera_enabled=media.get("camera_enabled", True),
         private=rover.get("private", False),
         rtsp_url=str(media.get("rtsp_url", "")),
         fps=int(media.get("fps", 15)),
         hud=media.get("hud", True),
     )
+    if type(c.camera_enabled) is not bool:
+        raise ValueError("media.camera_enabled must be a boolean")
     if type(c.hud) is not bool:
         raise ValueError("media.hud must be a boolean")
     if type(c.private) is not bool:
