@@ -650,6 +650,7 @@ class Bridge:
             tasks += [
             asyncio.create_task(self._maintenance(self.robot.refresh_auto_camera_exposure, 0.2)),
             asyncio.create_task(self._maintenance(self.robot.refresh_dock_lift, 0.25)),
+            asyncio.create_task(self._maintenance(self.robot.refresh_idle_wake, 1.0)),
             asyncio.create_task(self._maintenance(self.robot.refresh_status_lights, 0.5)),
             asyncio.create_task(self._maintenance(self.robot.refresh_charger_lights, 1.0)),
             ]
