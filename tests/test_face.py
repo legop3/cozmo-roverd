@@ -131,17 +131,13 @@ def test_face_packet_always_fits_single_cozmo_transport_frame():
                          last_tts="This is a long message displayed while moving",
                          scroll=6, audio_error="speech error")
     payload = bytes(ImageEncoder(image).encode())
-    # This test documents whether the full graphic fits on the wire. The
-    # robot refresh fallback handles states where it does not.
-    if len(payload) > MAX_FRAME_PAYLOAD_SIZE - 6:
-        robot = robot_with_face()
-        robot.battery.voltage = 3.96
-        robot.battery.percent = 82
-        robot.last_tts = "Test oversized image"
-        assert robot.refresh_face()
-        assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
-    else:
-        assert len(payload) <= MAX_FRAME_PAYLOAD_SIZE - 6
+    # The OLED command is smaller than the generic UDP frame budget.
+    robot = robot_with_face()
+    robot.battery.voltage = 3.96
+    robot.battery.percent = 82
+    robot.last_tts = "Test oversized image"
+    assert robot.refresh_face()
+    assert robot.face_last_encoded_bytes <= min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
 
 
 def test_face_records_encoding_size_after_display():
@@ -167,7 +163,7 @@ def test_face_uses_full_width_status_instead_of_tiny_battery_only_fallback():
     assert frame.size == (128, 32)
     assert frame.crop((90, 0, 128, 32)).getbbox() is not None
     assert robot.face_last_encoded_bytes == len(ImageEncoder(frame).encode())
-    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
+    assert robot.face_last_encoded_bytes <= min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
 
 
 def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatch):
@@ -175,8 +171,8 @@ def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatc
     from pycozmo.image_encoder import ImageEncoder
     from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
 
-    # A high-entropy image cannot fit in one Cozmo packet. It must be
-    # replaced, but ordinary ~300-byte dashboard images must not.
+    # A high-entropy image cannot fit in one Cozmo display command.
+    # The sender must replace even an ordinary large dashboard when needed.
     noise = Image.new("1", (128, 32))
     for y in range(32):
         for x in range(128):
@@ -185,7 +181,7 @@ def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatc
     monkeypatch.setattr(robot_module, "status_image", lambda **kwargs: noise)
     robot = robot_with_face()
     assert robot.refresh_face()
-    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
+    assert robot.face_last_encoded_bytes <= min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
     assert robot.client.images[0].tobytes() != noise.tobytes()
 
 
@@ -269,18 +265,21 @@ def test_hardware_tts_disabled_without_touching_camera_or_speaker():
     assert "speech disabled" in robot.last_tts_error.lower()
 
 
-def test_static_face_uses_supported_animation_controller_not_raw_packets():
+def test_static_face_uses_upstream_packet_order_without_30hz_loop():
     from types import SimpleNamespace as NS
+    from pycozmo.protocol_encoder import OutputSilence, DisplayImage
 
     robot = robot_with_face()
     raw_packets = []
     robot.client.conn = NS(send=raw_packets.append)
     assert robot.refresh_face()
-    assert len(robot.client.images) == 1
-    # PyCozmo's animation controller owns packet ordering and refresh timing.
-    assert raw_packets == []
+    assert len(raw_packets) == 2
+    assert isinstance(raw_packets[0], OutputSilence)
+    assert isinstance(raw_packets[1], DisplayImage)
+    assert len(raw_packets[1].image) <= 184
     assert not robot.advance_face_display()
     assert not robot.refresh_face()
+    assert len(raw_packets) == 2
 
 
 def test_static_face_respects_congested_transport():
@@ -291,12 +290,13 @@ def test_static_face_respects_congested_transport():
     robot = robot_with_face()
     sender = NS(lock=Lock(), window=NS(next_seq=12, expected_seq=0,
                                       max_seq=65536), queue=Queue())
-    robot.client.conn = NS(send=lambda pkt: None, send_thread=sender)
+    raw_packets = []
+    robot.client.conn = NS(send=raw_packets.append, send_thread=sender)
     assert not robot.refresh_face()
-    assert robot.client.images == []
+    assert raw_packets == []
     sender.window.expected_seq = 12
     assert robot.refresh_face()
-    assert len(robot.client.images) == 1
+    assert len(raw_packets) == 2
     assert not robot.advance_face_display()
 
 
@@ -364,12 +364,12 @@ def test_battery_gauge_fill_and_voltage_change_independently_of_speech():
     assert full.tobytes() != charging.tobytes()
 
 
-def test_live_face_transport_is_disabled_after_hardware_reconnect_failures():
+def test_live_face_transport_defaults_to_bounded_static_sender():
     robot = Robot(max_speed=250, on_state=lambda: None,
                   on_sensor=lambda: None, on_frame=lambda frame: None)
     robot.client = FakeDisplay()
     robot.ready = True
-    assert robot._face_transport_enabled is False
-    assert robot.refresh_face() is False
+    assert robot._face_transport_enabled is True
+    assert robot.refresh_face() is True
     assert robot.advance_face_display() is False
-    assert robot.client.images == []
+    assert len(robot.client.images) == 1
