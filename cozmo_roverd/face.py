@@ -139,7 +139,7 @@ def _battery_panel(draw, voltage, percent, charging):
 
 
 def status_image(*, voltage=None, percent=None, charging=False, last_tts="",
-                 scroll=0, **_unused):
+                 scroll=0, voltage_only=False, **_unused):
     """Render a dynamically fitted speech page and separate battery gauge."""
     image = Image.new("1", (WIDTH, HEIGHT), 0)
     draw = ImageDraw.Draw(image)
@@ -154,7 +154,20 @@ def status_image(*, voltage=None, percent=None, charging=False, last_tts="",
         x = max(1, (PANEL_LEFT - tw) // 2)
         draw.text((x - bounds[0], y - bounds[1]), line, font=font, fill=1)
         y += step
-    _battery_panel(draw, voltage, percent, bool(charging))
+    if voltage_only:
+        # Preserve a large message font without spending the limited OLED
+        # keyframe buffer on the decorative battery outline and charge bar.
+        draw.line((PANEL_LEFT, 1, PANEL_LEFT, HEIGHT - 2), fill=1)
+        try:
+            v = float(voltage)
+            label = f"{v:.2f}V" if math.isfinite(v) and 2.7 <= v <= 4.4 else "--.--"
+        except (TypeError, ValueError, OverflowError):
+            label = "--.--"
+        font_v = _font(10, _VOLTAGE_CHOICES)
+        bounds = draw.textbbox((0, 0), label, font=font_v)
+        draw.text((PANEL_LEFT + 2, 12 - bounds[1]), label, font=font_v, fill=1)
+    else:
+        _battery_panel(draw, voltage, percent, bool(charging))
     return image
 
 
@@ -202,3 +215,51 @@ def wire_status_image(*, voltage=None, percent=None, charging=False,
     if charging:
         draw.point((126, 22), fill=1)
     return image
+
+
+def bounded_status_pages(*, voltage=None, percent=None, charging=False,
+                         last_tts="", max_encoded_bytes=184):
+    """Build complete, readable text pages under Cozmo's image data limit.
+
+    The original adaptive 14-25px fonts remain in use. If a full dashboard
+    frame is too large, display only voltage beside shorter text pages.
+    Never send a large encoded frame or silently truncate the message.
+    """
+    from pycozmo.image_encoder import ImageEncoder
+
+    message = " ".join(str(last_tts or "").split()) or "NO MESSAGE"
+    draw = ImageDraw.Draw(Image.new("1", (WIDTH, HEIGHT)))
+    _, layouts, _ = _layout(message, draw)
+    if len(layouts) == 1:
+        original = status_image(voltage=voltage, percent=percent,
+                                charging=charging, last_tts=message)
+        if len(ImageEncoder(original).encode()) <= max_encoded_bytes:
+            return (original,)
+
+    pages = []
+    remaining = message
+    while remaining:
+        selected = None
+        # A handful of candidate page lengths rather than a costly scan of
+        # every possible substring. Each candidate must render on one page.
+        for count in (32, 26, 22, 18, 14, 11, 8, 6, 4, 2, 1):
+            if count > len(remaining):
+                count = len(remaining)
+            segment = remaining[:count].rstrip()
+            if not segment:
+                continue
+            _, page_layouts, _ = _layout(segment, draw)
+            if len(page_layouts) != 1:
+                continue
+            frame = status_image(voltage=voltage, percent=percent,
+                                 charging=charging, last_tts=segment,
+                                 voltage_only=True)
+            if len(ImageEncoder(frame).encode()) <= max_encoded_bytes:
+                selected = (count, frame)
+                break
+        if selected is None:
+            raise ValueError("Even a one-character status page exceeds the OLED buffer")
+        taken, frame = selected
+        pages.append(frame)
+        remaining = remaining[taken:].lstrip()
+    return tuple(pages)
