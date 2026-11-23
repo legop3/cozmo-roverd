@@ -987,6 +987,9 @@ class Robot:
                 from pycozmo.protocol_encoder import DisplayImage, OutputSilence
                 conn.send(OutputSilence())
                 conn.send(DisplayImage(image=encoded))
+                # Advance one more animation frame to present the image.
+                # PyCozmo ordinarily does this on its next 30 Hz tick.
+                conn.send(OutputSilence())
             else:
                 # Test doubles can inspect the rendered bitmap.
                 self.client.display_image(image)
