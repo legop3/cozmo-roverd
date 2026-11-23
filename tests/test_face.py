@@ -2,6 +2,7 @@
 from PIL import Image
 from cozmo_roverd.face import status_image
 from cozmo_roverd.robot import Robot
+from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
 
 
 class FakeDisplay:
@@ -43,7 +44,25 @@ def test_long_tts_is_clipped_without_paging_and_keeps_battery_icon():
     assert first.size == (128, 32)
     assert first.tobytes() == extra.tobytes()
     assert first.crop((94, 19, 128, 32)).getbbox() is not None
-    assert len(ImageEncoder(first).encode()) <= 184
+    assert len(ImageEncoder(first).encode()) <= MAX_FRAME_PAYLOAD_SIZE - 6
+
+
+def test_default_static_face_sends_full_battery_panel_and_readable_text():
+    from cozmo_roverd.face import static_status_image
+    from pycozmo.image_encoder import ImageEncoder
+
+    for message in ("NO MESSAGE", "Hello", "Hello from Cozmo",
+                    "Here is a message longer than the display can show " * 15):
+        robot = robot_with_face()
+        robot.battery.voltage = 3.91
+        robot.battery.percent = 65
+        robot.last_tts = message
+        assert robot.refresh_face(), f"Display skipped message: {message[:60]}"
+        image = robot.client.images[-1]
+        assert image.crop((94, 19, 128, 32)).getbbox() is not None
+        assert image.crop((0, 0, 90, 32)).getbbox() is not None
+        assert 0 < len(ImageEncoder(image).encode()) <= MAX_FRAME_PAYLOAD_SIZE - 6
+        assert robot.face_last_error is None
 
 
 def test_face_updates_obey_cooldown_and_last_message_is_persistent():
@@ -141,7 +160,7 @@ def test_face_packet_always_fits_single_cozmo_transport_frame():
     robot.battery.percent = 82
     robot.last_tts = "Test oversized image"
     assert robot.refresh_face()
-    assert robot.face_last_encoded_bytes <= 184
+    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
 
 
 def test_long_tts_sends_one_static_bounded_frame():
@@ -153,7 +172,7 @@ def test_long_tts_sends_one_static_bounded_frame():
     robot.last_tts = "The rover is explaining a complicated message. " * 10
     assert robot.refresh_face()
     frame = robot.client.images[-1]
-    assert len(ImageEncoder(frame).encode()) <= 184
+    assert len(ImageEncoder(frame).encode()) <= MAX_FRAME_PAYLOAD_SIZE - 6
     assert frame.crop((94, 19, 128, 32)).getbbox() is not None
     assert not robot.refresh_face()
 
@@ -174,7 +193,7 @@ def test_status_keeps_battery_icon_and_voltage_for_short_message():
     assert frame.mode == "1"
     assert frame.size == (128, 32)
     assert frame.crop((90, 0, 128, 32)).getbbox() is not None
-    assert len(ImageEncoder(frame).encode()) <= 184
+    assert len(ImageEncoder(frame).encode()) <= MAX_FRAME_PAYLOAD_SIZE - 6
 
 
 def test_sender_never_enqueues_oversized_images(monkeypatch):
@@ -185,7 +204,7 @@ def test_sender_never_enqueues_oversized_images(monkeypatch):
     for y in range(32):
         for x in range(128):
             noise.putpixel((x, y), ((x * 57 + y * 91 + x*y) % 7 < 3))
-    assert len(ImageEncoder(noise).encode()) > 184
+    assert len(ImageEncoder(noise).encode()) > MAX_FRAME_PAYLOAD_SIZE - 6
     monkeypatch.setattr(face_module, "static_status_image", lambda **kwargs: noise)
     robot = robot_with_face()
     assert not robot.refresh_face()
@@ -284,7 +303,7 @@ def test_static_face_uses_upstream_packet_order_without_30hz_loop():
     assert isinstance(raw_packets[0], OutputSilence)
     assert isinstance(raw_packets[1], DisplayImage)
     assert isinstance(raw_packets[2], OutputSilence)
-    assert len(raw_packets[1].image) <= 184
+    assert len(raw_packets[1].image) <= MAX_FRAME_PAYLOAD_SIZE - 6
     assert not robot.advance_face_display()
     assert not robot.refresh_face()
     assert len(raw_packets) == 3
