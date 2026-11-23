@@ -65,6 +65,37 @@ def test_default_static_face_sends_full_battery_panel_and_readable_text():
         assert robot.face_last_error is None
 
 
+def test_short_messages_never_fall_back_to_battery_only():
+    from cozmo_roverd.face import static_status_image
+    from pycozmo.image_encoder import ImageEncoder, ImageDecoder
+
+    for text in ("HI", "Hello", "NO MESSAGE", "Ready", "Battery low"):
+        image = static_status_image(
+            voltage=3.91, percent=60, charging=False, last_tts=text)
+        # Left-hand text must contain pixels regardless of text length.
+        assert image.crop((0, 0, 90, 32)).getbbox() is not None, text
+        # The original battery icon remains present as well.
+        assert image.crop((94, 19, 128, 32)).getbbox() is not None, text
+        encoded = bytes(ImageEncoder(image).encode())
+        assert len(encoded) <= MAX_FRAME_PAYLOAD_SIZE - 6
+        decoded = ImageDecoder(encoded).decode()
+        assert any(decoded[y * 128 + x]
+                   for y in range(32) for x in range(90)), text
+
+
+def test_static_face_clips_very_long_tts_without_sending_one_character_pages():
+    from cozmo_roverd.face import static_status_image
+
+    prefix = "A long message that cannot possibly fit on this display. "
+    first = static_status_image(
+        voltage=3.9, percent=40, last_tts=prefix + "A" * 1000)
+    second = static_status_image(
+        voltage=3.9, percent=40, last_tts=prefix + "B" * 1000)
+    assert first.tobytes() == second.tobytes()
+    assert first.crop((0, 0, 90, 32)).getbbox() is not None
+    assert first.crop((94, 19, 128, 32)).getbbox() is not None
+
+
 def test_face_updates_obey_cooldown_and_last_message_is_persistent():
     robot = robot_with_face()
     assert robot.refresh_face()
@@ -193,6 +224,7 @@ def test_status_keeps_battery_icon_and_voltage_for_short_message():
     assert frame.mode == "1"
     assert frame.size == (128, 32)
     assert frame.crop((90, 0, 128, 32)).getbbox() is not None
+    assert frame.crop((0, 0, 90, 32)).getbbox() is not None
     assert len(ImageEncoder(frame).encode()) <= MAX_FRAME_PAYLOAD_SIZE - 6
 
 
