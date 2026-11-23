@@ -178,6 +178,7 @@ def public_config(path: str) -> dict:
         "camera_mode": "auto",
         "hud": media.get("hud", True),
         "video": media.get("enabled", True),
+        "camera_enabled": media.get("camera_enabled", True),
         "fps": media.get("fps", 15),
         "rtsp_url": media.get("rtsp_url", ""),
         "configured": bool(wifi.get("interface") and wifi.get("ssid") and wifi.get("password")
@@ -189,7 +190,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Invalid configuration")
     allowed = {"name", "description", "color", "private", "server_url", "interface", "ssid", "password",
-               "max_speed", "video", "fps", "rtsp_url", "camera_mode", "hud", "watchdog_seconds"}
+               "max_speed", "video", "camera_enabled", "fps", "rtsp_url", "camera_mode", "hud", "watchdog_seconds"}
     if set(payload) - allowed:
         raise ValueError("Unknown configuration field")
     name = str(payload.get("name", "")).strip()
@@ -237,6 +238,9 @@ def validate_payload(payload: dict, current: dict) -> dict:
     hud = payload.get("hud", True)
     if type(hud) is not bool:
         raise ValueError("Video HUD setting must be on or off")
+    camera_enabled = payload.get("camera_enabled", current.get("media", {}).get("camera_enabled", True))
+    if type(camera_enabled) is not bool:
+        raise ValueError("Cozmo camera transmission setting must be on or off")
     video = payload.get("video")
     if type(video) is not bool:
         raise ValueError("Video setting is invalid")
@@ -249,7 +253,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
                       "server_url": url, "max_speed": max_speed,
                       },
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
-            "media": {"enabled": video, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud}}
+            "media": {"enabled": video, "camera_enabled": camera_enabled, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud}}
 
 
 def render_toml(data: dict) -> str:
