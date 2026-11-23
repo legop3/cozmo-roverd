@@ -20,7 +20,7 @@ class Robot:
         self.max_speed = max_speed
         self.camera_mode = camera_mode
         self.camera_enabled = camera_enabled
-        self._face_transport_enabled = True
+        self._face_transport_enabled = False
         self.manual_exposure_ms = 10
         self._auto_gain = 1.0
         self._auto_exposure_ms = 16
@@ -79,7 +79,7 @@ class Robot:
         self.last_tts_frames = 0
         self.last_tts_played_at = None
         # Static face status is enabled; no periodic animation-clock packets.
-        self._face_transport_enabled = True
+        self._face_transport_enabled = False
         self.face_frames_sent = 0
         self._face_scroll = 0
         self._face_last_content = None
@@ -97,9 +97,9 @@ class Robot:
 
     def connect(self):
         import pycozmo
-        # Use PyCozmo's supported image path. Its animation controller
-        # clocks and refreshes static images; disable procedural eyes.
-        cli = pycozmo.Client(enable_animations=True, enable_procedural_face=False)
+        # Keep PyCozmo's 30 Hz animation/audio loop off: it caused
+        # repeated reconnects on the physical robot.
+        cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
         cli.start()
         try:
             cli.connect()
@@ -124,7 +124,7 @@ class Robot:
             cli.enable_camera(enable=self.camera_enabled, color=True)
             # Do not enable speaker playback or alter camera streaming
             # in this stable driver. The last requested TTS remains visible.
-            cli.enable_animations(True)
+            cli.enable_animations(False)
             cli.enable_procedural_face(False)
             cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
             if self.camera_enabled:
