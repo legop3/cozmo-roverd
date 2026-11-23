@@ -62,6 +62,12 @@ class Robot:
         self._camera_analysis_stop = threading.Event()
         self._camera_analysis_last_queued_at = 0.0
         self.camera_analysis_skipped = 0
+        # Cheap wire counters: show whether Cozmo is sending camera chunks
+        # even when pycozmo cannot assemble complete JPEG images.
+        self.camera_chunks_received = 0
+        self.camera_last_chunk_at = None
+        self.camera_images_completed = 0
+        self.camera_last_image_at = None
         self.last_packet_error = None
         self.packet_status = {}
         self.last_tts = ""
@@ -101,7 +107,9 @@ class Robot:
             cli.connect()
             cli.wait_for_robot(timeout=12)
             cli.add_handler(pycozmo.event.EvtNewRawCameraImage,
-                            lambda _client, image: self.on_frame(image))
+                            lambda _client, image: self._camera_image(image))
+            cli.add_handler(pycozmo.protocol_encoder.ImageChunk,
+                            lambda _client, pkt: self._camera_chunk(pkt))
             cli.add_handler(pycozmo.event.EvtRobotChargingChange,
                             lambda _client, value: self._charging(bool(value)))
             cli.add_handler(pycozmo.event.EvtCliffDetectedChange,
@@ -156,6 +164,16 @@ class Robot:
             except Exception:
                 LOG.exception("Could not close failed PyCozmo connection")
             raise
+
+    def _camera_chunk(self, pkt):
+        """Observe incoming image traffic without decoding or copying it."""
+        self.camera_chunks_received += 1
+        self.camera_last_chunk_at = time.monotonic()
+
+    def _camera_image(self, image):
+        self.camera_images_completed += 1
+        self.camera_last_image_at = time.monotonic()
+        self.on_frame(image)
 
     def _charging(self, value):
         self.charging = value
