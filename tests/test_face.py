@@ -281,12 +281,12 @@ def test_static_face_uses_transport_packets_not_animation_controller_queue():
             AssertionError("animation queue must not be used")),
         animations_enabled=False)
     assert robot.refresh_face()
-    assert len(sent) == 1
+    assert len(sent) == 2
     assert isinstance(sent[0], DisplayImage)
-    assert robot.advance_face_display()
     assert isinstance(sent[1], OutputSilence)
-    # The clock sends nothing again immediately and never queues audio.
+    # No idle animation clock: one silence only when a new image is sent.
     assert not robot.advance_face_display()
+    assert not robot.refresh_face()
     assert len(sent) == 2
 
 
@@ -305,8 +305,11 @@ def test_static_face_clock_suppresses_sends_on_congested_transport():
     assert sent == []
     sender.window.expected_seq = 12
     assert robot.refresh_face()
-    assert robot.advance_face_display()
+    assert not robot.advance_face_display()
     assert len(sent) == 2
+    from pycozmo.protocol_encoder import DisplayImage, OutputSilence
+    assert isinstance(sent[0], DisplayImage)
+    assert isinstance(sent[1], OutputSilence)
 
 
 def test_pycozmo_runtime_method_replacements_are_gone():
@@ -373,7 +376,7 @@ def test_battery_gauge_fill_and_voltage_change_independently_of_speech():
     assert full.tobytes() != charging.tobytes()
 
 
-def test_live_face_transport_is_disabled_to_protect_wheel_command_acks():
+def test_live_face_transport_is_disabled_by_default_to_protect_wheel_command_acks():
     robot = Robot(max_speed=250, on_state=lambda: None,
                   on_sensor=lambda: None, on_frame=lambda frame: None)
     robot.client = FakeDisplay()
