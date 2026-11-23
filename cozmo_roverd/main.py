@@ -653,12 +653,10 @@ class Bridge:
             asyncio.create_task(self._maintenance(self.robot.refresh_status_lights, 0.5)),
             asyncio.create_task(self._maintenance(self.robot.refresh_charger_lights, 1.0)),
             ]
-        # No face-display packets on live Cozmo hardware until their reliable
-        # transport issue has been resolved. Keep the opt-in test path.
+        # Face packets are explicitly opt-in; minimal diagnostics suppress them.
         if self.robot._face_transport_enabled and not self.cfg.diagnostic_minimal:
             tasks += [
                 asyncio.create_task(self._maintenance(self.robot.refresh_face, 0.25)),
-                asyncio.create_task(self._maintenance(self.robot.advance_face_display, 0.25)),
             ]
         try:
             await self.stop_event.wait()
