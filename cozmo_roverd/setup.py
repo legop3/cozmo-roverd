@@ -212,7 +212,8 @@ def validate_payload(payload: dict, current: dict) -> dict:
         raise ValueError("Select a Wi-Fi network with a valid SSID")
     oldwifi = current.get("wifi", {})
     password = payload.get("password", "")
-    if not password and ssid == oldwifi.get("ssid") and interface == oldwifi.get("interface"):
+    # Credentials belong to the Cozmo network, not the host Wi-Fi adapter.
+    if not password and ssid == oldwifi.get("ssid"):
         password = oldwifi.get("password", "")
     if not isinstance(password, str) or len(password) < 8 or len(password) > 63:
         raise ValueError("Enter the Cozmo Wi-Fi password (8–63 characters)")
