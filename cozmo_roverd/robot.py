@@ -9,7 +9,7 @@ import queue
 import threading
 import time
 from PIL import Image, ImageDraw
-from .face import status_image, compact_status_image, wire_status_image
+from .face import status_image, wire_status_image
 from .status_lights import backpack_lights, charger_lights, charger_signature
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
@@ -921,23 +921,6 @@ class Robot:
             # the larger UDP frame budget is safe for an animation keyframe.
             max_image_size = min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
             encoded = bytes(ImageEncoder(image).encode())
-            if len(encoded) > max_image_size:
-                image = compact_status_image(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, last_tts=self.last_tts,
-                    scroll=self._face_scroll)
-                encoded = bytes(ImageEncoder(image).encode())
-            if len(encoded) > max_image_size:
-                image = compact_status_image(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, last_tts=self.last_tts,
-                    scroll=self._face_scroll, message_limit=8)
-                encoded = bytes(ImageEncoder(image).encode())
-            if len(encoded) > max_image_size:
-                image = compact_status_image(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, battery_only=True)
-                encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 # Preserve all TTS characters by paging, rather than dropping
                 # long or high-entropy messages when the packet will not fit.
