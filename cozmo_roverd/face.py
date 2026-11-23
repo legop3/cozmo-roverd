@@ -188,7 +188,8 @@ def static_status_image(*, voltage=None, percent=None, charging=False,
     measure = ImageDraw.Draw(canvas)
     # Use large readable fonts, and a fixed two-line maximum. Long messages
     # are clipped, not reduced into tiny characters or multiple pages.
-    for size in (25, 22, 19, 17, 15, 14):
+    sizes = (17, 15, 14) if len(message) > 16 else ((22, 19, 17, 15, 14) if len(message) > 8 else (25, 22, 19, 17, 15, 14))
+    for size in sizes:
         font = _font(size, _FONT_CHOICES)
         step = _height(measure, font) + 2
         max_lines = max(1, (TEXT_HEIGHT + 2) // step)
