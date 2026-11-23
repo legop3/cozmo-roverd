@@ -20,7 +20,6 @@ class Robot:
         self.max_speed = max_speed
         self.camera_mode = camera_mode
         self.camera_enabled = camera_enabled
-        self._face_transport_enabled = False
         self.manual_exposure_ms = 10
         self._auto_gain = 1.0
         self._auto_exposure_ms = 16
@@ -78,8 +77,10 @@ class Robot:
         self._tts_last_stream_at = 0.0
         self.last_tts_frames = 0
         self.last_tts_played_at = None
-        # Static face status is enabled; no periodic animation-clock packets.
-        self._face_transport_enabled = False
+        # Static face is enabled, but never run the 30 Hz animation sender.
+        self._face_transport_enabled = True
+        self._face_blocked_since = None
+        self._face_suspended = False
         self.face_frames_sent = 0
         self._face_scroll = 0
         self._face_last_content = None
@@ -136,6 +137,8 @@ class Robot:
                 # The new robot display has no cached image from the old link.
                 self._face_last_content = None
                 self._face_sent_at = 0.0
+                self._face_blocked_since = None
+                self._face_suspended = False
                 self._status_light_signature = None
                 self._dock_contact_handled = False
                 self._dock_lift_target = None
@@ -864,15 +867,15 @@ class Robot:
         self.refresh_face()
 
     def refresh_face(self):
-        """Refresh the status image through PyCozmo's image controller."""
+        """Send a bounded static image frame without starting its 30 Hz sender."""
         if not self._face_transport_enabled:
             return False
         return self._refresh_face_unverified()
 
     def _refresh_face_unverified(self):
-        """Render the next status image when its content needs updating."""
+        """Render and send a single clock+image pair when needed."""
         with self.lock:
-            if self.client is None or not self.ready:
+            if self.client is None or not self.ready or self._face_suspended:
                 return False
             # The firmware stores DisplayImage as an animation keyframe,
             # not just a UDP payload. Refresh slowly to avoid its small
@@ -886,8 +889,16 @@ class Robot:
             if sender is not None:
                 with sender.lock:
                     pending = (sender.window.next_seq - sender.window.expected_seq) % sender.window.max_seq
-                if pending >= 8 or sender.queue.qsize() >= 8:
+                if pending >= 4 or sender.queue.qsize() >= 4:
+                    now = time.monotonic()
+                    if self._face_blocked_since is None:
+                        self._face_blocked_since = now
+                    elif now - self._face_blocked_since > 3:
+                        self._face_suspended = True
+                        self.face_last_error = "Display suspended: reliable send channel congested"
+                        LOG.warning("%s", self.face_last_error)
                     return False
+                self._face_blocked_since = None
             battery = self.battery
             image = status_image(
                 voltage=battery.voltage,
@@ -905,7 +916,10 @@ class Robot:
             # Sending is already deferred during TTS and transport congestion.
             from pycozmo.image_encoder import ImageEncoder
             from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-            max_image_size = MAX_FRAME_PAYLOAD_SIZE - 6
+            # The DisplayImage command has a documented maximum payload of
+            # 188 bytes including its four-byte array header. Do not assume
+            # the larger UDP frame budget is safe for an animation keyframe.
+            max_image_size = min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
             encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
                 image = compact_status_image(
@@ -951,12 +965,20 @@ class Robot:
             self.face_last_encoded_bytes = len(encoded)
             content = image.tobytes()
             self._face_scroll += 1
-            # The controller sends image and timeline packets in the order
-            # Cozmo expects and automatically refreshes unchanged images.
+            # Send the same order as PyCozmo's animation controller:
+            # OutputSilence then DisplayImage, not the reverse.
+            # No continuous animation/audio stream is enabled.
             if (content == self._face_last_content
                     and time.monotonic() - self._face_sent_at < 15.0):
                 return False
-            self.client.display_image(image)
+            conn = getattr(self.client, "conn", None)
+            if conn is not None and callable(getattr(conn, "send", None)):
+                from pycozmo.protocol_encoder import DisplayImage, OutputSilence
+                conn.send(OutputSilence())
+                conn.send(DisplayImage(image=encoded))
+            else:
+                # Test doubles can inspect the rendered bitmap.
+                self.client.display_image(image)
             self.face_frames_sent += 1
             self._face_sent_at = time.monotonic()
             self._face_last_content = content
