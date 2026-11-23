@@ -260,3 +260,21 @@ def test_video_reports_distinct_camera_arrivals_separately_from_output():
     assert stats["rtsp_repeated_camera_frames"] == 6
     assert stats["ffmpeg_write_last_ms"] == 18.1
     assert stats["ffmpeg_write_max_ms"] == 24.7
+
+
+def test_long_camera_gaps_are_recorded_without_counting_short_jitter(monkeypatch):
+    import cozmo_roverd.media as media
+    now = [100.0]
+    monkeypatch.setattr(media.time, "monotonic", lambda: now[0])
+    publisher = Publisher("rtsp://localhost:8554/cozmo")
+    publisher.running.set()
+    image = Image.new("RGB", (320, 240))
+    publisher.submit(image)
+    now[0] += 0.8
+    publisher.submit(image)
+    assert publisher.camera_gap_count == 0
+    now[0] += 1.2
+    publisher.submit(image)
+    assert publisher.camera_gap_count == 1
+    assert publisher.diagnostics()["camera_longest_gap_seconds"] == 1.2
+    assert publisher.diagnostics()["camera_gap_grace_seconds"] == 3.0
