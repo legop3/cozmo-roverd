@@ -131,13 +131,27 @@ def test_face_packet_always_fits_single_cozmo_transport_frame():
                          last_tts="This is a long message displayed while moving",
                          scroll=6, audio_error="speech error")
     payload = bytes(ImageEncoder(image).encode())
-    # The OLED command is smaller than the generic UDP frame budget.
+    # The normal large-font image should use the UDP payload budget.
     robot = robot_with_face()
     robot.battery.voltage = 3.96
     robot.battery.percent = 82
     robot.last_tts = "Test oversized image"
     assert robot.refresh_face()
-    assert robot.face_last_encoded_bytes <= min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
+    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
+
+
+def test_normal_status_keeps_original_large_adaptive_text():
+    from pycozmo.image_encoder import ImageEncoder
+
+    robot = robot_with_face()
+    robot.battery.voltage = 3.91
+    robot.battery.percent = 62
+    robot.last_tts = "Hello Cozmo"
+    assert robot.refresh_face()
+    frame = robot.client.images[-1]
+    expected = status_image(voltage=3.91, percent=62, last_tts="Hello Cozmo")
+    assert frame.tobytes() == expected.tobytes()
+    assert robot.face_last_encoded_bytes == len(ImageEncoder(expected).encode())
 
 
 def test_face_records_encoding_size_after_display():
@@ -163,7 +177,7 @@ def test_face_uses_full_width_status_instead_of_tiny_battery_only_fallback():
     assert frame.size == (128, 32)
     assert frame.crop((90, 0, 128, 32)).getbbox() is not None
     assert robot.face_last_encoded_bytes == len(ImageEncoder(frame).encode())
-    assert robot.face_last_encoded_bytes <= min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
+    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
 
 
 def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatch):
@@ -171,8 +185,7 @@ def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatc
     from pycozmo.image_encoder import ImageEncoder
     from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
 
-    # A high-entropy image cannot fit in one Cozmo display command.
-    # The sender must replace even an ordinary large dashboard when needed.
+    # Only an image larger than the UDP frame budget should fall back.
     noise = Image.new("1", (128, 32))
     for y in range(32):
         for x in range(128):
@@ -181,7 +194,7 @@ def test_oversized_face_uses_compact_fallback_with_valid_wire_payload(monkeypatc
     monkeypatch.setattr(robot_module, "status_image", lambda **kwargs: noise)
     robot = robot_with_face()
     assert robot.refresh_face()
-    assert robot.face_last_encoded_bytes <= min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
+    assert robot.face_last_encoded_bytes <= MAX_FRAME_PAYLOAD_SIZE - 6
     assert robot.client.images[0].tobytes() != noise.tobytes()
 
 
