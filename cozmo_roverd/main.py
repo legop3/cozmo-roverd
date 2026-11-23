@@ -350,6 +350,16 @@ class Bridge:
                     "packets_received": self.robot.packets_received,
                     "state_packets_coalesced": self.robot.state_packets_coalesced,
                     "camera_analysis_skipped": self.robot.camera_analysis_skipped,
+                    "camera_transport": {
+                        "image_chunks_received": self.robot.camera_chunks_received,
+                        "complete_images_received": self.robot.camera_images_completed,
+                        "last_image_chunk_age_seconds": (
+                            round(max(0.0, time.monotonic() - self.robot.camera_last_chunk_at), 2)
+                            if self.robot.camera_last_chunk_at is not None else None),
+                        "last_complete_image_age_seconds": (
+                            round(max(0.0, time.monotonic() - self.robot.camera_last_image_at), 2)
+                            if self.robot.camera_last_image_at is not None else None),
+                    },
                     "last_tts": self.robot.last_tts,
                     "last_tts_error": self.robot.last_tts_error,
                     "last_tts_frames": self.robot.last_tts_frames,
