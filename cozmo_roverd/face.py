@@ -171,6 +171,62 @@ def status_image(*, voltage=None, percent=None, charging=False, last_tts="",
     return image
 
 
+def static_status_image(*, voltage=None, percent=None, charging=False,
+                        last_tts="", max_encoded_bytes=184):
+    """One large-text screen and the original battery icon; never paginate.
+
+    Clip at the screen boundary, then shorten only the visible text if the
+    compressed display packet is too large. Work is bounded regardless of
+    incoming TTS length. Never use the tiny one-character page fallback.
+    """
+    from pycozmo.image_encoder import ImageEncoder
+
+    message = " ".join(str(last_tts or "").split()) or "NO MESSAGE"
+    # No part of the message after this prefix can appear on a single screen.
+    message = message[:64]
+    canvas = Image.new("1", (WIDTH, HEIGHT), 0)
+    measure = ImageDraw.Draw(canvas)
+    # Use large readable fonts, and a fixed two-line maximum. Long messages
+    # are clipped, not reduced into tiny characters or multiple pages.
+    for size in (25, 22, 19, 17, 15, 14):
+        font = _font(size, _FONT_CHOICES)
+        step = _height(measure, font) + 2
+        max_lines = max(1, (TEXT_HEIGHT + 2) // step)
+        if max_lines > 2:
+            max_lines = 2
+        lines = _wrap(message, measure, font, TEXT_WIDTH)[:max_lines]
+        if not lines:
+            continue
+        # Preserve the original battery outline, segments, charging marker
+        # and voltage in every candidate; don't switch to voltage-only mode.
+        for n in range(len(" ".join(lines)), 7, -1):
+            text = " ".join(lines)[:n].rstrip()
+            if not text:
+                break
+            shown = _wrap(text, measure, font, TEXT_WIDTH)[:max_lines]
+            image = Image.new("1", (WIDTH, HEIGHT), 0)
+            draw = ImageDraw.Draw(image)
+            used = len(shown) * step - 2
+            y = max(0, (HEIGHT - used) // 2)
+            for line in shown:
+                bounds = draw.textbbox((0, 0), line, font=font)
+                x = max(1, (PANEL_LEFT - (bounds[2] - bounds[0])) // 2)
+                draw.text((x - bounds[0], y - bounds[1]), line,
+                          font=font, fill=1)
+                y += step
+            _battery_panel(draw, voltage, percent, bool(charging))
+            if len(ImageEncoder(image).encode()) <= max_encoded_bytes:
+                return image
+    # If even short, readable text won't fit, retain the original battery
+    # icon and report the missing text through diagnostics rather than
+    # sending dangerous oversized packets or single-letter pages.
+    image = Image.new("1", (WIDTH, HEIGHT), 0)
+    _battery_panel(ImageDraw.Draw(image), voltage, percent, bool(charging))
+    if len(ImageEncoder(image).encode()) <= max_encoded_bytes:
+        return image
+    raise ValueError("Battery status image exceeds Cozmo display packet limit")
+
+
 def compact_status_image(*, voltage=None, percent=None, charging=False,
                          last_tts="", scroll=0, battery_only=False,
                          message_limit=14, **_unused):
