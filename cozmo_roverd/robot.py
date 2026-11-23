@@ -859,11 +859,10 @@ class Robot:
             self.last_tts_error = "Hardware speech disabled for robot stability"
             self._face_scroll = 0
             self._face_last_content = None
-            self._face_sent_at = 0.0
-        # Show the newly requested text *before* speech synthesis and audio
-        # transfer begin. Otherwise a stuck TTS queue suppresses the face
-        # refresh, so the most recent message never becomes visible.
-        # refresh_face retains normal connection/backlog safeguards.
+        # Do not bypass the 5-second face-send cooldown for every TTS request.
+        # A rapid sequence of messages must not fill the animation keyframe
+        # buffer and stall reliable wheel commands. The periodic face task
+        # will display the latest message at its next permitted refresh.
         self.refresh_face()
 
     def refresh_face(self):
