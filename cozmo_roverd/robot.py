@@ -400,8 +400,11 @@ class Robot:
             if self.client is None or not self.ready or self.undock_active:
                 self._idle_wake_restore_at = None
                 return False
+            # Docked RobotState measurements may become stale while the
+            # camera/control link is still live. A previously confirmed
+            # charger contact plus an active PyCozmo session is sufficient.
             if (self.on_charger is not True or self.moving
-                    or self.dock_assist or self.battery.stale(now)):
+                    or self.dock_assist):
                 self._idle_wake_restore_at = None
                 return False
             if self._idle_wake_restore_at is not None:
