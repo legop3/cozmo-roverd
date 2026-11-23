@@ -9,7 +9,7 @@ import queue
 import threading
 import time
 from PIL import Image, ImageDraw
-from .face import status_image, wire_status_image
+from .face import bounded_status_pages
 from .status_lights import backpack_lights, charger_lights, charger_signature
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
@@ -900,31 +900,22 @@ class Robot:
                     return False
                 self._face_blocked_since = None
             battery = self.battery
-            image = status_image(
-                voltage=battery.voltage,
-                percent=battery.percent,
-                charging=battery.charging,
-                last_tts=self.last_tts,
-                scroll=self._face_scroll,
-            )
-            # Keep the large adaptive text. DisplayImage can use the full
-            # reliable UDP frame payload; the former 184-byte cap forced
-            # almost every message into tiny, character-by-character text.
             from pycozmo.image_encoder import ImageEncoder
-            from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-            max_image_size = MAX_FRAME_PAYLOAD_SIZE - 6
+            # 0x97 DisplayImage has a 188-byte maximum *packet* payload,
+            # including the four-byte array header. The generic UDP frame
+            # limit is not a safe bound for this command.
+            max_image_size = 184
+            try:
+                pages = bounded_status_pages(
+                    voltage=battery.voltage, percent=battery.percent,
+                    charging=battery.charging, last_tts=self.last_tts,
+                    max_encoded_bytes=max_image_size)
+            except ValueError as exc:
+                self.face_last_error = str(exc)
+                LOG.warning("%s", self.face_last_error)
+                return False
+            image = pages[self._face_scroll % len(pages)]
             encoded = bytes(ImageEncoder(image).encode())
-            if len(encoded) > max_image_size:
-                # Only exceptionally large frames use the compact fallback.
-                # Normal status screens keep their original adaptive fonts.
-                for page_chars in (24, 16, 12, 8, 4):
-                    image = wire_status_image(
-                        voltage=battery.voltage, percent=battery.percent,
-                        charging=battery.charging, last_tts=self.last_tts,
-                        scroll=self._face_scroll, page_chars=page_chars)
-                    encoded = bytes(ImageEncoder(image).encode())
-                    if len(encoded) <= max_image_size:
-                        break
             if len(encoded) > max_image_size:
                 self.face_last_error = (
                     f"Cannot fit face keyframe into {max_image_size} bytes "
