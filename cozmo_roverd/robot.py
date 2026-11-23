@@ -16,9 +16,10 @@ from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
-    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto"):
+    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True):
         self.max_speed = max_speed
         self.camera_mode = camera_mode
+        self.camera_enabled = camera_enabled
         self.manual_exposure_ms = 10
         self._auto_gain = 1.0
         self._auto_exposure_ms = 16
@@ -123,13 +124,14 @@ class Robot:
             # Start bounded consumers before enabling the camera. The raw
             # protocol callback must never perform motor I/O or rich decoding.
             self._start_packet_workers()
-            cli.enable_camera(enable=True, color=True)
+            cli.enable_camera(enable=self.camera_enabled, color=True)
             # Do not enable speaker playback or alter camera streaming
             # in this stable driver. The last requested TTS remains visible.
             cli.enable_animations(False)
             cli.enable_procedural_face(False)
             cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
-            self.configure_camera(cli)
+            if self.camera_enabled:
+                self.configure_camera(cli)
             with self.lock:
                 self.client = cli
                 self.last_sensor = time.monotonic()
