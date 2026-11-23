@@ -907,24 +907,17 @@ class Robot:
                 last_tts=self.last_tts,
                 scroll=self._face_scroll,
             )
-            # Use the full-width dashboard whenever the encoded image fits
-            # in a single protocol frame. The former arbitrary 160-byte
-            # limit silently replaced it with a tiny battery-only icon at
-            # the left edge, making the screen look broken. Cozmo's
-            # animation-buffer warnings describe its *available* space at
-            # that instant, not a 160-byte maximum image format.
-            # Sending is already deferred during TTS and transport congestion.
+            # Keep the large adaptive text. DisplayImage can use the full
+            # reliable UDP frame payload; the former 184-byte cap forced
+            # almost every message into tiny, character-by-character text.
             from pycozmo.image_encoder import ImageEncoder
             from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-            # The DisplayImage command has a documented maximum payload of
-            # 188 bytes including its four-byte array header. Do not assume
-            # the larger UDP frame budget is safe for an animation keyframe.
-            max_image_size = min(MAX_FRAME_PAYLOAD_SIZE - 6, 184)
+            max_image_size = MAX_FRAME_PAYLOAD_SIZE - 6
             encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
-                # Preserve all TTS characters by paging, rather than dropping
-                # long or high-entropy messages when the packet will not fit.
-                for page_chars in (12, 10, 8, 6, 4, 2, 1):
+                # Only exceptionally large frames use the compact fallback.
+                # Normal status screens keep their original adaptive fonts.
+                for page_chars in (24, 16, 12, 8, 4):
                     image = wire_status_image(
                         voltage=battery.voltage, percent=battery.percent,
                         charging=battery.charging, last_tts=self.last_tts,
