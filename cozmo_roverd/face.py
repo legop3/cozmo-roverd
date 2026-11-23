@@ -171,31 +171,25 @@ def compact_status_image(*, voltage=None, percent=None, charging=False,
 
 
 def wire_status_image(*, voltage=None, percent=None, charging=False,
-                      last_tts="", scroll=0, compact=False):
-    """Low-entropy fallback fitting Cozmo's small DisplayImage packet budget.
+                      last_tts="", scroll=0, page_chars=6):
+    """Sparse, paginated fallback for Cozmo's 184-byte image data limit.
 
-    Prefer short 8px text over large outlined glyphs. Keep the last message
-    and voltage visibly separate. Use only sparse pixels to compress well.
+    Page by characters to preserve the *whole* TTS message over successive
+    refreshes, even if only a few characters can fit in one packet.
     """
     image = Image.new("1", (WIDTH, HEIGHT), 0)
     draw = ImageDraw.Draw(image)
-    font = _font(9 if not compact else 8, _FONT_CHOICES)
+    font = _font(8, _FONT_CHOICES)
     message = " ".join(str(last_tts or "").split()) or "NO MESSAGE"
-    # Paginate by width, keeping multiple pages available for long messages.
-    lines = _wrap(message, draw, font, 88)
-    per_page = 2
-    pages = [lines[i:i + per_page] for i in range(0, len(lines), per_page)]
-    page = pages[int(scroll) % len(pages)]
-    for i, line in enumerate(page):
-        box = draw.textbbox((0, 0), line, font=font)
-        draw.text((1 - box[0], i * 12 + 3 - box[1]), line, fill=1, font=font)
-    if voltage is not None:
-        try:
-            value = float(voltage)
-            label = f"{value:.1f}V" if math.isfinite(value) else "--V"
-        except (TypeError, ValueError, OverflowError):
-            label = "--V"
-    else:
+    pages = [message[i:i + page_chars] for i in range(0, len(message), page_chars)]
+    line = pages[int(scroll) % len(pages)]
+    box = draw.textbbox((0, 0), line, font=font)
+    draw.text((1 - box[0], 7 - box[1]), line, fill=1, font=font)
+
+    try:
+        v = float(voltage)
+        label = f"{v:.1f}V" if math.isfinite(v) else "--V"
+    except (TypeError, ValueError, OverflowError):
         label = "--V"
     font_v = _font(8, _VOLTAGE_CHOICES)
     draw.text((94, 2), label, fill=1, font=font_v)
@@ -204,7 +198,6 @@ def wire_status_image(*, voltage=None, percent=None, charging=False,
     except (TypeError, ValueError, OverflowError):
         charge = 0
     if charge:
-        # Sparse bar instead of a high-entropy outlined battery.
         draw.line((95, 22, 95 + int(charge * 0.28), 22), fill=1)
     if charging:
         draw.point((126, 22), fill=1)
