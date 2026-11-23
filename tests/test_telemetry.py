@@ -450,3 +450,16 @@ def test_camera_analysis_does_not_delay_video_callback_and_is_sampled():
     finally:
         release.set()
         robot._stop_packet_workers()
+
+
+def test_camera_wire_chunk_counter_distinguishes_incomplete_frames():
+    robot = Robot(max_speed=100, on_state=lambda: None,
+                  on_sensor=lambda: None, on_frame=lambda image: None)
+    robot._camera_chunk(NS(chunk_id=0))
+    robot._camera_chunk(NS(chunk_id=1))
+    assert robot.camera_chunks_received == 2
+    assert robot.camera_images_completed == 0
+    assert robot.camera_last_chunk_at is not None
+    robot._camera_image(object())
+    assert robot.camera_images_completed == 1
+    assert robot.camera_last_image_at is not None
