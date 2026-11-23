@@ -872,22 +872,54 @@ class Robot:
         return self._refresh_face_unverified()
 
     def _refresh_face_unverified(self):
-        """Render and send a single clock+image pair when needed."""
+        """Render one clipped status screen without holding the motor lock."""
         with self.lock:
             if self.client is None or not self.ready or self._face_suspended:
                 return False
-            # The firmware stores DisplayImage as an animation keyframe,
-            # not just a UDP payload. Refresh slowly to avoid its small
-            # animation-keyframe ring filling while video is active.
-            if time.monotonic() - self._face_sent_at < 5.0:
+            now = time.monotonic()
+            if now - self._face_sent_at < 5.0:
                 return False
-            # Display updates are lower priority than actual wheel/audio
-            # commands. When the reliable send window fills, adding a new
-            # image only increases retransmissions and blocks controls.
-            sender = getattr(getattr(self.client, "conn", None), "send_thread", None)
+            cli = self.client
+            voltage = self.battery.voltage
+            percent = self.battery.percent
+            charging = self.battery.charging
+            message = self.last_tts
+
+        # Image/font layout and RLE compression can be expensive. NEVER hold
+        # the same lock used by wheel/head/lift controls while rendering them.
+        from .face import static_status_image
+        from pycozmo.image_encoder import ImageEncoder, ImageDecoder
+        try:
+            image = static_status_image(
+                voltage=voltage, percent=percent, charging=charging,
+                last_tts=message, max_encoded_bytes=184)
+            encoded = bytes(ImageEncoder(image).encode())
+            if not encoded or len(encoded) > 184:
+                raise ValueError(f"Encoded face size {len(encoded)} exceeds 184 bytes")
+            decoded = ImageDecoder(encoded).decode()
+            foreground = sum(bool(px) for px in decoded)
+            columns = sum(
+                any(decoded[y * 128 + x] for y in range(32))
+                for x in range(128))
+            if foreground == 0 or columns < 8:
+                raise ValueError(f"Encoded face unexpectedly sparse: {foreground} pixels, {columns} columns")
+        except (ValueError, IndexError, AssertionError) as exc:
+            with self.lock:
+                self.face_last_error = str(exc)[:180]
+            LOG.warning("Cozmo face skipped: %s", exc)
+            return False
+
+        with self.lock:
+            # A reconnect or a newer message invalidates the rendered frame.
+            if (self.client is not cli or not self.ready
+                    or self._face_suspended or self.last_tts != message
+                    or time.monotonic() - self._face_sent_at < 5.0):
+                return False
+            sender = getattr(getattr(cli, "conn", None), "send_thread", None)
             if sender is not None:
                 with sender.lock:
-                    pending = (sender.window.next_seq - sender.window.expected_seq) % sender.window.max_seq
+                    pending = ((sender.window.next_seq - sender.window.expected_seq)
+                               % sender.window.max_seq)
                 if pending >= 4 or sender.queue.qsize() >= 4:
                     now = time.monotonic()
                     if self._face_blocked_since is None:
@@ -898,70 +930,25 @@ class Robot:
                         LOG.warning("%s", self.face_last_error)
                     return False
                 self._face_blocked_since = None
-            battery = self.battery
-            from pycozmo.image_encoder import ImageEncoder
-            # 0x97 DisplayImage has a 188-byte maximum *packet* payload,
-            # including the four-byte array header. The generic UDP frame
-            # limit is not a safe bound for this command.
-            max_image_size = 184
-            try:
-                pages = bounded_status_pages(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, last_tts=self.last_tts,
-                    max_encoded_bytes=max_image_size)
-            except ValueError as exc:
-                self.face_last_error = str(exc)
-                LOG.warning("%s", self.face_last_error)
-                return False
-            image = pages[self._face_scroll % len(pages)]
-            encoded = bytes(ImageEncoder(image).encode())
-            if len(encoded) > max_image_size:
-                self.face_last_error = (
-                    f"Cannot fit face keyframe into {max_image_size} bytes "
-                    f"(smallest generated image is {len(encoded)})")
-                LOG.warning("%s", self.face_last_error)
-                return False
-            # Confirm the actual PyCozmo wire encoder retains the entire
-            # 128-column bitmap. The robot showing a single dot despite
-            # a full rendered image points to animation transport rather
-            # than font/layout, and these counts separate those failures.
-            from pycozmo.image_encoder import ImageDecoder
-            decoded = ImageDecoder(encoded).decode()
-            foreground = sum(bool(px) for px in decoded)
-            columns = sum(
-                any(decoded[y * 128 + x] for y in range(32))
-                for x in range(128))
-            self.face_encoded_on_pixels = foreground
-            self.face_decoded_columns = columns
-            if foreground == 0 or columns < 8:
-                self.face_last_error = (
-                    f"Encoded bitmap unexpectedly sparse: {foreground} pixels, "
-                    f"{columns} occupied columns")
-                LOG.warning("%s", self.face_last_error)
-                return False
-            self.face_last_encoded_bytes = len(encoded)
             content = image.tobytes()
-            self._face_scroll += 1
-            # Send the same order as PyCozmo's animation controller:
-            # OutputSilence then DisplayImage, not the reverse.
-            # No continuous animation/audio stream is enabled.
             if (content == self._face_last_content
                     and time.monotonic() - self._face_sent_at < 15.0):
                 return False
-            conn = getattr(self.client, "conn", None)
+            conn = getattr(cli, "conn", None)
             if conn is not None and callable(getattr(conn, "send", None)):
                 from pycozmo.protocol_encoder import DisplayImage, OutputSilence
+                # Keep the already-working bounded packet sequence untouched.
                 conn.send(OutputSilence())
                 conn.send(DisplayImage(image=encoded))
-                # Advance one more animation frame to present the image.
-                # PyCozmo ordinarily does this on its next 30 Hz tick.
                 conn.send(OutputSilence())
             else:
-                # Test doubles can inspect the rendered bitmap.
-                self.client.display_image(image)
+                cli.display_image(image)
             self.face_frames_sent += 1
             self._face_sent_at = time.monotonic()
             self._face_last_content = content
+            self.face_last_encoded_bytes = len(encoded)
+            self.face_encoded_on_pixels = foreground
+            self.face_decoded_columns = columns
             self.face_last_error = None
             return True
 
