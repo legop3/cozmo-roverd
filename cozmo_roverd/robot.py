@@ -939,17 +939,16 @@ class Robot:
                     charging=battery.charging, battery_only=True)
                 encoded = bytes(ImageEncoder(image).encode())
             if len(encoded) > max_image_size:
-                image = wire_status_image(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, last_tts=self.last_tts,
-                    scroll=self._face_scroll)
-                encoded = bytes(ImageEncoder(image).encode())
-            if len(encoded) > max_image_size:
-                image = wire_status_image(
-                    voltage=battery.voltage, percent=battery.percent,
-                    charging=battery.charging, last_tts=self.last_tts,
-                    scroll=self._face_scroll, compact=True)
-                encoded = bytes(ImageEncoder(image).encode())
+                # Preserve all TTS characters by paging, rather than dropping
+                # long or high-entropy messages when the packet will not fit.
+                for page_chars in (12, 10, 8, 6, 4, 2, 1):
+                    image = wire_status_image(
+                        voltage=battery.voltage, percent=battery.percent,
+                        charging=battery.charging, last_tts=self.last_tts,
+                        scroll=self._face_scroll, page_chars=page_chars)
+                    encoded = bytes(ImageEncoder(image).encode())
+                    if len(encoded) <= max_image_size:
+                        break
             if len(encoded) > max_image_size:
                 self.face_last_error = (
                     f"Cannot fit face keyframe into {max_image_size} bytes "
