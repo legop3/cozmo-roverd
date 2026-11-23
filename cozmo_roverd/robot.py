@@ -79,6 +79,7 @@ class Robot:
         self.last_tts_frames = 0
         self.last_tts_played_at = None
         # Static face status is enabled; no periodic animation-clock packets.
+        self._face_transport_enabled = True
         self.face_frames_sent = 0
         self._face_scroll = 0
         self._face_last_content = None
