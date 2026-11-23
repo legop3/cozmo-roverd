@@ -365,6 +365,22 @@ def test_battery_gauge_fill_and_voltage_change_independently_of_speech():
     assert full.tobytes() != charging.tobytes()
 
 
+def test_sparse_face_fallback_pages_message_without_dropping_voltage():
+    from cozmo_roverd.face import wire_status_image
+    from pycozmo.image_encoder import ImageEncoder
+
+    message = "LONG MESSAGE FOR COZMO"
+    first = wire_status_image(voltage=3.95, percent=45, last_tts=message,
+                              scroll=0, page_chars=4)
+    second = wire_status_image(voltage=3.95, percent=45, last_tts=message,
+                               scroll=1, page_chars=4)
+    assert first.size == (128, 32) == second.size
+    assert first.tobytes() != second.tobytes()
+    assert first.crop((94, 0, 128, 32)).tobytes() == (
+        second.crop((94, 0, 128, 32)).tobytes())
+    assert len(ImageEncoder(first).encode()) <= 184
+
+
 def test_live_face_transport_defaults_to_bounded_static_sender():
     robot = Robot(max_speed=250, on_state=lambda: None,
                   on_sensor=lambda: None, on_frame=lambda frame: None)
