@@ -19,6 +19,7 @@ class Config:
     video: bool = True
     camera_enabled: bool = True
     diagnostic_minimal: bool = False
+    face_enabled: bool = False
     private: bool = False
     rtsp_url: str = ""
     fps: int = 15
@@ -39,11 +40,14 @@ def load(path: str) -> Config:
         video=bool(media.get("enabled", True)),
         camera_enabled=media.get("camera_enabled", True),
         diagnostic_minimal=media.get("diagnostic_minimal", False),
+        face_enabled=media.get("face_enabled", False),
         private=rover.get("private", False),
         rtsp_url=str(media.get("rtsp_url", "")),
         fps=int(media.get("fps", 15)),
         hud=media.get("hud", True),
     )
+    if type(c.face_enabled) is not bool:
+        raise ValueError("media.face_enabled must be a boolean")
     if type(c.diagnostic_minimal) is not bool:
         raise ValueError("media.diagnostic_minimal must be a boolean")
     if type(c.camera_enabled) is not bool:
