@@ -273,13 +273,14 @@ def test_static_face_uses_upstream_packet_order_without_30hz_loop():
     raw_packets = []
     robot.client.conn = NS(send=raw_packets.append)
     assert robot.refresh_face()
-    assert len(raw_packets) == 2
+    assert len(raw_packets) == 3
     assert isinstance(raw_packets[0], OutputSilence)
     assert isinstance(raw_packets[1], DisplayImage)
+    assert isinstance(raw_packets[2], OutputSilence)
     assert len(raw_packets[1].image) <= 184
     assert not robot.advance_face_display()
     assert not robot.refresh_face()
-    assert len(raw_packets) == 2
+    assert len(raw_packets) == 3
 
 
 def test_static_face_respects_congested_transport():
@@ -296,7 +297,7 @@ def test_static_face_respects_congested_transport():
     assert raw_packets == []
     sender.window.expected_seq = 12
     assert robot.refresh_face()
-    assert len(raw_packets) == 2
+    assert len(raw_packets) == 3
     assert not robot.advance_face_display()
 
 
