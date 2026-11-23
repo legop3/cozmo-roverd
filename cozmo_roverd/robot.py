@@ -891,13 +891,19 @@ class Robot:
         # the same lock used by wheel/head/lift controls while rendering them.
         from .face import static_status_image
         from pycozmo.image_encoder import ImageEncoder, ImageDecoder
+        from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+        # A UDP frame carries a four-byte command header plus DisplayImage's
+        # two-byte array length. The old 184-byte limit was not a transport
+        # limit and caused even the battery icon to be rejected.
+        max_encoded_bytes = MAX_FRAME_PAYLOAD_SIZE - 6
         try:
             image = static_status_image(
                 voltage=voltage, percent=percent, charging=charging,
-                last_tts=message, max_encoded_bytes=184)
+                last_tts=message, max_encoded_bytes=max_encoded_bytes)
             encoded = bytes(ImageEncoder(image).encode())
-            if not encoded or len(encoded) > 184:
-                raise ValueError(f"Encoded face size {len(encoded)} exceeds 184 bytes")
+            if not encoded or len(encoded) > max_encoded_bytes:
+                raise ValueError(
+                    f"Encoded face size {len(encoded)} exceeds {max_encoded_bytes} bytes")
             decoded = ImageDecoder(encoded).decode()
             foreground = sum(bool(px) for px in decoded)
             columns = sum(
