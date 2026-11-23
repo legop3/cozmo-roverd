@@ -33,27 +33,31 @@ def test_face_has_battery_and_latest_tts_and_128x32_format():
     assert image.getbbox() is not None
 
 
-def test_long_tts_wraps_across_pages():
-    message = "This is a fairly long message that should continue onto later pages"
-    image1 = status_image(last_tts=message, scroll=0)
-    image2 = status_image(last_tts=message, scroll=1)
-    assert image1.tobytes() != image2.tobytes()
-    assert image1.size == image2.size == (128, 32)
+def test_long_tts_is_clipped_without_paging_and_keeps_battery_icon():
+    from cozmo_roverd.face import static_status_image
+    from pycozmo.image_encoder import ImageEncoder
+
+    message = "THIS IS A LONG MESSAGE " * 30
+    first = static_status_image(voltage=3.91, percent=60, last_tts=message)
+    extra = static_status_image(voltage=3.91, percent=60, last_tts=message + "EXTRA")
+    assert first.size == (128, 32)
+    assert first.tobytes() == extra.tobytes()
+    assert first.crop((94, 19, 128, 32)).getbbox() is not None
+    assert len(ImageEncoder(first).encode()) <= 184
 
 
-def test_face_updates_only_on_change_but_last_message_is_persistent():
+def test_face_updates_obey_cooldown_and_last_message_is_persistent():
     robot = robot_with_face()
     assert robot.refresh_face()
     assert not robot.refresh_face()
     robot.note_tts("This is a message")
-    # The new message is displayed as soon as it arrives, even if later
-    # audio synthesis/playback gets stuck.
+    assert robot.last_tts == "This is a message"
+    # New TTS must not bypass the cooldown and jam the animation channel.
+    assert len(robot.client.images) == 1
+    robot._face_sent_at = 0.0
+    assert robot.refresh_face()
     assert len(robot.client.images) == 2
     assert not robot.refresh_face()
-    assert robot.last_tts == "This is a message"
-    assert all(isinstance(im, Image.Image) for im in robot.client.images)
-    assert all(im.size == (128, 32) for im in robot.client.images)
-
 
 
 def test_face_shows_battery_state_in_distinct_panel():
@@ -140,21 +144,18 @@ def test_face_packet_always_fits_single_cozmo_transport_frame():
     assert robot.face_last_encoded_bytes <= 184
 
 
-def test_long_tts_pages_are_large_font_and_each_packet_is_bounded():
-    from cozmo_roverd.face import bounded_status_pages, _layout, _font, _FONT_CHOICES
+def test_long_tts_sends_one_static_bounded_frame():
     from pycozmo.image_encoder import ImageEncoder
-    from PIL import ImageDraw
 
-    message = ("The rover is explaining a complicated message with several "
-               "sentences and enough words to span many OLED pages. ") * 5
-    pages = bounded_status_pages(
-        voltage=3.91, percent=62, charging=False, last_tts=message)
-    assert len(pages) > 2
-    assert all(frame.size == (128, 32) for frame in pages)
-    assert all(0 < len(ImageEncoder(frame).encode()) <= 184 for frame in pages)
-    assert pages[0].tobytes() != pages[1].tobytes()
-    # The new fallback never switches to the former 8-pixel font.
-    assert _font(14, _FONT_CHOICES) is not None
+    robot = robot_with_face()
+    robot.battery.voltage = 3.91
+    robot.battery.percent = 62
+    robot.last_tts = "The rover is explaining a complicated message. " * 10
+    assert robot.refresh_face()
+    frame = robot.client.images[-1]
+    assert len(ImageEncoder(frame).encode()) <= 184
+    assert frame.crop((94, 19, 128, 32)).getbbox() is not None
+    assert not robot.refresh_face()
 
 
 def test_face_records_encoding_size_after_display():
@@ -166,21 +167,14 @@ def test_face_records_encoding_size_after_display():
 
 
 
-def test_face_uses_full_width_status_instead_of_tiny_battery_only_fallback():
+def test_status_keeps_battery_icon_and_voltage_for_short_message():
+    from cozmo_roverd.face import static_status_image
     from pycozmo.image_encoder import ImageEncoder
-    from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-
-    robot = robot_with_face()
-    robot.battery.voltage = 3.91
-    robot.battery.percent = 62
-    robot.last_tts = "Hello Cozmo"
-    assert robot.refresh_face()
-    frame = robot.client.images[-1]
+    frame = static_status_image(voltage=3.91, percent=62, last_tts="Hello")
     assert frame.mode == "1"
     assert frame.size == (128, 32)
     assert frame.crop((90, 0, 128, 32)).getbbox() is not None
-    assert robot.face_last_encoded_bytes == len(ImageEncoder(frame).encode())
-    assert robot.face_last_encoded_bytes <= 184
+    assert len(ImageEncoder(frame).encode()) <= 184
 
 
 def test_sender_never_enqueues_oversized_images(monkeypatch):
@@ -192,7 +186,7 @@ def test_sender_never_enqueues_oversized_images(monkeypatch):
         for x in range(128):
             noise.putpixel((x, y), ((x * 57 + y * 91 + x*y) % 7 < 3))
     assert len(ImageEncoder(noise).encode()) > 184
-    monkeypatch.setattr(face_module, "status_image", lambda **kwargs: noise)
+    monkeypatch.setattr(face_module, "static_status_image", lambda **kwargs: noise)
     robot = robot_with_face()
     assert not robot.refresh_face()
     assert robot.client.images == []
@@ -376,22 +370,6 @@ def test_battery_gauge_fill_and_voltage_change_independently_of_speech():
     assert empty.crop((0, 0, 90, 32)).tobytes() == full.crop((0, 0, 90, 32)).tobytes()
     assert empty.crop((94, 19, 128, 32)).tobytes() != full.crop((94, 19, 128, 32)).tobytes()
     assert full.tobytes() != charging.tobytes()
-
-
-def test_sparse_face_fallback_pages_message_without_dropping_voltage():
-    from cozmo_roverd.face import wire_status_image
-    from pycozmo.image_encoder import ImageEncoder
-
-    message = "LONG MESSAGE FOR COZMO"
-    first = wire_status_image(voltage=3.95, percent=45, last_tts=message,
-                              scroll=0, page_chars=4)
-    second = wire_status_image(voltage=3.95, percent=45, last_tts=message,
-                               scroll=1, page_chars=4)
-    assert first.size == (128, 32) == second.size
-    assert first.tobytes() != second.tobytes()
-    assert first.crop((94, 0, 128, 32)).tobytes() == (
-        second.crop((94, 0, 128, 32)).tobytes())
-    assert len(ImageEncoder(first).encode()) <= 184
 
 
 def test_live_face_transport_defaults_to_bounded_static_sender():
