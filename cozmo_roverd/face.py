@@ -173,62 +173,43 @@ def status_image(*, voltage=None, percent=None, charging=False, last_tts="",
 
 def static_status_image(*, voltage=None, percent=None, charging=False,
                         last_tts="", max_encoded_bytes=None):
-    """One large-text screen and the original battery icon; never paginate.
+    """Render one large-text face with the voltage and battery icon.
 
-    Clip at the screen boundary, then shorten only the visible text if the
-    compressed display packet is too large. Work is bounded regardless of
-    incoming TTS length. Never use the tiny one-character page fallback.
+    Text that does not fit is clipped. Never paginate, shrink to single
+    characters, or silently substitute a battery-only image.
     """
     from pycozmo.image_encoder import ImageEncoder
     from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
+
     if max_encoded_bytes is None:
         max_encoded_bytes = MAX_FRAME_PAYLOAD_SIZE - 6
 
+    # More text cannot fit on a 128x32 bitmap; don't lay out a whole speech.
     message = " ".join(str(last_tts or "").split()) or "NO MESSAGE"
-    # No part of the message after this prefix can appear on a single screen.
     message = message[:64]
-    canvas = Image.new("1", (WIDTH, HEIGHT), 0)
-    measure = ImageDraw.Draw(canvas)
-    # Use large readable fonts, and a fixed two-line maximum. Long messages
-    # are clipped, not reduced into tiny characters or multiple pages.
-    sizes = (17, 15, 14) if len(message) > 16 else ((22, 19, 17, 15, 14) if len(message) > 8 else (25, 22, 19, 17, 15, 14))
-    for size in sizes:
-        font = _font(size, _FONT_CHOICES)
-        step = _height(measure, font) + 2
-        max_lines = max(1, (TEXT_HEIGHT + 2) // step)
-        if max_lines > 2:
-            max_lines = 2
-        lines = _wrap(message, measure, font, TEXT_WIDTH)[:max_lines]
-        if not lines:
-            continue
-        # Preserve the original battery outline, segments, charging marker
-        # and voltage in every candidate; don't switch to voltage-only mode.
-        for n in range(len(" ".join(lines)), 7, -1):
-            text = " ".join(lines)[:n].rstrip()
-            if not text:
-                break
-            shown = _wrap(text, measure, font, TEXT_WIDTH)[:max_lines]
-            image = Image.new("1", (WIDTH, HEIGHT), 0)
-            draw = ImageDraw.Draw(image)
-            used = len(shown) * step - 2
-            y = max(0, (HEIGHT - used) // 2)
-            for line in shown:
-                bounds = draw.textbbox((0, 0), line, font=font)
-                x = max(1, (PANEL_LEFT - (bounds[2] - bounds[0])) // 2)
-                draw.text((x - bounds[0], y - bounds[1]), line,
-                          font=font, fill=1)
-                y += step
-            _battery_panel(draw, voltage, percent, bool(charging))
-            if len(ImageEncoder(image).encode()) <= max_encoded_bytes:
-                return image
-    # If even short, readable text won't fit, retain the original battery
-    # icon and report the missing text through diagnostics rather than
-    # sending dangerous oversized packets or single-letter pages.
+    font_size = 25 if len(message) <= 6 else (20 if len(message) <= 12 else 15)
+    font = _font(font_size, _FONT_CHOICES)
+
     image = Image.new("1", (WIDTH, HEIGHT), 0)
-    _battery_panel(ImageDraw.Draw(image), voltage, percent, bool(charging))
-    if len(ImageEncoder(image).encode()) <= max_encoded_bytes:
-        return image
-    raise ValueError("Battery status image exceeds Cozmo display packet limit")
+    draw = ImageDraw.Draw(image)
+    step = _height(draw, font) + 2
+    max_lines = max(1, min(2, (TEXT_HEIGHT + 2) // step))
+    lines = _wrap(message, draw, font, TEXT_WIDTH)[:max_lines]
+    used = len(lines) * step - 2
+    y = max(0, (HEIGHT - used) // 2)
+    for line in lines:
+        bounds = draw.textbbox((0, 0), line, font=font)
+        x = max(1, (PANEL_LEFT - (bounds[2] - bounds[0])) // 2)
+        draw.text((x - bounds[0], y - bounds[1]), line, font=font, fill=1)
+        y += step
+
+    _battery_panel(draw, voltage, percent, bool(charging))
+    encoded_size = len(ImageEncoder(image).encode())
+    if encoded_size > max_encoded_bytes:
+        raise ValueError(
+            f"Full status image is {encoded_size} bytes; "
+            f"limit is {max_encoded_bytes}. Refusing to drop the text.")
+    return image
 
 
 def compact_status_image(*, voltage=None, percent=None, charging=False,
