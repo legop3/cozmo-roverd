@@ -269,47 +269,35 @@ def test_hardware_tts_disabled_without_touching_camera_or_speaker():
     assert "speech disabled" in robot.last_tts_error.lower()
 
 
-def test_static_face_uses_transport_packets_not_animation_controller_queue():
-    from pycozmo.protocol_encoder import DisplayImage, OutputSilence
+def test_static_face_uses_supported_animation_controller_not_raw_packets():
     from types import SimpleNamespace as NS
 
-    sent = []
     robot = robot_with_face()
-    robot.client.conn = NS(send=sent.append)
-    robot.client.anim_controller = NS(
-        display_image=lambda *args: (_ for _ in ()).throw(
-            AssertionError("animation queue must not be used")),
-        animations_enabled=False)
+    raw_packets = []
+    robot.client.conn = NS(send=raw_packets.append)
     assert robot.refresh_face()
-    assert len(sent) == 2
-    assert isinstance(sent[0], DisplayImage)
-    assert isinstance(sent[1], OutputSilence)
-    # No idle animation clock: one silence only when a new image is sent.
+    assert len(robot.client.images) == 1
+    # PyCozmo's animation controller owns packet ordering and refresh timing.
+    assert raw_packets == []
     assert not robot.advance_face_display()
     assert not robot.refresh_face()
-    assert len(sent) == 2
 
 
-def test_static_face_clock_suppresses_sends_on_congested_transport():
+def test_static_face_respects_congested_transport():
     from types import SimpleNamespace as NS
     from threading import Lock
     from queue import Queue
 
     robot = robot_with_face()
-    sent = []
     sender = NS(lock=Lock(), window=NS(next_seq=12, expected_seq=0,
                                       max_seq=65536), queue=Queue())
-    robot.client.conn = NS(send=sent.append, send_thread=sender)
+    robot.client.conn = NS(send=lambda pkt: None, send_thread=sender)
     assert not robot.refresh_face()
-    assert not robot.advance_face_display()
-    assert sent == []
+    assert robot.client.images == []
     sender.window.expected_seq = 12
     assert robot.refresh_face()
+    assert len(robot.client.images) == 1
     assert not robot.advance_face_display()
-    assert len(sent) == 2
-    from pycozmo.protocol_encoder import DisplayImage, OutputSilence
-    assert isinstance(sent[0], DisplayImage)
-    assert isinstance(sent[1], OutputSilence)
 
 
 def test_pycozmo_runtime_method_replacements_are_gone():
