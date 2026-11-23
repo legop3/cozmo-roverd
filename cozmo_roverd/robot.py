@@ -97,11 +97,9 @@ class Robot:
 
     def connect(self):
         import pycozmo
-        # Keep the stock PyCozmo transport and animation internals intact.
-        # We do not use its 30Hz animation/audio loop: the bridge has no
-        # supported hardware speaker, and it publishes only a static face.
-        # Face packets are sent directly using the public connection API.
-        cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
+        # Use PyCozmo's supported image path. Its animation controller
+        # clocks and refreshes static images; disable procedural eyes.
+        cli = pycozmo.Client(enable_animations=True, enable_procedural_face=False)
         cli.start()
         try:
             cli.connect()
@@ -126,7 +124,7 @@ class Robot:
             cli.enable_camera(enable=self.camera_enabled, color=True)
             # Do not enable speaker playback or alter camera streaming
             # in this stable driver. The last requested TTS remains visible.
-            cli.enable_animations(False)
+            cli.enable_animations(True)
             cli.enable_procedural_face(False)
             cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
             if self.camera_enabled:
@@ -866,19 +864,13 @@ class Robot:
         self.refresh_face()
 
     def refresh_face(self):
-        """Keep automatic face packets off the reliable control channel.
-
-        A live RobotState/video feed with frozen outbound ACKs was observed
-        after display changes. Isolate DisplayImage/OutputSilence traffic while
-        preserving video, motors, IMU/lift HUD and the face renderer for later
-        hardware validation. Do not send an initial frame on reconnect.
-        """
+        """Refresh the status image through PyCozmo's image controller."""
         if not self._face_transport_enabled:
             return False
         return self._refresh_face_unverified()
 
     def _refresh_face_unverified(self):
-        """Inactive display sender retained for isolated hardware debugging."""
+        """Render the next status image when its content needs updating."""
         with self.lock:
             if self.client is None or not self.ready:
                 return False
@@ -959,24 +951,12 @@ class Robot:
             self.face_last_encoded_bytes = len(encoded)
             content = image.tobytes()
             self._face_scroll += 1
-            # The stock animation controller is disabled. Its
-            # Client.display_image() merely enqueues a frame for that
-            # controller, so send the same supported DisplayImage packet
-            # directly rather than monkey-patching the controller.
-            # Refresh the unchanged bitmap at most once every 15 seconds
-            # because Cozmo expires displayed animation images.
+            # The controller sends image and timeline packets in the order
+            # Cozmo expects and automatically refreshes unchanged images.
             if (content == self._face_last_content
                     and time.monotonic() - self._face_sent_at < 15.0):
                 return False
-            conn = getattr(self.client, "conn", None)
-            if conn is not None and callable(getattr(conn, "send", None)):
-                from pycozmo.protocol_encoder import DisplayImage, OutputSilence
-                conn.send(DisplayImage(image=encoded))
-                # Tick the animation timeline once per static image, not at 4 Hz.
-                conn.send(OutputSilence())
-            else:
-                # Test doubles without a transport can still inspect pixels.
-                self.client.display_image(image)
+            self.client.display_image(image)
             self.face_frames_sent += 1
             self._face_sent_at = time.monotonic()
             self._face_last_content = content
