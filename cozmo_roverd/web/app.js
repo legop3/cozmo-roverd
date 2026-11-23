@@ -89,7 +89,9 @@ function renderNetworks() {
     button.addEventListener("click", () => {
       $("ssid").value = net.ssid;
       $("password").value = "";
-      $("password-hint").textContent = "Enter the password shown on the robot.";
+      $("password-hint").textContent = state.config?.has_password && net.ssid === state.config.ssid
+          ? "Saved password will be reused for this network."
+          : "Enter the password shown on the robot.";
       renderNetworks(); markDirty();
     });
     list.append(button);
@@ -126,7 +128,7 @@ function applyConfig(config, options) {
   $("ssid").value = config.ssid;
   $("password").value = "";
   $("password-hint").textContent = config.has_password
-      ? "Saved password exists. Leave blank to keep it, unless changing Wi-Fi network or adapter."
+      ? "Saved password exists. Leave blank to reuse it on any adapter for this network."
       : "Enter the password shown on Cozmo.";
   $("video").checked = !!config.video;
   $("camera-enabled").checked = config.camera_enabled !== false;
@@ -337,7 +339,9 @@ function setupListeners() {
     $("adapter-pill").textContent = `Wi-Fi: ${field("adapter-select") || "not selected"}`;
     state.networks = []; renderNetworks();
     $("password").value = "";
-    $("password-hint").textContent = "Enter Cozmo's password for this adapter.";
+    $("password-hint").textContent = state.config?.has_password && field("ssid") === state.config.ssid
+        ? "Saved Cozmo password will be reused on this adapter."
+        : "Enter Cozmo's password for this network.";
   });
   $("ssid").addEventListener("input", () => { renderNetworks(); markDirty(); });
   $("video").addEventListener("change", () => $("fps").disabled = !$("video").checked);
