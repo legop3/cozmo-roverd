@@ -16,10 +16,11 @@ from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
-    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True):
+    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True, face_enabled=False):
         self.max_speed = max_speed
         self.camera_mode = camera_mode
         self.camera_enabled = camera_enabled
+        self._face_transport_enabled = face_enabled
         self.manual_exposure_ms = 10
         self._auto_gain = 1.0
         self._auto_exposure_ms = 16
@@ -77,14 +78,11 @@ class Robot:
         self._tts_last_stream_at = 0.0
         self.last_tts_frames = 0
         self.last_tts_played_at = None
-        # DisplayImage/OutputSilence disabled on real hardware while investigating
-        # reliable command ACK stalls. Test fakes can explicitly opt in.
-        self._face_transport_enabled = False
+        # Face transport is opt-in pending live hardware validation.
         self.face_frames_sent = 0
         self._face_scroll = 0
         self._face_last_content = None
         self._face_sent_at = 0.0
-        self._face_clock_at = 0.0
         self.face_last_encoded_bytes = None
         self.face_last_error = None
         self.face_encoded_on_pixels = None
@@ -139,8 +137,7 @@ class Robot:
                 # The new robot display has no cached image from the old link.
                 self._face_last_content = None
                 self._face_sent_at = 0.0
-                self._face_clock_at = 0.0
-                self._status_light_signature = None
+                        self._status_light_signature = None
                 self._dock_contact_handled = False
                 self._dock_lift_target = None
                 self._dock_lift_sent_at = 0.0
@@ -972,8 +969,10 @@ class Robot:
                 return False
             conn = getattr(self.client, "conn", None)
             if conn is not None and callable(getattr(conn, "send", None)):
-                from pycozmo.protocol_encoder import DisplayImage
+                from pycozmo.protocol_encoder import DisplayImage, OutputSilence
                 conn.send(DisplayImage(image=encoded))
+                # Tick the animation timeline once per static image, not at 4 Hz.
+                conn.send(OutputSilence())
             else:
                 # Test doubles without a transport can still inspect pixels.
                 self.client.display_image(image)
@@ -984,33 +983,8 @@ class Robot:
             return True
 
     def advance_face_display(self):
-        """No synthetic audio-clock packets while command ACKs are unstable."""
-        if not self._face_transport_enabled:
-            return False
-        return self._advance_face_display_unverified()
-
-    def _advance_face_display_unverified(self):
-        """Inactive display clock retained for isolated hardware debugging."""
-        with self.lock:
-            if not self.ready or self.client is None or self._face_last_content is None:
-                return False
-            now = time.monotonic()
-            if now - self._face_clock_at < 0.25:
-                return False
-            conn = getattr(self.client, "conn", None)
-            if conn is None or not callable(getattr(conn, "send", None)):
-                return False
-            sender = getattr(conn, "send_thread", None)
-            if sender is not None:
-                with sender.lock:
-                    pending = ((sender.window.next_seq - sender.window.expected_seq)
-                               % sender.window.max_seq)
-                if pending >= 8 or sender.queue.qsize() >= 8:
-                    return False
-            from pycozmo.protocol_encoder import OutputSilence
-            conn.send(OutputSilence())
-            self._face_clock_at = now
-            return True
+        """Legacy compatibility: never send periodic silence packets."""
+        return False
 
     def mark_speech_unstable(self, reason):
         """Disable speaker output until service restart after transport failure.
