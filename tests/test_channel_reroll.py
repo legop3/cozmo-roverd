@@ -148,7 +148,7 @@ def test_successful_reroll_calls_one_power_cycle(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_shutdown_without_wifi_disappearance_never_cuts_power(monkeypatch):
+def test_uncertain_shutdown_still_cycles_dock_to_avoid_stranding_cozmo(monkeypatch):
     async def no_wait(*args, **kwargs):
         return None
 
@@ -156,10 +156,27 @@ def test_shutdown_without_wifi_disappearance_never_cuts_power(monkeypatch):
 
     async def scenario():
         bridge, power = bridge_case(config(), channels=(1,) * 18)
-        with pytest.raises(RuntimeError, match="Shutdown did not disconnect"):
+        await bridge._ensure_channel()
+        assert bridge.robot.actions == ["shutdown", "close", "connect"]
+        assert power.actions.count("cycle") == 1
+        assert bridge.channel_status == "mismatch"
+    asyncio.run(scenario())
+
+
+def test_failed_client_cleanup_still_wakes_dock(monkeypatch):
+    async def no_wait(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", no_wait)
+
+    async def scenario():
+        bridge, power = bridge_case(config(), channels=(1, None))
+        def broken_close():
+            raise RuntimeError("cleanup error")
+        bridge.robot.close = broken_close
+        with pytest.raises(RuntimeError, match="cleanup error"):
             await bridge._ensure_channel()
-        assert bridge.robot.actions == ["shutdown"]
-        assert "cycle" not in power.actions
+        assert power.actions.count("cycle") == 1
         assert bridge.channel_status == "error"
     asyncio.run(scenario())
 
