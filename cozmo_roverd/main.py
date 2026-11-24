@@ -56,6 +56,7 @@ class Bridge:
         self.channel_actual = None
         self.channel_status = "disabled" if self.dock_power is None else "waiting_for_wifi"
         self.channel_attempts = 0
+        self.channel_cycles = 0
         self.channel_next_attempt_at = 0.0
         self.channel_last_error = None
         self._reroll_active = False
@@ -96,7 +97,7 @@ class Bridge:
         if battery.voltage is None and battery.docked is None:
             return state(charging=None, docked=None,
                          headlight=self.robot.headlight, voltage=None,
-                         driving=self.robot.ready,
+                         driving=self.robot.ready and not self._reroll_active,
                          dock_assist=self.robot.dock_assist,
                          docking_phase=self.robot.docking_phase)
         return state(charging=battery.charging,
@@ -530,7 +531,8 @@ class Bridge:
                                        attempt=self.channel_attempts)
 
     def _docked_for_reroll(self):
-        return (self.robot.ready and self.robot.on_charger is True
+        return (self.robot.ready and self.robot._dock_confirmed_session is True
+                and self.robot.on_charger is True
                 and self.robot.battery.docked is True
                 and not self.robot.moving and not self.robot.undock_active
                 and not self.robot.dock_assist
@@ -624,6 +626,7 @@ class Bridge:
                 if self.channel_attempts >= self.cfg.channel_max_attempts:
                     self.channel_next_attempt_at = time.monotonic() + 600
                     self.channel_status = "retry_cooldown"
+            self.channel_cycles += 1
             self.publish_state()
         except Exception as exc:
             self.channel_last_error = str(exc)[:180]
@@ -684,7 +687,13 @@ class Bridge:
                         break
                     now = time.monotonic()
                     if self.dock_power and now - last_channel_check >= 5.0:
+                        old_cycles = self.channel_cycles
                         await self._ensure_channel()
+                        if self.channel_cycles != old_cycles:
+                            # New PyCozmo session means a new ACK sequence.
+                            wifi_misses = 0
+                            stalled_ack_since = None
+                            previous_expected_seq = None
                         if self.robot.ready:
                             self.hardware_stage = "online"
                             self.hardware_ready.set()
