@@ -14,11 +14,12 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("mtu1500-idle", 0, "idle", False),
-    ("mtu1500-codec-standard", 30, "speech", False),
-    ("mtu1500-codec-uncomplemented", 30, "speech", False),
-    ("mtu1500-codec-offset", 30, "speech", False),
-    ("mtu1500-codec-linear", 30, "speech", False),
-    ("mtu1500-codec-alaw", 30, "speech", False),
+    ("mtu1500-tone-100", 30, "tone_short", False),
+    ("mtu1500-tone-500", 30, "tone_short", False),
+    ("mtu1500-tone-1800", 30, "tone_short", False),
+    ("mtu1500-tone-5000", 30, "tone_short", False),
+    ("mtu1500-speech-bandpass", 30, "speech", False),
+    ("mtu1500-speech-lowgain", 30, "speech", False),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
@@ -274,7 +275,8 @@ def worker(name, directory, config, duration):
         tone_packets = []
         if mode.startswith("tone"):
             for index in range(30):
-                pcm = [int(1800*math.sin(2*math.pi*440*(index*744+i)/22320))
+                amplitude = int(name.rsplit("-",1)[1]) if "-tone-" in name else 1800
+                pcm = [int(amplitude*math.sin(2*math.pi*440*(index*744+i)/22320))
                        for i in range(744)]
                 if mode == "tone_stock":
                     payload = bytes(audio.bytes_to_cozmo(struct.pack("<744h",*pcm),1,1))
@@ -290,17 +292,17 @@ def worker(name, directory, config, duration):
             wav = subprocess.run(["espeak-ng","--stdout","-s","145",message],
                                  capture_output=True,check=True,timeout=20).stdout
             pcm = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
-                                  "-i","pipe:0","-f","s16le","-ac","1","-ar","22320","pipe:1"],
+                                  "-i","pipe:0","-af","highpass=f=300,lowpass=f=3400" if name.endswith("bandpass") else "anull","-f","s16le","-ac","1","-ar","22320","pipe:1"],
                                  input=wav,capture_output=True,check=True,timeout=20).stdout
-            gain = .1
+            gain = .015 if name.endswith("lowgain") else .1
             result["speech_gain"] = gain
             # Compare byte conventions on the same attenuated speech.
             pcm += bytes((-len(pcm)) % 1488)
             samples = struct.unpack("<%dh"%(len(pcm)//2),pcm)
-            scaled = struct.pack("<%dh"%len(samples),*(int(x*.1) for x in samples))
-            codec = name.rsplit("-",1)[1]
+            scaled = struct.pack("<%dh"%len(samples),*(int(x*gain) for x in samples))
+            codec = "standard"
             if codec == "linear":
-                encoded_speech = bytes((int(x*.1)//256+128)&255 for x in samples)
+                encoded_speech = bytes((int(x*gain)//256+128)&255 for x in samples)
                 silence = 128
             else:
                 fmt = "alaw" if codec=="alaw" else "mulaw"
