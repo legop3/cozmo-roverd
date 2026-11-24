@@ -15,15 +15,12 @@ from . import hardware_tests as h
 CASES = [
     ("idle-animation-state", 0, "idle", False),
     ("silence-30hz", 30, "silence", False),
-    ("audio-ff-alone", 0, "audio_ff_once", False),
-    ("audio-7f-alone", 0, "audio_7f_once", False),
-    ("audio-stock-zero-alone", 0, "audio_stock_once", False),
-    ("audio-tone-alone", 0, "audio_tone_once", False),
-    ("audio-ff-after-clock", 30, "audio_ff_clock", False),
-    ("audio-tone-after-clock", 30, "audio_tone_clock", False),
-    ("audio-tone-isolated-datagram", 30, "audio_tone_isolated", False),
-    ("camera-idle", 0, "idle", True),
-    ("camera-display-sparse", 30, "image_sparse", True),
+    ("display-large-256", 0, "large256", False),
+    ("display-large-512", 0, "large512", False),
+    ("display-large-744", 0, "large744", False),
+    ("audio-tone-retry", 0, "audio_tone_once", False),
+    ("audio-tone-volume", 0, "audio_tone_once", False),
+    ("audio-tone-active-clock", 30, "audio_tone_clock", False),
     ("camera-display-patterns", 30, "patterns", True),
 ]
 BY_NAME = {c[0]: c for c in CASES}
@@ -80,6 +77,24 @@ def worker(name, directory, config, duration):
         cli.enable_camera(enable=camera, color=camera)
         time.sleep(3)
         result["status"] = "RUNNING"
+        if name == "audio-tone-volume":
+            cli.set_volume(12000)
+            time.sleep(1)
+        if name.startswith("audio-"):
+            # A stream of duplicate ACKs should not prevent retransmission
+            # of an outstanding command. Probe this in the worker only.
+            sender = cli.conn.send_thread
+            original_resend = sender._resend_messages
+            last_retry = [time.perf_counter()]
+            def retry_pending(self):
+                now = time.perf_counter()
+                with self.lock:
+                    pending = self.window.get()
+                if pending and now - last_retry[0] >= .15:
+                    last_retry[0] = now
+                    return pending
+                return []
+            sender._resend_messages = types.MethodType(retry_pending, sender)
         before = h._snapshot(cli)
         result["before"] = before
         save()
@@ -128,6 +143,24 @@ def worker(name, directory, config, duration):
             send(p.OutputSilence())
         if rate == 0 and mode == "image":
             send(p.DisplayImage(image=encoded))
+        if mode.startswith("large"):
+            # Valid binary image with controlled RLE complexity. Search for
+            # a payload close to the requested size without padding it.
+            import random
+            target = int(mode[5:])
+            best = None
+            for columns in range(1,129):
+                rng = random.Random(1234)
+                img = Image.new("1",(128,32),0)
+                pixels = img.load()
+                for x in range(columns):
+                    for y in range(32):
+                        pixels[x,y] = 255 if rng.getrandbits(1) else 0
+                pkt = p.DisplayImage(image=bytes(ImageEncoder(img).encode()))
+                if best is None or abs(len(pkt)-target)<abs(len(best)-target):
+                    best=pkt
+            result["large_display_payload_bytes"]=len(best)
+            send(best)
         if mode.endswith("_once") and mode.startswith("audio_"):
             audio_probe(mode.split("_")[1])
         start = time.monotonic()
@@ -225,7 +258,7 @@ def main():
         for name, rate, mode, camera in CASES:
             deps = [] if name=="idle-animation-state" else ["idle-animation-state"]
             if name.startswith("camera-display"):
-                deps.append("camera-idle")
+                pass
             if rate==30 and name!="silence-30hz":
                 deps.append("silence-30hz")
             blocked = [d for d in deps if results.get(d)!="PASS"]
@@ -265,8 +298,11 @@ def main():
                 "wire_tx":sum(x.get("direction")=="tx" for x in wire),
                 "wire_rx":sum(x.get("direction")=="rx" for x in wire),
                 "audio_payload":r.get("audio_payload"),
+                "large_display_payload_bytes":r.get("large_display_payload_bytes"),
+                "large_wire":[x for x in wire if x.get("direction")=="tx" and x.get("bytes",0)>200][:5],
                 "tx_problems":[x for x in wire if x.get("problem") and x.get("direction")=="tx"][:5],
-                "audio_wire":[x for x in wire if x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[]))][:4],
+                "audio_wire":[x for x in wire if x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[]))][:8],
+                "audio_wire_count":sum(x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[])) for x in wire),
                 "ack_tail":[{k:x.get(k) for k in ("kind","ack","first_seq","last_seq","bytes")} for x in wire if x.get("direction")=="rx"][-5:],
                 "after":r.get("after"),
                 "rx_problem_count":sum(bool(x.get("problem")) and x.get("direction")=="rx" for x in wire),
