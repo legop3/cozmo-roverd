@@ -106,7 +106,7 @@ def _battery_panel(draw, voltage, percent, charging):
     draw.line((PANEL_LEFT, 1, PANEL_LEFT, HEIGHT - 2), fill=1)
     try:
         v = float(voltage)
-        valid = math.isfinite(v) and 2.7 <= v <= 4.4
+        valid = math.isfinite(v)
     except (ValueError, TypeError, OverflowError):
         valid = False
         v = 0.0
@@ -160,7 +160,7 @@ def status_image(*, voltage=None, percent=None, charging=False, last_tts="",
         draw.line((PANEL_LEFT, 1, PANEL_LEFT, HEIGHT - 2), fill=1)
         try:
             v = float(voltage)
-            label = f"{v:.2f}V" if math.isfinite(v) and 2.7 <= v <= 4.4 else "--.--"
+            label = f"{v:.2f}V" if math.isfinite(v) else "--.--"
         except (TypeError, ValueError, OverflowError):
             label = "--.--"
         font_v = _font(10, _VOLTAGE_CHOICES)
