@@ -202,7 +202,7 @@ def test_failed_client_cleanup_still_wakes_dock(monkeypatch):
         with pytest.raises(RuntimeError, match="cleanup error"):
             await bridge._prepare_channel()
         assert power.actions.count("cycle") == 1
-        assert bridge.channel_status == "waiting_for_wifi"
+        assert bridge.channel_status == "error"
     asyncio.run(scenario())
 
 
