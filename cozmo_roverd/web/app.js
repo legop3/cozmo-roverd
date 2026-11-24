@@ -298,12 +298,15 @@ function rerollLabel(reroll) {
   };
   return statuses[reroll.status] || formatStage(reroll.status);
 }
+function telemetryFresh(data) {
+  return !!data && Number.isFinite(data.snapshot_age_seconds) &&
+    data.snapshot_age_seconds >= 0 && data.snapshot_age_seconds < 12;
+}
 function renderServiceStatus() {
   const service = state.service;
   const config = state.config || {};
   const data = state.telemetry;
-  const fresh = data && Number.isFinite(data.generated_at_ms) &&
-    Date.now() - data.generated_at_ms < 12000;
+  const fresh = telemetryFresh(data);
   const hardware = service?.active && fresh ? data.hardware_connected === true : false;
   const active = service?.active === true;
   const failed = !active || !fresh || !hardware;
@@ -340,9 +343,10 @@ function renderOverview(data, fresh) {
   const voltage = track.voltage_v ?? c.battery_voltage_v;
   setText("overview-battery", battery.percent == null ? "—" : Math.round(battery.percent) + "%");
   setText("overview-voltage", voltage == null ? "No battery voltage" : Number(voltage).toFixed(2) + " V · last measured");
-  const docked = c.on_charger;
+  const docked = c.on_charger ?? stateInfo.docked;
   setText("overview-dock", docked == null ? "Unknown" : docked ? "Docked" : "Undocked");
-  setText("overview-charging", c.charging == null ? "No charging data" : c.charging ? "Charging" : "Not charging");
+  const charging = c.charging ?? stateInfo.charging;
+  setText("overview-charging", charging == null ? "No charging data" : charging ? "Charging" : "Not charging");
   setText("overview-channel", reroll.actual == null ? "—" : String(reroll.actual));
   setText("overview-target", !reroll.enabled ? "Monitoring disabled" : "Target: " + reroll.target);
   setText("overview-fps", video.camera_input_fps_2s == null ? "—" : video.camera_input_fps_2s + " fps");
@@ -471,8 +475,7 @@ async function refreshTelemetry() {
   try {
     const data = await api("/api/telemetry");
     state.telemetry = data;
-    const fresh = Number.isFinite(data.generated_at_ms) &&
-      Date.now() - data.generated_at_ms < 12000;
+    const fresh = telemetryFresh(data);
     renderOverview(data, fresh);
     if (state.page === "diagnostics") renderDiagnostics(data, fresh);
   } catch (error) {
@@ -589,8 +592,7 @@ function setupListeners() {
       navigate(button.dataset.nav);
       if (state.page === "diagnostics" && state.telemetry) {
         renderDiagnostics(state.telemetry,
-          Number.isFinite(state.telemetry.generated_at_ms) &&
-          Date.now() - state.telemetry.generated_at_ms < 12000);
+          telemetryFresh(state.telemetry));
       }
     });
   }
