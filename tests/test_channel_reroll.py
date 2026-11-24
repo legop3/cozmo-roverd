@@ -5,6 +5,7 @@ All tests use in-memory fake switches and robots: no network/power side effects.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +32,7 @@ def config(**overrides):
 class FakeRobot:
     def __init__(self, docked=True):
         self.ready = False
+        self.last_sensor = time.monotonic()
         self.on_charger = docked
         self._dock_confirmed_session = False
         self.battery = SimpleNamespace(docked=docked)
@@ -201,6 +203,21 @@ def test_failed_client_cleanup_still_wakes_dock(monkeypatch):
             await bridge._prepare_channel()
         assert power.actions.count("cycle") == 1
         assert bridge.channel_status == "waiting_for_wifi"
+    asyncio.run(scenario())
+
+
+def test_preflight_frames_do_not_enter_rtsp():
+    async def scenario():
+        bridge, _power = bridge_case(config(), channels=(6,))
+        frames = []
+        analyzed = []
+        bridge.publisher = SimpleNamespace(submit=lambda frame: frames.append(frame))
+        bridge.robot.queue_camera_analysis = lambda frame: analyzed.append(frame)
+        bridge.handle_frame("early-frame")
+        assert frames == [] and analyzed == []
+        bridge.hardware_ready.set()
+        bridge.handle_frame("live-frame")
+        assert frames == ["live-frame"] and analyzed == ["live-frame"]
     asyncio.run(scenario())
 
 
