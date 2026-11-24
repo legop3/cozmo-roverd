@@ -283,6 +283,10 @@ class Publisher:
             if attempt and limit:
                 detail = f"{detail} ({attempt}/{limit})"
             return ("CHANGING WIFI CHANNEL", detail)
+        reroll = data.get("channel_reroll") or {}
+        if (not online and reroll.get("status") == "error"
+                and stage in ("cleaning_up", "retrying", "connecting_wifi", "connecting_robot")):
+            return ("CHANNEL REROLL FAILED", "Recovering Cozmo connection")
         if online or stage == "online":
             return ("CAMERA RECONNECTING" if had_video else "WAITING FOR CAMERA",
                     "Waiting for camera frames")
