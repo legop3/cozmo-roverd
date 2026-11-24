@@ -80,7 +80,7 @@ def snapshot(client, packet=None):
                 for index, item in connected if isinstance(item, dict)
             ],
         },
-        "battery_voltage_v": number(client.battery_voltage) if client.battery_voltage > 0 else None,
+        "battery_voltage_v": number(getattr(client, "battery_voltage", None)),
         "on_charger": bits["on_charger"],
         "charging": bits["charging"],
         "cliff_detected": bits["cliff_detected"],
