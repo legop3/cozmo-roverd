@@ -666,6 +666,43 @@ class Bridge:
             await asyncio.to_thread(self.wifi.wait)
         raise asyncio.CancelledError()
 
+    async def _connect_checked_robot(self):
+        """Avoid inspection handshake when Wi-Fi is already on target channel.
+
+        Only wrong or unknown channels enter the telemetry-only inspection
+        path. The RTSP publisher and MRR client run independently.
+        """
+        self.channel_actual = (await asyncio.to_thread(self.wifi.channel)
+                               if self.dock_power else None)
+        channel_ok = (self.dock_power is None or
+                      self.channel_actual == self.cfg.channel_target)
+        if channel_ok:
+            if self.dock_power:
+                self.channel_status = "matched"
+                self.channel_last_error = None
+                self.channel_next_attempt_at = 0
+            self.hardware_stage = "connecting_robot"
+            if diagnostics.active():
+                diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
+            try:
+                await asyncio.wait_for(asyncio.to_thread(self.robot.connect),
+                                       timeout=35.0)
+            except asyncio.TimeoutError:
+                LOG.critical("PyCozmo connect stuck for 35s; restarting service")
+                if diagnostics.active():
+                    diagnostics.active().incident(
+                        reason="connect_timeout_35s", stage=self.hardware_stage,
+                        reconnect_attempts=self.hardware_reconnect_attempts)
+                os._exit(1)
+        else:
+            # Only wrong/unknown-channel connections need a PyCozmo
+            # inspection to verify charging contacts before any restart.
+            await self._prepare_channel()
+            if self.stop_event.is_set():
+                return False
+            await asyncio.to_thread(self.robot.promote_inspection)
+        return True
+
     async def _hardware(self):
         while not self.stop_event.is_set():
             try:
@@ -673,40 +710,8 @@ class Bridge:
                 if diagnostics.active():
                     diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
                 await asyncio.to_thread(self.wifi.wait)
-                # The associated channel is already available from Linux:
-                # don't spend another PyCozmo handshake on inspection when
-                # a normal reconnect is ALREADY on the desired channel.
-                # An unknown channel still fails closed into inspection.
-                self.channel_actual = (await asyncio.to_thread(self.wifi.channel)
-                                       if self.dock_power else None)
-                channel_ok = (self.dock_power is None or
-                              self.channel_actual == self.cfg.channel_target)
-                if channel_ok:
-                    if self.dock_power:
-                        self.channel_status = "matched"
-                        self.channel_last_error = None
-                        self.channel_next_attempt_at = 0
-                    self.hardware_stage = "connecting_robot"
-                    if diagnostics.active():
-                        diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
-                    try:
-                        await asyncio.wait_for(asyncio.to_thread(self.robot.connect),
-                                               timeout=35.0)
-                    except asyncio.TimeoutError:
-                        LOG.critical("PyCozmo connect stuck for 35s; restarting service")
-                        if diagnostics.active():
-                            diagnostics.active().incident(
-                                reason="connect_timeout_35s", stage=self.hardware_stage,
-                                reconnect_attempts=self.hardware_reconnect_attempts)
-                        os._exit(1)
-                else:
-                    # Wrong or unknown channel: telemetry-only inspection
-                    # checks dock contact before ever requesting shutdown.
-                    # Keep MRR and the RTSP status slate running throughout.
-                    await self._prepare_channel()
-                    if self.stop_event.is_set():
-                        break
-                    await asyncio.to_thread(self.robot.promote_inspection)
+                if not await self._connect_checked_robot():
+                    break
                 self.hardware_stage = "online"
                 self.channel_status = "matched" if self.dock_power else "disabled"
                 self.last_hardware_error = None
