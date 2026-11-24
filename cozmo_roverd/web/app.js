@@ -391,6 +391,15 @@ function setupListeners() {
     p.type = p.type === "password" ? "text" : "password";
     $("reveal").textContent = p.type === "password" ? "Show" : "Hide";
   });
+  $("test-dock-switch").addEventListener("click", () =>
+    busy($("test-dock-switch"), async () => {
+      const result = await api("/api/test-dock-switch", {
+        home_assistant_url: field("ha-url").trim(),
+        home_assistant_switch: field("ha-switch").trim(),
+        home_assistant_token: field("ha-token")
+      });
+      $("test-dock-result").textContent = result.message;
+    }, "Checking…"));
   $("test-server").addEventListener("click", () => busy($("test-server"), async () => {
     const data = await api("/api/probe", {url:field("server-url")});
     $("probe-result").textContent = data.message;
