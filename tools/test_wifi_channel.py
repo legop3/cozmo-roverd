@@ -41,6 +41,23 @@ def packet_for(command: str, channel: int) -> tuple[int, bytes]:
     return command_id, payload
 
 
+def connect_configured_wifi(config_path: str) -> None:
+    """Reuse or establish roverd's dedicated Wi-Fi connection before robot I/O."""
+    cfg = load(config_path)
+    wifi = Wifi(cfg)
+    # Never connect the normal uplink adapter or override its default route.
+    wifi.verify()
+    if wifi.active():
+        print(f"Reusing configured Cozmo Wi-Fi on {cfg.interface} ({cfg.ssid}).", flush=True)
+        wifi.disconnect_other_cozmo_profiles()
+    else:
+        print(f"Connecting {cfg.interface} to configured Cozmo Wi-Fi {cfg.ssid}...", flush=True)
+        wifi.connect()
+    if not wifi.active():
+        raise RuntimeError("Cozmo Wi-Fi profile did not become active; command not sent")
+    print("Configured Cozmo Wi-Fi connected.", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Manually test Cozmo Wi-Fi and power commands; never automatic")
@@ -91,20 +108,7 @@ def main() -> int:
     if args.command.startswith("wifi-"):
         print("WiFiOff's 'enable' flag meaning and reconnect behavior are unverified.", flush=True)
 
-    cfg = load(args.config)
-    wifi = Wifi(cfg)
-    # Use exactly the interface, SSID, password, and owned NM profile that
-    # normal roverd uses. Do not bounce an already connected Wi-Fi adapter.
-    wifi.verify()
-    if wifi.active():
-        print(f"Reusing configured Cozmo Wi-Fi on {cfg.interface} ({cfg.ssid}).", flush=True)
-        wifi.disconnect_other_cozmo_profiles()
-    else:
-        print(f"Connecting {cfg.interface} to configured Cozmo Wi-Fi {cfg.ssid}...", flush=True)
-        wifi.connect()
-    if not wifi.active():
-        raise RuntimeError("Cozmo Wi-Fi profile did not become active; command not sent")
-    print("Configured Cozmo Wi-Fi connected.", flush=True)
+    connect_configured_wifi(args.config)
 
     client = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
     client.start()
