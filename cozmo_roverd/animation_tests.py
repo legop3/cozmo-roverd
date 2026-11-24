@@ -14,12 +14,11 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("mtu1500-idle", 0, "idle", False),
-    ("mtu1500-tone-100", 30, "tone_short", False),
-    ("mtu1500-tone-500", 30, "tone_short", False),
-    ("mtu1500-tone-1800", 30, "tone_short", False),
-    ("mtu1500-tone-5000", 30, "tone_short", False),
-    ("mtu1500-speech-bandpass", 30, "speech", False),
-    ("mtu1500-speech-lowgain", 30, "speech", False),
+    ("mtu1500-codec-standard", 30, "speech", False),
+    ("mtu1500-codec-centered", 30, "speech", False),
+    ("mtu1500-codec-plusone", 30, "speech", False),
+    ("mtu1500-codec-signedmag", 30, "speech", False),
+    ("mtu1500-codec-zero", 30, "speech", False),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
@@ -300,7 +299,7 @@ def worker(name, directory, config, duration):
             pcm += bytes((-len(pcm)) % 1488)
             samples = struct.unpack("<%dh"%(len(pcm)//2),pcm)
             scaled = struct.pack("<%dh"%len(samples),*(int(x*gain) for x in samples))
-            codec = "standard"
+            codec = name.rsplit("-",1)[1]
             if codec == "linear":
                 encoded_speech = bytes((int(x*gain)//256+128)&255 for x in samples)
                 silence = 128
@@ -313,7 +312,17 @@ def worker(name, directory, config, duration):
                     encoded_speech = bytes(x^255 for x in encoded_speech)
                 elif codec=="offset":
                     encoded_speech = bytes(x^128 for x in encoded_speech)
-                silence = {"standard":255,"uncomplemented":0,"offset":127,"alaw":213}[codec]
+                if codec=="centered":
+                    encoded_speech = bytes(128 + (127-(x&127)) * (1 if x&128 else -1) for x in encoded_speech)
+                elif codec=="plusone":
+                    encoded_speech = bytes(min(255,(x^255)+1) for x in encoded_speech)
+                elif codec=="signedmag":
+                    encoded_speech = bytes(((x^255)^128) for x in encoded_speech)
+                elif codec=="zero":
+                    encoded_speech = bytes([255])*len(encoded_speech)
+                silence = {"standard":255,"centered":128,"plusone":1,"signedmag":128,"zero":255}[codec]
+                result["encoded_histogram"] = {str(x):encoded_speech.count(x) for x in set(encoded_speech)}
+                result["encoded_sha256"] = hashlib.sha256(encoded_speech).hexdigest()
             encoded_speech += bytes([silence])*((-len(encoded_speech))%744)
             for offset in range(0,len(encoded_speech),744):
                 speech_packets.append(p.OutputAudio(samples=encoded_speech[offset:offset+744]))
