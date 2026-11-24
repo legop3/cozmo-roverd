@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import time
+from cozmo_roverd.config import load
+from cozmo_roverd.wifi import Wifi
 
 COMMANDS = {
     "radio": ("SetBodyRadioMode", 0x07),
@@ -44,6 +46,8 @@ def main() -> int:
         description="Manually test Cozmo Wi-Fi and power commands; never automatic")
     parser.add_argument("command", nargs="?", choices=tuple(COMMANDS), default="radio",
                         help="Which command to test (default: radio)")
+    parser.add_argument("--config", default="/etc/cozmo-roverd.toml",
+                        help="RoverD configuration file (default: /etc/cozmo-roverd.toml)")
     parser.add_argument("--channel", type=int, default=5,
                         help="Requested channel for radio command (default: 5)")
     parser.add_argument("--observe-seconds", type=float, default=90,
@@ -86,6 +90,21 @@ def main() -> int:
               "PyCozmo uses zero. This test uses the PyCozmo form.", flush=True)
     if args.command.startswith("wifi-"):
         print("WiFiOff's 'enable' flag meaning and reconnect behavior are unverified.", flush=True)
+
+    cfg = load(args.config)
+    wifi = Wifi(cfg)
+    # Use exactly the interface, SSID, password, and owned NM profile that
+    # normal roverd uses. Do not bounce an already connected Wi-Fi adapter.
+    wifi.verify()
+    if wifi.active():
+        print(f"Reusing configured Cozmo Wi-Fi on {cfg.interface} ({cfg.ssid}).", flush=True)
+        wifi.disconnect_other_cozmo_profiles()
+    else:
+        print(f"Connecting {cfg.interface} to configured Cozmo Wi-Fi {cfg.ssid}...", flush=True)
+        wifi.connect()
+    if not wifi.active():
+        raise RuntimeError("Cozmo Wi-Fi profile did not become active; command not sent")
+    print("Configured Cozmo Wi-Fi connected.", flush=True)
 
     client = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
     client.start()
