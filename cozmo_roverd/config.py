@@ -80,7 +80,7 @@ def load(path: str) -> Config:
             raise ValueError("Home Assistant URL must be http(s)://host[:port]")
         if not c.home_assistant_token.strip():
             raise ValueError("Home Assistant token required when channel reroll is enabled")
-        if not re.fullmatch(r"switch\\.[a-z0-9_]+", c.home_assistant_switch):
+        if not re.fullmatch(r"switch[.][a-z0-9_]+", c.home_assistant_switch):
             raise ValueError("Choose a valid Home Assistant switch entity (switch.name)")
     url = urlsplit(c.server_url)
     if url.scheme not in ("ws", "wss") or not url.hostname or url.path.rstrip("/") != "/rover":
