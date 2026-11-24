@@ -327,6 +327,8 @@ function renderServiceStatus() {
   setText("setup-pill", config.configured ? "Configured" : "Setup incomplete");
   $("start-service").disabled = active || !config.configured;
   $("stop-service").disabled = !active;
+  setText("service-action-hint", !config.configured ? "Configure connections before starting." :
+    active ? "Stopping disconnects Cozmo and MRR." : "Start the bridge with its saved settings.");
 }
 function renderOverview(data, fresh) {
   const c = fresh ? data.cozmo || {} : {};
