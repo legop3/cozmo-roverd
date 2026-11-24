@@ -116,8 +116,9 @@ class Robot:
         cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
         cli.start()
         try:
-            cli.connect()
-            cli.wait_for_robot(timeout=12)
+            # Register before the handshake: a docked robot may send its
+            # first (and only recent) RobotState as it wakes. Missing that
+            # packet would leave charger-contact inspection unconfirmed.
             cli.add_handler(pycozmo.event.EvtNewRawCameraImage,
                             lambda _client, image: self._camera_image(image))
             cli.add_handler(pycozmo.protocol_encoder.ImageChunk,
@@ -128,13 +129,14 @@ class Robot:
                             lambda _client, value: self._cliff(bool(value)))
             cli.add_handler(pycozmo.event.EvtRobotPickedUpChange,
                             lambda _client, value: self._picked_up(bool(value)))
-            # Handle actual packets, retaining all direct fields. Registered
-            # after PyCozmo's own handler so its high-level state is current.
+            # PyCozmo's internal RobotState handler was installed when the
+            # client was created; its state updates before our callback.
             cli.add_handler(pycozmo.protocol_encoder.RobotState,
                             lambda _client, pkt: self._packet(cli, pkt))
-            # Start bounded consumers before enabling the camera. The raw
-            # protocol callback must never perform motor I/O or rich decoding.
+            # Start bounded packet consumers before initiating the handshake.
             self._start_packet_workers()
+            cli.connect()
+            cli.wait_for_robot(timeout=12)
             cli.enable_camera(enable=self.camera_enabled and not inspection, color=True)
             # Keep firmware audio/animation disabled in both modes.
             cli.enable_animations(False)
