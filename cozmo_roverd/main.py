@@ -555,11 +555,22 @@ class Bridge:
             shutdown_queued = True
             # Allow the reliable sender to transmit the shutdown command.
             await asyncio.sleep(2)
+            self._channel_stage("closing_connection")
+            cleanup_error = None
+            try:
+                await asyncio.wait_for(asyncio.to_thread(self.robot.close), timeout=8)
+            except BaseException as exc:
+                # Shutdown has already been queued: wake the robot even if
+                # the local socket cannot be cleaned up normally.
+                cleanup_error = exc
+                LOG.error("Cozmo cleanup failed after shutdown; restoring dock power")
             self._channel_stage("cycling_dock_power")
             cycle_started = True
             # DockPower.cycle restores ON in its own finally, including
             # when Home Assistant rejects or times out during turn_off.
             await asyncio.shield(asyncio.to_thread(self.dock_power.cycle))
+            if cleanup_error is not None:
+                raise cleanup_error
         finally:
             try:
                 # Never leave a robot shut down if interrupted between
