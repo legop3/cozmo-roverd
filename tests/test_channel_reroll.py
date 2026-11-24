@@ -288,6 +288,32 @@ def test_offline_video_status_reports_real_cycle_stage():
     assert "dock power" in detail.lower()
 
 
+def test_offline_video_shows_actual_and_target_channel():
+    assert Publisher._channel_label({
+        "channel_reroll": {"enabled": True, "actual": 1, "target": 6}
+    }) == "CURRENT: CH 1   TARGET: CH 6"
+    assert Publisher._channel_label({
+        "channel_reroll": {"enabled": True, "actual": None, "target": 11}
+    }) == "CURRENT: UNKNOWN   TARGET: CH 11"
+    assert Publisher._channel_label({
+        "channel_reroll": {"enabled": False, "actual": 1, "target": None}
+    }) is None
+    assert Publisher._channel_label({}) is None
+
+
+def test_offline_video_renders_channels_without_replacing_status():
+    publisher = Publisher("rtsp://127.0.0.1/test", 15)
+    state = {
+        "connected": False,
+        "hardware_stage": "channel_cycling_dock_power",
+        "channel_reroll": {"enabled": True, "actual": 1, "target": 6},
+        "mrr_offline_remaining_seconds": 480,
+    }
+    image = publisher._offline_frame(state)
+    assert image.size == (320, 240)
+    assert Publisher._recovery_status(state)[0] == "CHANGING WIFI CHANNEL"
+
+
 def test_setup_preserves_token_and_roundtrips(tmp_path, monkeypatch):
     monkeypatch.setattr(setup, "interfaces", lambda: [
         {"name": "wlan2", "selectable": True},
