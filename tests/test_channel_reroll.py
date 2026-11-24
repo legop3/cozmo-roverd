@@ -201,10 +201,10 @@ def test_offline_video_status_reports_real_cycle_stage():
     label, detail = Publisher._recovery_status({
         "connected": False,
         "hardware_stage": "channel_cycling_dock_power",
-        "channel_reroll": {"attempt": 2, "max_attempts": 6},
+        "channel_reroll": {"attempt": 2},
     }, had_video=True)
     assert label == "CHANGING WIFI CHANNEL"
-    assert "2/6" in detail
+    assert "2" in detail
     assert "dock power" in detail.lower()
 
 
@@ -215,7 +215,7 @@ def test_setup_preserves_token_and_roundtrips(tmp_path, monkeypatch):
     previous = {
         "wifi": {"ssid": "Cozmo_TEST", "password": "12345678"},
         "channel_reroll": {
-            "enabled": True, "target_channel": 6, "max_attempts": 6,
+            "enabled": True, "target_channel": 6,
             "home_assistant_url": "http://homeassistant.local:8123",
             "home_assistant_token": "original-secret",
             "switch_entity": "switch.cozmo_dock",
@@ -227,7 +227,7 @@ def test_setup_preserves_token_and_roundtrips(tmp_path, monkeypatch):
                   max_speed=250, fps=15, camera_mode="auto", hud=True,
                   diagnostic_minimal=False, camera_enabled=True, video=True,
                   rtsp_url="", channel_reroll_enabled=True,
-                  channel_target=11, channel_max_attempts=6,
+                  channel_target=11,
                   home_assistant_url="http://homeassistant.local:8123",
                   home_assistant_switch="switch.cozmo_dock",
                   home_assistant_token="")
