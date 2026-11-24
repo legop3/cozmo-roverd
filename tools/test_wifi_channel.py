@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import subprocess
 import sys
 import time
@@ -56,10 +55,14 @@ def connected_ap_channel(interface: str) -> str:
         return "unavailable (iw link failed)"
     if "Not connected." in proc.stdout:
         return "not connected"
-    match = re.search(r"\\bfreq:\\s*(\\d+)", proc.stdout)
-    if not match:
+    freq_lines = [line.strip() for line in proc.stdout.splitlines()
+                  if line.strip().startswith("freq:")]
+    if not freq_lines:
         return "connected; frequency unavailable"
-    frequency = int(match.group(1))
+    try:
+        frequency = int(freq_lines[0].split(":", 1)[1].strip().split()[0])
+    except (IndexError, ValueError):
+        return "connected; frequency malformed"
     channel = 14 if frequency == 2484 else (frequency - 2407) // 5
     return f"channel {channel} ({frequency} MHz)"
 
