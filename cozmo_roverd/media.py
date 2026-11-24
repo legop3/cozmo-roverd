@@ -267,6 +267,22 @@ class Publisher:
         """Translate the current hardware supervisor stage to a concise step."""
         stage = data.get("hardware_stage", "starting")
         online = data.get("connected", False)
+        if stage.startswith("channel_"):
+            stage_labels = {
+                "channel_shutting_down": "Shutting down docked Cozmo",
+                "channel_closing_connection": "Closing robot connection",
+                "channel_cycling_dock_power": "Cycling Home Assistant dock power",
+                "channel_waiting_for_wifi": "Waiting for robot Wi-Fi",
+                "channel_connecting_robot": "Connecting to restarted Cozmo",
+                "channel_verifying": "Checking selected channel",
+            }
+            reroll = data.get("channel_reroll") or {}
+            attempt = reroll.get("attempt", 0)
+            limit = reroll.get("max_attempts", 0)
+            detail = stage_labels.get(stage, "Adjusting Wi-Fi channel")
+            if attempt and limit:
+                detail = f"{detail} ({attempt}/{limit})"
+            return ("CHANGING WIFI CHANNEL", detail)
         if online or stage == "online":
             return ("CAMERA RECONNECTING" if had_video else "WAITING FOR CAMERA",
                     "Waiting for camera frames")
