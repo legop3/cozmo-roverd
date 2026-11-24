@@ -110,3 +110,30 @@ class Wifi:
             return nm("-g", "GENERAL.CONNECTION", "device", "show", self.cfg.interface) == self.profile
         except Exception:
             return False
+
+    def channel(self) -> int | None:
+        """Read the associated AP frequency without scanning or bouncing Wi-Fi.
+
+        Fail closed (None) if link data is missing or ambiguous. This is the
+        current Wi-Fi connection's channel, not a scan of nearby networks.
+        """
+        try:
+            result = subprocess.run(["iw", "dev", self.cfg.interface, "link"],
+                                    capture_output=True, text=True, timeout=5,
+                                    check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode or "Not connected" in result.stdout:
+            return None
+        for line in result.stdout.splitlines():
+            field = line.strip()
+            if field.startswith("freq:"):
+                try:
+                    mhz = float(field.partition(":")[2].strip().split()[0])
+                except (ValueError, IndexError):
+                    return None
+                if mhz < 10:
+                    mhz *= 1000
+                channel = round((mhz - 2407) / 5)
+                return channel if 1 <= channel <= 13 and abs(mhz - (2407 + 5 * channel)) < 1 else None
+        return None
