@@ -1098,6 +1098,7 @@ class Robot:
             self._dock_light_owned = False
             self.headlight = False
             self._dock_contact_handled = False
+            self._dock_confirmed_session = False
             self._dock_lift_target = None
             self._dock_lift_sent_at = 0.0
             self._status_light_signature = None
