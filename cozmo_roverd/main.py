@@ -356,7 +356,7 @@ class Bridge:
                 snap["charging"] = self.robot.battery.charging
                 output = {
                     "generated_at_ms": int(time.time() * 1000),
-                    "hardware_connected": self.robot.ready,
+                    "hardware_connected": self.robot.ready and not self._reroll_active,
                     "hardware_stage": self.hardware_stage,
                     "last_hardware_error": self.last_hardware_error,
                     "hardware_reconnect_attempts": self.hardware_reconnect_attempts,
