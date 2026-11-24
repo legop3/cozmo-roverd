@@ -117,7 +117,6 @@ function configFromUI() {
     rtsp_url: field("rtsp-url").trim(),
     channel_reroll_enabled: $("channel-enable").checked,
     channel_target: Number(field("channel-target")),
-    channel_max_attempts: Number(field("channel-max-attempts")),
     home_assistant_url: field("ha-url").trim(),
     home_assistant_switch: field("ha-switch").trim(),
     home_assistant_token: field("ha-token"),
@@ -143,7 +142,6 @@ function applyConfig(config, options) {
   $("rtsp-url").value = config.rtsp_url;
   $("channel-enable").checked = config.channel_reroll_enabled === true;
   $("channel-target").value = String(config.channel_target || 1);
-  $("channel-max-attempts").value = String(config.channel_max_attempts || 6);
   $("ha-url").value = config.home_assistant_url || "";
   $("ha-switch").value = config.home_assistant_switch || "";
   $("ha-token").value = "";
@@ -235,7 +233,7 @@ async function refreshTelemetry() {
     const rerollDescription = !("enabled" in reroll) ? "No live channel status (bridge offline)" :
       !reroll.enabled ? "Disabled" :
       `${reroll.status || "Unknown"} · current ${reroll.actual ?? "?"}, target ${reroll.target ?? "?"}` +
-      (reroll.attempt ? ` · attempt ${reroll.attempt}/${reroll.max_attempts}` : "") +
+      (reroll.attempt ? ` · restart #${reroll.attempt}` : "") +
       (reroll.retry_in_seconds ? ` · retry in ${reroll.retry_in_seconds}s` : "") +
       (reroll.error ? ` · ${reroll.error}` : "");
     $("channel-live").textContent = "Live reroll status: " + rerollDescription;
