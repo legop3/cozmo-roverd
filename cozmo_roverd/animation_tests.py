@@ -14,11 +14,10 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("mtu1500-idle", 0, "idle", False),
-    ("mtu1500-tone-short", 30, "tone_short", False),
-    ("mtu1500-tone-stock", 30, "tone_stock", False),
-    ("mtu1500-tone-camera", 30, "tone_short", True),
-    ("mtu1500-combined", 30, "tone_display", True),
-    ("mtu1500-combined-soak", 30, "tone_display", True),
+    ("mtu1500-speech", 30, "speech", False),
+    ("mtu1500-real-face", 30, "real_face", True),
+    ("mtu1500-speech-face", 30, "speech_face", True),
+    ("mtu1500-speech-face-soak", 30, "speech_face", True),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
@@ -109,7 +108,7 @@ def worker(name, directory, config, duration):
         if mode=="idle":
             result["ping"] = [command("ping","-I",interface,"-c","2","-W","1","-M","do","-s",str(n),"172.31.1.1") for n in (548,549,600,762,1200,1472)]
         result["status"] = "RUNNING"
-        if mode.startswith("tone"):
+        if mode.startswith(("tone","speech")):
             cli.set_volume(12000)
             time.sleep(1)
         if name == "audio-tone-volume":
@@ -252,6 +251,34 @@ def worker(name, directory, config, duration):
                     payload = bytes(ulaw(x) for x in pcm)
                 tone_packets.append(p.OutputAudio(samples=payload))
             result["tone_encoding"] = mode
+        message = "Hello! This is Cozmo. The speaker and display are working together."
+        speech_packets = []
+        if mode.startswith("speech"):
+            # eSpeak NG is a local, deterministic test source; ffmpeg
+            # only converts PCM format, not mu-law.
+            wav = subprocess.run(["espeak-ng","--stdout","-s","145",message],
+                                 capture_output=True,check=True,timeout=20).stdout
+            pcm = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
+                                  "-i","pipe:0","-f","s16le","-ac","1","-ar","22320","pipe:1"],
+                                 input=wav,capture_output=True,check=True,timeout=20).stdout
+            pcm += bytes((-len(pcm)) % 1488)
+            for offset in range(0,len(pcm),1488):
+                samples = struct.unpack("<744h",pcm[offset:offset+1488])
+                speech_packets.append(p.OutputAudio(samples=bytes(ulaw(int(x*.5)) for x in samples)))
+            if not speech_packets:
+                raise RuntimeError("Speech synthesis produced no audio")
+            result["speech_frames"] = len(speech_packets)
+        faces = []
+        if mode in ("real_face","speech_face"):
+            from .face import status_image
+            for page in range(6):
+                img = status_image(voltage=3.85, percent=65, charging=False,
+                                   last_tts=message, scroll=page, voltage_only=True)
+                payload = bytes(ImageEncoder(img).encode())
+                if len(payload) + 20 > 1472:
+                    raise RuntimeError("Rendered face exceeds one unfragmented UDP datagram")
+                faces.append(payload)
+            result["face_sizes"] = [len(x) for x in faces]
         start = time.monotonic()
         next_frame = start
         next_sample = start
@@ -285,7 +312,15 @@ def worker(name, directory, config, duration):
                     result["reason"] = "RX/ACK stalled or transport backlog exceeded limit"
                     break
             if rate and now >= next_frame:
-                if mode.startswith("tone"):
+                if mode.startswith("speech"):
+                    cycle = len(speech_packets) + 120
+                    phase = frame % cycle
+                    if 30 <= phase < 30+len(speech_packets) and (mode=="speech_face" or frame<cycle):
+                        # New packet instance: do not reuse sequence-bearing objects.
+                        send(p.OutputAudio(samples=speech_packets[phase-30].samples))
+                    else:
+                        send(p.OutputSilence())
+                elif mode.startswith("tone"):
                     phase = frame % 150
                     # One second of actual audio followed by four seconds
                     # of silence; short tests play only one burst.
@@ -297,6 +332,8 @@ def worker(name, directory, config, duration):
                     audio_probe(mode.split("_")[1])
                 else:
                     send(p.OutputSilence())
+                if faces and frame % 60 == 0:
+                    send(p.DisplayImage(image=faces[(frame//60)%len(faces)]))
                 if mode == "image_sparse" and frame % 30 == 0:
                     send(p.DisplayImage(image=encoded))
                 if mode in ("patterns","tone_display") and frame % 30 == 0:
@@ -347,6 +384,9 @@ def main():
     args = ap.parse_args()
     if args.worker:
         return worker(args.worker, args.directory, args.config, args.duration)
+    import shutil
+    if not shutil.which("espeak-ng") or not shutil.which("ffmpeg"):
+        ap.error("Install test dependencies: sudo dnf install espeak-ng ffmpeg (or ffmpeg-free)")
     if not h._pycozmo_transport_patched():
         ap.error("Installed PyCozmo transport patch not detected")
     if not 5 <= args.duration <= 120:
@@ -368,12 +408,10 @@ def main():
         for name, rate, mode, camera in CASES:
             deps = (["mtu1500-idle"] if name.startswith("mtu1500-") and name!="mtu1500-idle"
                     else ["idle-animation-state"] if name.startswith("original-") else [])
-            if name in ("mtu1500-tone-camera","mtu1500-combined"):
-                deps.append("mtu1500-tone-short")
-            if name=="mtu1500-combined":
-                deps.append("mtu1500-tone-camera")
-            if name=="mtu1500-combined-soak":
-                deps.append("mtu1500-combined")
+            if name=="mtu1500-speech-face":
+                deps.extend(["mtu1500-speech","mtu1500-real-face"])
+            if name=="mtu1500-speech-face-soak":
+                deps.append("mtu1500-speech-face")
 
             blocked = [d for d in deps if results.get(d)!="PASS"]
             if blocked:
@@ -390,7 +428,7 @@ def main():
                     pass
             print(f"Testing {name}...",flush=True)
             timedout=False
-            case_duration = max(args.duration, 120) if name.endswith("-soak") else args.duration
+            case_duration = max(args.duration, 120) if name.endswith("-soak") else max(args.duration, 20)
             with (d/"console.log").open("w") as log:
                 try:
                     proc=subprocess.run([sys.executable,"-m","cozmo_roverd.animation_tests","--worker",name,
@@ -422,6 +460,7 @@ def main():
                 "effective_mtu":r.get("effective_mtu"),"route":r.get("route"),
                 "mtu_change":r.get("mtu_change"),"mtu_restore":r.get("mtu_restore"),
                 "ping":r.get("ping"),
+                "speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
                 "sent":r.get("sent"),"rx_delta":b.get("received_frames",0)-a.get("received_frames",0),
                 "audio_delta":b.get("audio_frames_reported_played",0)-a.get("audio_frames_reported_played",0),
                 "max_pending":max((x["pending_reliable_packets"] for x in s),default=None),
