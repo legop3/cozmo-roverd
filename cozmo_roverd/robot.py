@@ -38,6 +38,7 @@ class Robot:
         self.charging = None
         self.on_charger = None
         self._dock_contact_handled = False
+        self._dock_confirmed_session = False
         # Only the last commanded automatic lift target is remembered.
         # Actual lift height in RobotState determines whether to retry.
         self._dock_lift_target = None
@@ -101,6 +102,7 @@ class Robot:
         self._charger_last_attempt = 0.0
 
     def connect(self):
+        self._dock_confirmed_session = False
         import pycozmo
         # Keep PyCozmo's 30 Hz animation/audio loop off: it caused
         # repeated reconnects on the physical robot.
@@ -290,6 +292,8 @@ class Robot:
             # Physical contact stops the wheels once. Charger and assist
             # both demand lift UP, independent of previous commands.
             contact = battery.raw_docked or battery.raw_charging
+            # Reset across PyCozmo sessions; never authorize shutdown from old dock telemetry.
+            self._dock_confirmed_session = bool(contact)
             if (contact and not self._dock_contact_handled
                     and self.ready and self.client is not None):
                 self._dock_contact_handled = True
@@ -465,6 +469,7 @@ class Robot:
         with self.lock:
             if (self.client is None or not self.ready or
                     self.on_charger is not True or self.battery.docked is not True or
+                    not self._dock_confirmed_session or
                     self.undock_active or self.dock_assist or self.moving or
                     any(abs(v) > 0 for v in self.commanded_wheels)):
                 raise RuntimeError("Refusing shutdown: Cozmo is not confirmed stationary on dock")
