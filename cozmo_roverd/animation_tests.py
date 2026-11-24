@@ -14,11 +14,11 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("mtu1500-idle", 0, "idle", False),
-    ("mtu1500-volume-100", 30, "speech", False),
-    ("mtu1500-volume-500", 30, "speech", False),
-    ("mtu1500-volume-1500", 30, "speech", False),
-    ("mtu1500-loss-retry", 30, "speech_face", True),
-    ("mtu1500-retry-soak", 30, "speech_face", True),
+    ("mtu1500-codec-standard", 30, "speech", False),
+    ("mtu1500-codec-uncomplemented", 30, "speech", False),
+    ("mtu1500-codec-offset", 30, "speech", False),
+    ("mtu1500-codec-linear", 30, "speech", False),
+    ("mtu1500-codec-alaw", 30, "speech", False),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
@@ -110,7 +110,7 @@ def worker(name, directory, config, duration):
             result["ping"] = [command("ping","-I",interface,"-c","2","-W","1","-M","do","-s",str(n),"172.31.1.1") for n in (548,549,600,762,1200,1472)]
         result["status"] = "RUNNING"
         if mode.startswith(("tone","speech")):
-            volume = int(name.rsplit("-",1)[1]) if "-volume-" in name else 500
+            volume = 500
             cli.set_volume(volume)
             result["hardware_volume"] = volume
             time.sleep(1)
@@ -294,10 +294,28 @@ def worker(name, directory, config, duration):
                                  input=wav,capture_output=True,check=True,timeout=20).stdout
             gain = .1
             result["speech_gain"] = gain
+            # Compare byte conventions on the same attenuated speech.
             pcm += bytes((-len(pcm)) % 1488)
-            for offset in range(0,len(pcm),1488):
-                samples = struct.unpack("<744h",pcm[offset:offset+1488])
-                speech_packets.append(p.OutputAudio(samples=bytes(ulaw(int(x*gain)) for x in samples)))
+            samples = struct.unpack("<%dh"%(len(pcm)//2),pcm)
+            scaled = struct.pack("<%dh"%len(samples),*(int(x*.1) for x in samples))
+            codec = name.rsplit("-",1)[1]
+            if codec == "linear":
+                encoded_speech = bytes((int(x*.1)//256+128)&255 for x in samples)
+                silence = 128
+            else:
+                fmt = "alaw" if codec=="alaw" else "mulaw"
+                encoded_speech = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
+                    "-f","s16le","-ar","22320","-ac","1","-i","pipe:0",
+                    "-f",fmt,"pipe:1"],input=scaled,capture_output=True,check=True,timeout=20).stdout
+                if codec=="uncomplemented":
+                    encoded_speech = bytes(x^255 for x in encoded_speech)
+                elif codec=="offset":
+                    encoded_speech = bytes(x^128 for x in encoded_speech)
+                silence = {"standard":255,"uncomplemented":0,"offset":127,"alaw":213}[codec]
+            encoded_speech += bytes([silence])*((-len(encoded_speech))%744)
+            for offset in range(0,len(encoded_speech),744):
+                speech_packets.append(p.OutputAudio(samples=encoded_speech[offset:offset+744]))
+            result["speech_codec"] = codec
             if not speech_packets:
                 raise RuntimeError("Speech synthesis produced no audio")
             result["speech_frames"] = len(speech_packets)
@@ -477,7 +495,7 @@ def main():
                     pass
             print(f"Testing {name}...",flush=True)
             timedout=False
-            case_duration = max(args.duration, 300) if name.endswith("-soak") else max(args.duration, 20)
+            case_duration = max(args.duration, 12)
             with (d/"console.log").open("w") as log:
                 try:
                     proc=subprocess.run([sys.executable,"-m","cozmo_roverd.animation_tests","--worker",name,
@@ -509,7 +527,7 @@ def main():
                 "effective_mtu":r.get("effective_mtu"),"route":r.get("route"),
                 "mtu_change":r.get("mtu_change"),"mtu_restore":r.get("mtu_restore"),
                 "ping":r.get("ping"),
-                "hardware_volume":r.get("hardware_volume"),"frame_rate":r.get("frame_rate"),"speech_gain":r.get("speech_gain"),"injected_losses":r.get("injected_losses"),"retry_calls":r.get("retry_calls"),"speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
+                "speech_codec":r.get("speech_codec"),"hardware_volume":r.get("hardware_volume"),"frame_rate":r.get("frame_rate"),"speech_gain":r.get("speech_gain"),"injected_losses":r.get("injected_losses"),"retry_calls":r.get("retry_calls"),"speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
                 "sent":r.get("sent"),"rx_delta":b.get("received_frames",0)-a.get("received_frames",0),
                 "audio_delta":b.get("audio_frames_reported_played",0)-a.get("audio_frames_reported_played",0),
                 "max_pending":max((x["pending_reliable_packets"] for x in s),default=None),
