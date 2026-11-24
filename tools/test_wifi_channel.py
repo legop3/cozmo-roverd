@@ -60,9 +60,10 @@ def connected_ap_channel(interface: str) -> str:
     if not freq_lines:
         return "connected; frequency unavailable"
     try:
-        frequency = int(freq_lines[0].split(":", 1)[1].strip().split()[0])
+        raw_frequency = float(freq_lines[0].split(":", 1)[1].strip().split()[0])
+        frequency = round(raw_frequency * 1000 if 2.0 <= raw_frequency <= 6.0 else raw_frequency)
     except (IndexError, ValueError):
-        return "connected; frequency malformed"
+        return f"connected; frequency unparseable ({freq_lines[0]})"
     channel = 14 if frequency == 2484 else (frequency - 2407) // 5
     return f"channel {channel} ({frequency} MHz)"
 
@@ -132,7 +133,7 @@ def main() -> int:
     if args.command == "shutdown-legacy":
         print("WARNING: Official CLAD describes 32 payload bytes for 0xA9; "
               "PyCozmo uses zero. This test uses the PyCozmo form.", flush=True)
-    if args.command.startswith("wifi-"):
+    if args.command in ("wifi-off", "wifi-on"):
         print("WiFiOff's 'enable' flag meaning and reconnect behavior are unverified.", flush=True)
 
     interface = connect_configured_wifi(args.config)
@@ -152,6 +153,7 @@ def main() -> int:
     try:
         client.connect()
         client.wait_for_robot(timeout=12)
+        client.enable_camera(enable=False)  # No video required; prevent decoder spam.
         start = time.monotonic()
         for attempt in range(repeats):
             remaining = start + attempt * args.interval_seconds - time.monotonic()
@@ -161,9 +163,12 @@ def main() -> int:
             print(f"[{time.monotonic() - start:5.1f}s] Queued {attempt + 1}/{repeats}: "
                   f"0x{command_id:02x} {payload.hex(' ')}", flush=True)
         print("Queued is NOT proof the robot received or applied the command.", flush=True)
-        remaining = start + args.observe_seconds - time.monotonic()
-        if remaining > 0:
-            time.sleep(remaining)
+        try:
+            remaining = start + args.observe_seconds - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
+        except KeyboardInterrupt:
+            print("Observation interrupted.", flush=True)
         print(f"Final AP association: {connected_ap_channel(interface)}", flush=True)
         print("Observation finished.", flush=True)
     finally:
