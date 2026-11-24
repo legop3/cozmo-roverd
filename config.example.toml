@@ -27,7 +27,6 @@ hud = true
 [channel_reroll]
 enabled = false
 target_channel = 6 # 1, 6, or 11
-max_attempts = 6
 home_assistant_url = ""
 home_assistant_token = ""
 switch_entity = ""
