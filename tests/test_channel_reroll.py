@@ -30,26 +30,35 @@ def config(**overrides):
 
 class FakeRobot:
     def __init__(self, docked=True):
-        self.ready = True
+        self.ready = False
         self.on_charger = docked
-        self._dock_confirmed_session = docked
+        self._dock_confirmed_session = False
         self.battery = SimpleNamespace(docked=docked)
         self.moving = False
         self.undock_active = False
         self.dock_assist = False
         self.commanded_wheels = (0, 0)
         self.actions = []
+        self.docked = docked
+
+    def connect(self, *, inspection=False):
+        self.actions.append("inspect" if inspection else "normal_connect")
+        self.ready = True
+        # Emulate a current-session RobotState charger-contact report.
+        self._dock_confirmed_session = self.docked
+
+    def promote_inspection(self):
+        self.actions.append("promote")
 
     def shutdown_for_channel_reroll(self):
+        if not self._dock_confirmed_session:
+            raise RuntimeError("Refusing to shut down undocked Cozmo")
         self.actions.append("shutdown")
 
     def close(self):
         self.actions.append("close")
         self.ready = False
-
-    def connect(self):
-        self.actions.append("connect")
-        self.ready = True
+        self._dock_confirmed_session = False
 
 
 class FakePower:
@@ -72,94 +81,108 @@ def bridge_case(c, *, docked=True, channels=(1,)):
     bridge.dock_power = power
     it = iter(channels)
     bridge.wifi.channel = lambda: next(it)
-    bridge.wifi.connect = lambda: power.actions.append("wifi_connect")
+    bridge.wifi.active = lambda: True
+    bridge.wifi.wait = lambda: power.actions.append("wifi_wait")
     return bridge, power
 
 
-def test_correct_channel_never_calls_ha_or_shutdown():
+class StopProbe(Exception):
+    """End a deliberately indefinite unsafe-channel inspection in tests."""
+
+
+async def stop_inspection(_delay):
+    raise StopProbe()
+
+
+def test_correct_channel_promotes_only_after_inspection():
     async def scenario():
         bridge, power = bridge_case(config(), channels=(6,))
-        await bridge._ensure_channel()
+        await bridge._prepare_channel()
         assert bridge.channel_status == "matched"
-        assert bridge.robot.actions == []
+        assert not bridge.hardware_ready.is_set()
+        assert bridge.robot.actions == ["inspect"]
         assert power.actions == []
+        bridge.robot.promote_inspection()
+        assert bridge.robot.actions == ["inspect", "promote"]
     asyncio.run(scenario())
 
 
-def test_stale_dock_contact_from_previous_connection_cannot_shutdown():
+def test_stale_dock_contact_cannot_authorize_power_cycle(monkeypatch):
+    monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", stop_inspection)
+
     async def scenario():
         bridge, power = bridge_case(config(), channels=(1,))
-        bridge.robot._dock_confirmed_session = False
-        await bridge._ensure_channel()
-        assert bridge.channel_status == "waiting_for_dock"
-        assert bridge.robot.actions == []
+        def never_confirm_dock(*, inspection=False):
+            bridge.robot.actions.append("inspect")
+            bridge.robot.ready = True
+            bridge.robot._dock_confirmed_session = False
+        bridge.robot.connect = never_confirm_dock
+        with pytest.raises(StopProbe):
+            await bridge._prepare_channel()
+        assert bridge.robot.actions == ["inspect", "close"]
         assert power.actions == []
+        assert bridge.channel_status == "waiting_for_dock"
     asyncio.run(scenario())
 
 
-def test_undocked_robot_never_calls_ha_or_shutdown():
+def test_undocked_robot_waits_without_power_operations(monkeypatch):
+    monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", stop_inspection)
+
     async def scenario():
         bridge, power = bridge_case(config(), docked=False, channels=(1,))
-        await bridge._ensure_channel()
+        with pytest.raises(StopProbe):
+            await bridge._prepare_channel()
         assert bridge.channel_status == "waiting_for_dock"
-        assert bridge.robot.actions == []
+        assert bridge.robot.actions == ["inspect", "close"]
         assert power.actions == []
+        assert not bridge.hardware_ready.is_set()
     asyncio.run(scenario())
 
 
-def test_unknown_channel_never_calls_ha_or_shutdown():
+def test_unknown_channel_does_not_enable_camera_or_toggle_power(monkeypatch):
+    monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", stop_inspection)
+
     async def scenario():
         bridge, power = bridge_case(config(), channels=(None,))
-        await bridge._ensure_channel()
-        assert bridge.channel_status == "channel_unknown"
-        assert bridge.robot.actions == []
+        with pytest.raises(StopProbe):
+            await bridge._prepare_channel()
+        assert bridge.channel_status == "waiting_for_wifi"
+        assert bridge.robot.actions == ["inspect", "close"]
         assert power.actions == []
     asyncio.run(scenario())
 
 
-def test_unavailable_power_switch_blocks_shutdown():
+def test_unavailable_power_switch_blocks_shutdown(monkeypatch):
+    monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", stop_inspection)
+
     async def scenario():
         bridge, power = bridge_case(config(), channels=(1,))
         power.current = "off"
-        await bridge._ensure_channel()
+        with pytest.raises(StopProbe):
+            await bridge._prepare_channel()
         assert bridge.channel_status == "home_assistant_unavailable"
-        assert bridge.robot.actions == []
-        assert "cycle" not in power.actions
+        assert bridge.robot.actions == ["inspect", "close"]
+        assert power.actions == ["state"]
     asyncio.run(scenario())
 
 
-def test_successful_reroll_calls_one_power_cycle(monkeypatch):
+def test_successful_reroll_requires_second_inspection_before_promotion(monkeypatch):
     async def no_wait(*args, **kwargs):
         return None
 
     monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", no_wait)
 
     async def scenario():
-        # Current ch 1 -> AP vanishes on shutdown -> reconnect on channel 6.
-        bridge, power = bridge_case(config(), channels=(1, None, 6))
-        bridge.hardware_ready.set()
-        await bridge._ensure_channel()
+        bridge, power = bridge_case(config(), channels=(1, 6))
+        await bridge._prepare_channel()
         assert bridge.channel_status == "matched"
         assert bridge.channel_actual == 6
-        assert bridge.channel_attempts == 0
-        assert bridge.robot.actions == ["shutdown", "close", "connect"]
-        assert power.actions == ["state", "cycle", "wifi_connect"]
-        assert not bridge._reroll_active
-    asyncio.run(scenario())
-
-
-def test_uncertain_shutdown_still_cycles_dock_to_avoid_stranding_cozmo(monkeypatch):
-    async def no_wait(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", no_wait)
-
-    async def scenario():
-        bridge, power = bridge_case(config(), channels=(1,) * 18)
-        await bridge._ensure_channel()
-        assert bridge.robot.actions == ["shutdown", "close", "connect"]
-        assert power.actions.count("cycle") == 1
-        assert bridge.channel_status == "mismatch"
+        assert bridge.channel_attempts == 1
+        assert not bridge.hardware_ready.is_set()
+        assert bridge.robot.actions == ["inspect", "shutdown", "close", "inspect"]
+        assert power.actions == ["state", "cycle", "wifi_wait"]
+        bridge.robot.promote_inspection()
+        assert bridge.robot.actions[-1] == "promote"
     asyncio.run(scenario())
 
 
@@ -170,14 +193,24 @@ def test_failed_client_cleanup_still_wakes_dock(monkeypatch):
     monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", no_wait)
 
     async def scenario():
-        bridge, power = bridge_case(config(), channels=(1, None))
+        bridge, power = bridge_case(config(), channels=(1,))
         def broken_close():
             raise RuntimeError("cleanup error")
         bridge.robot.close = broken_close
         with pytest.raises(RuntimeError, match="cleanup error"):
-            await bridge._ensure_channel()
+            await bridge._prepare_channel()
         assert power.actions.count("cycle") == 1
-        assert bridge.channel_status == "error"
+        assert bridge.channel_status == "waiting_for_wifi"
+    asyncio.run(scenario())
+
+
+def test_mrr_grace_timer_is_independent_of_channel_selection():
+    async def scenario():
+        bridge, _power = bridge_case(config(), channels=(1,))
+        bridge._hardware_offline_since = __import__("time").monotonic() - 25
+        assert 570 <= bridge._mrr_offline_remaining() <= 576
+        bridge.hardware_ready.set()
+        assert bridge._mrr_offline_remaining() is None
     asyncio.run(scenario())
 
 
