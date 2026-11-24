@@ -195,16 +195,10 @@ class Bridge:
             text = payload.get("text", "")
             if not isinstance(text, str):
                 raise ValueError("TTS text must be a string")
-            # Display the most recent TTS text even when playback is disabled.
-            self.robot.note_tts(text)
             if payload.get("speak", True) is not False:
-                # Repeated OutputAudio attempts froze the robot and
-                # interrupted its camera/control link. Preserve the text
-                # on the OLED but explicitly tell MRR the hardware speaker
-                # is disabled; never start a synthesis or audio worker.
-                raise RuntimeError(
-                    "Cozmo hardware speech disabled for robot stability; "
-                    "message retained on face")
+                self.robot.speak(text)
+            else:
+                self.robot.note_tts(text)
         elif cmd == "headlight":
             payload = msg.get("headlight")
             action = payload.get("action") if isinstance(payload, dict) else None
@@ -861,7 +855,7 @@ class Bridge:
             asyncio.create_task(self._maintenance(self.robot.refresh_status_lights, 0.5)),
             asyncio.create_task(self._maintenance(self.robot.refresh_charger_lights, 1.0)),
             ]
-        # Static face status is enabled normally; no repeating audio clock.
+        # Render face pages off the animation and control threads.
         if self.robot._face_transport_enabled:
             tasks += [
                 asyncio.create_task(self._maintenance(self.robot.refresh_face, 0.25)),
