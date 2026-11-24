@@ -25,6 +25,8 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
         "media": {"rtspPort": 8554, "video": {"enabled": video, "profile": "custom"}},
         "peripherals": [{"id": "cozmo", "name": "Cozmo", "controls": [
             {"id": "lift", "name": "Lift height (%)", "type": "slider", "min": 0, "max": 100},
+            {"id": "speakerVolume", "name": "Speaker volume", "type": "number", "min": 0, "max": 65535},
+            {"id": "ttsGain", "name": "TTS gain (PCM peak)", "type": "number", "min": 0, "max": 32767},
             {"id": "reconnect", "name": "Reconnect Cozmo", "type": "button", "mode": "momentary"}
         ]}],
     }
