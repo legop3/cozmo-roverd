@@ -454,6 +454,23 @@ class Robot:
                 return False
             return self.set_dock_lift(True, force=True)
 
+    def shutdown_for_channel_reroll(self):
+        """Send the previously hardware-verified legacy shutdown packet.
+
+        Only the hardware supervisor calls this. No wheels/lift/charger control
+        is attempted here, and no command is sent unless charging contacts
+        have been positively identified and the robot is stationary.
+        """
+        from pycozmo.protocol_base import UnknownCommand
+        with self.lock:
+            if (self.client is None or not self.ready or
+                    self.on_charger is not True or self.battery.docked is not True or
+                    self.undock_active or self.dock_assist or self.moving or
+                    any(abs(v) > 0 for v in self.commanded_wheels)):
+                raise RuntimeError("Refusing shutdown: Cozmo is not confirmed stationary on dock")
+            self.client.conn.send(UnknownCommand(0xA9, b""))
+            LOG.info("Queued verified Cozmo shutdown command for channel reroll")
+
     def drive(self, left, right):
         with self.lock:
             self.note_driver_activity()
