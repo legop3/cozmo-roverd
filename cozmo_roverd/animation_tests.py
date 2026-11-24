@@ -14,13 +14,10 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("idle-animation-state", 0, "idle", False),
-    ("silence-30hz", 30, "silence", False),
-    ("display-large-256", 0, "large256", False),
-    ("display-large-512", 0, "large512", False),
-    ("display-large-744", 0, "large744", False),
-    ("audio-tone-retry", 0, "audio_tone_once", False),
-    ("audio-tone-volume", 0, "audio_tone_once", False),
-    ("audio-tone-active-clock", 30, "audio_tone_clock", False),
+    *[(f"display-size-{n}", 0, f"large{n}", False) for n in
+      (518, 560, 600, 630, 650, 680, 710, 744)],
+    *[(f"batched-silence-{n}", 0, f"batch{n}", False) for n in
+      (536, 600, 640, 680, 720, 762)],
     ("camera-display-patterns", 30, "patterns", True),
 ]
 BY_NAME = {c[0]: c for c in CASES}
@@ -143,6 +140,46 @@ def worker(name, directory, config, duration):
             send(p.OutputSilence())
         if rate == 0 and mode == "image":
             send(p.DisplayImage(image=encoded))
+        if mode.startswith("batch"):
+            # Multiple individually valid, small display packets in one
+            # reliable datagram, without exceeding the 62-packet window.
+            # Choose one moderately sized image and fill with silence.
+            target = int(mode[5:])
+            import random
+            rng = random.Random(321)
+            img = Image.new("1",(128,32),0)
+            pixels = img.load()
+            for x in range(8):
+                for y in range(32):
+                    pixels[x,y] = 255 if rng.getrandbits(1) else 0
+            pkt = p.DisplayImage(image=bytes(ImageEncoder(img).encode()))
+            # Force grouping only for this test, using ordinary sequence
+            # allocation and the normal frame serializer.
+            sender = cli.conn.send_thread
+            original = sender._send_packets
+            group = [pkt] * max(1,(target-14)//(4+len(pkt)))
+            remaining = target-14-sum(4+len(x) for x in group)
+            group.extend(p.OutputSilence() for _ in range(max(0,remaining//4)))
+            if len(group)>60:
+                raise RuntimeError("Probe exceeds reliable window")
+            buffered = []
+            expected = len(group)
+            def grouped(self, packets, last_ack):
+                if len(buffered)<expected:
+                    buffered.extend(packets)
+                    if len(buffered)<expected:
+                        return
+                    self._send_packets = original
+                    original(buffered, last_ack)
+                else:
+                    original(packets,last_ack)
+            if before["pending_reliable_packets"] or before["queued_app_commands"]:
+                raise RuntimeError("Probe requires empty send window")
+            sender._send_packets = types.MethodType(grouped,sender)
+            result["batch_requested_bytes"]=target
+            result["batch_packets"]=expected
+            for packet in group:
+                send(packet)
         if mode.startswith("large"):
             # Valid binary image with controlled RLE complexity. Search for
             # a payload close to the requested size without padding it.
@@ -255,12 +292,20 @@ def main():
             raise RuntimeError("Could not stop bridge")
         print("Waiting for previous bridge session to expire...", flush=True)
         time.sleep(10)
+        print("=== NETWORK SIZE CONTROLS (ICMP, not UDP) ===",flush=True)
+        for command in (["ip","route","get","172.31.1.1"],["ip","-br","link"],
+                        *[["ping","-c","3","-W","1","-M","do","-s",str(n),"172.31.1.1"]
+                          for n in (256,508,536,600,640,700,762,1000,1200,1400)]):
+            try:
+                probe=subprocess.run(command,capture_output=True,text=True,timeout=8)
+                print(" ".join(command),probe.returncode,probe.stdout,probe.stderr,flush=True)
+            except (OSError,subprocess.TimeoutExpired) as exc:
+                print("Network probe error:",repr(exc),flush=True)
         for name, rate, mode, camera in CASES:
             deps = [] if name=="idle-animation-state" else ["idle-animation-state"]
             if name.startswith("camera-display"):
                 pass
-            if rate==30 and name!="silence-30hz":
-                deps.append("silence-30hz")
+
             blocked = [d for d in deps if results.get(d)!="PASS"]
             if blocked:
                 results[name]="SKIP"
@@ -299,7 +344,9 @@ def main():
                 "wire_rx":sum(x.get("direction")=="rx" for x in wire),
                 "audio_payload":r.get("audio_payload"),
                 "large_display_payload_bytes":r.get("large_display_payload_bytes"),
-                "large_wire":[x for x in wire if x.get("direction")=="tx" and x.get("bytes",0)>200][:5],
+                "batch_requested_bytes":r.get("batch_requested_bytes"),
+                "batch_packets":r.get("batch_packets"),
+                "large_wire":[x for x in wire if x.get("direction")=="tx" and x.get("bytes",0)>200][:2],
                 "tx_problems":[x for x in wire if x.get("problem") and x.get("direction")=="tx"][:5],
                 "audio_wire":[x for x in wire if x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[]))][:8],
                 "audio_wire_count":sum(x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[])) for x in wire),
