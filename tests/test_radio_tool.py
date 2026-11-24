@@ -57,8 +57,8 @@ def test_test_tool_refuses_to_send_if_wifi_does_not_connect(monkeypatch):
 
 
 def test_packet_encodings():
-    assert test_wifi_channel.packet_for("radio", 5) == (0x07, b"\\x01\\x05")
-    assert test_wifi_channel.packet_for("wifi-off", 5) == (0xAE, b"\\x01")
-    assert test_wifi_channel.packet_for("wifi-on", 5) == (0xAE, b"\\x00")
+    assert test_wifi_channel.packet_for("radio", 5) == (0x07, bytes((1, 5)))
+    assert test_wifi_channel.packet_for("wifi-off", 5) == (0xAE, bytes((1,)))
+    assert test_wifi_channel.packet_for("wifi-on", 5) == (0xAE, bytes((0,)))
     assert test_wifi_channel.packet_for("sleep", 5) == (0x52, b"")
     assert test_wifi_channel.packet_for("shutdown-legacy", 5) == (0xA9, b"")
