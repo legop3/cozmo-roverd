@@ -304,6 +304,18 @@ class Publisher:
         }
         return title, steps.get(stage, "Connecting to robot")
 
+    @staticmethod
+    def _channel_label(data):
+        """Current/target channels for the disconnected-video status screen."""
+        reroll = data.get("channel_reroll") or {}
+        if not reroll.get("enabled"):
+            return None
+        actual = reroll.get("actual")
+        target = reroll.get("target")
+        current_label = f"CH {actual}" if isinstance(actual, int) and not isinstance(actual, bool) else "UNKNOWN"
+        target_label = f"CH {target}" if isinstance(target, int) and not isinstance(target, bool) else "UNKNOWN"
+        return f"CURRENT: {current_label}   TARGET: {target_label}"
+
     def _offline_frame(self, data=None):
         """Show what reconnect is actually doing, keeping RTSP alive."""
         st = data or {}
@@ -322,6 +334,11 @@ class Publisher:
             width = bbox[2] - bbox[0]
             draw.text(((320 - width) // 2, y - bbox[1]),
                       message, fill=color)
+        channel_label = self._channel_label(st)
+        if channel_label:
+            bounds = draw.textbbox((0, 0), channel_label)
+            draw.text(((320 - (bounds[2] - bounds[0])) // 2, 136 - bounds[1]),
+                      channel_label, fill=(117, 216, 188))
         remaining = st.get("mrr_offline_remaining_seconds")
         if isinstance(remaining, (int, float)) and not isinstance(remaining, bool):
             remaining = max(0, int(remaining))
