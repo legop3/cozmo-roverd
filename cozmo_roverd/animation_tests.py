@@ -13,14 +13,12 @@ from . import hardware_tests as h
 # Every condition receives a fresh connection. No automatic escalation after
 # a failed lower-rate prerequisite in the same family.
 CASES = [
-    ("idle-animation-state", 0, "idle", False),
-    ("original-display-744", 0, "large744", False),
-    ("original-audio", 0, "audio_tone_once", False),
     ("mtu1500-idle", 0, "idle", False),
-    ("mtu1500-display-744", 0, "large744", False),
-    ("mtu1500-audio", 0, "audio_tone_once", False),
-    ("mtu1500-audio-clock", 30, "audio_tone_clock", False),
-    ("mtu1500-camera-display", 30, "patterns", True),
+    ("mtu1500-tone-short", 30, "tone_short", False),
+    ("mtu1500-tone-stock", 30, "tone_stock", False),
+    ("mtu1500-tone-camera", 30, "tone_short", True),
+    ("mtu1500-combined", 30, "tone_display", True),
+    ("mtu1500-combined-soak", 30, "tone_display", True),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
@@ -111,6 +109,9 @@ def worker(name, directory, config, duration):
         if mode=="idle":
             result["ping"] = [command("ping","-I",interface,"-c","2","-W","1","-M","do","-s",str(n),"172.31.1.1") for n in (548,549,600,762,1200,1472)]
         result["status"] = "RUNNING"
+        if mode.startswith("tone"):
+            cli.set_volume(12000)
+            time.sleep(1)
         if name == "audio-tone-volume":
             cli.set_volume(12000)
             time.sleep(1)
@@ -237,6 +238,20 @@ def worker(name, directory, config, duration):
             send(best)
         if mode.endswith("_once") and mode.startswith("audio_"):
             audio_probe(mode.split("_")[1])
+        # Precompute a full second of quiet original PCM tone. Use the
+        # exact same waveform for both encoders; no disk or TTS dependencies.
+        import struct
+        tone_packets = []
+        if mode.startswith("tone"):
+            for index in range(30):
+                pcm = [int(1800*math.sin(2*math.pi*440*(index*744+i)/22320))
+                       for i in range(744)]
+                if mode == "tone_stock":
+                    payload = bytes(audio.bytes_to_cozmo(struct.pack("<744h",*pcm),1,1))
+                else:
+                    payload = bytes(ulaw(x) for x in pcm)
+                tone_packets.append(p.OutputAudio(samples=payload))
+            result["tone_encoding"] = mode
         start = time.monotonic()
         next_frame = start
         next_sample = start
@@ -254,24 +269,37 @@ def worker(name, directory, config, duration):
                     last_ack = now
                 ack = m["next_ack_expected"]
                 prev = m
+                if int(Path("/sys/class/net",interface,"mtu").read_text()) != 1500:
+                    result["status"]="FAIL"
+                    result["reason"]="Interface MTU changed during test"
+                    break
                 result["samples"].append({"t": round(now-start, 3), **m,
                     "animation_bytes_played": getattr(cli,"num_anim_bytes_played",None),
                     "animation_drop_count": getattr(cli,"client_drop_count",None)})
-                save()
                 next_sample = now + .25
+                if len(result["samples"]) % 4 == 1:
+                    save()
                 if (now-last_rx > 3 or now-last_ack > 3 or
                     m["queued_app_commands"] > 12 or m["pending_reliable_packets"] >= 12):
                     result["status"] = "FAIL"
                     result["reason"] = "RX/ACK stalled or transport backlog exceeded limit"
                     break
             if rate and now >= next_frame:
-                if mode.startswith("audio_") and frame == 30:
+                if mode.startswith("tone"):
+                    phase = frame % 150
+                    # One second of actual audio followed by four seconds
+                    # of silence; short tests play only one burst.
+                    if 30 <= phase < 60 and (mode=="tone_display" or frame<60):
+                        send(tone_packets[phase-30])
+                    else:
+                        send(p.OutputSilence())
+                elif mode.startswith("audio_") and frame == 30:
                     audio_probe(mode.split("_")[1])
                 else:
                     send(p.OutputSilence())
                 if mode == "image_sparse" and frame % 30 == 0:
                     send(p.DisplayImage(image=encoded))
-                if mode == "patterns" and frame % 30 == 0:
+                if mode in ("patterns","tone_display") and frame % 30 == 0:
                     img = Image.new("1",(128,32),0)
                     draw = ImageDraw.Draw(img)
                     if (frame//30)%3 == 0:
@@ -340,8 +368,12 @@ def main():
         for name, rate, mode, camera in CASES:
             deps = (["mtu1500-idle"] if name.startswith("mtu1500-") and name!="mtu1500-idle"
                     else ["idle-animation-state"] if name.startswith("original-") else [])
-            if name=="mtu1500-audio-clock":
-                deps.append("mtu1500-audio")
+            if name in ("mtu1500-tone-camera","mtu1500-combined"):
+                deps.append("mtu1500-tone-short")
+            if name=="mtu1500-combined":
+                deps.append("mtu1500-tone-camera")
+            if name=="mtu1500-combined-soak":
+                deps.append("mtu1500-combined")
 
             blocked = [d for d in deps if results.get(d)!="PASS"]
             if blocked:
@@ -358,11 +390,12 @@ def main():
                     pass
             print(f"Testing {name}...",flush=True)
             timedout=False
+            case_duration = max(args.duration, 120) if name.endswith("-soak") else args.duration
             with (d/"console.log").open("w") as log:
                 try:
                     proc=subprocess.run([sys.executable,"-m","cozmo_roverd.animation_tests","--worker",name,
-                        "--directory",str(d),"--config",args.config,"--duration",str(args.duration)],
-                        stdout=log,stderr=subprocess.STDOUT,timeout=args.duration+150)
+                        "--directory",str(d),"--config",args.config,"--duration",str(case_duration)],
+                        stdout=log,stderr=subprocess.STDOUT,timeout=case_duration+150)
                 except subprocess.TimeoutExpired:
                     timedout=True
             if restore_mtu is not None:
@@ -401,11 +434,13 @@ def main():
                 "batch_packets":r.get("batch_packets"),
                 "large_wire":[x for x in wire if x.get("direction")=="tx" and x.get("bytes",0)>200][:2],
                 "tx_problems":[x for x in wire if x.get("problem") and x.get("direction")=="tx"][:5],
-                "audio_wire":[x for x in wire if x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[]))][:8],
+                "audio_wire":[x for x in wire if x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[]))][:2],
                 "audio_wire_count":sum(x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[])) for x in wire),
                 "ack_tail":[{k:x.get(k) for k in ("kind","ack","first_seq","last_seq","bytes")} for x in wire if x.get("direction")=="rx"][-5:],
                 "after":r.get("after"),
                 "rx_problem_count":sum(bool(x.get("problem")) and x.get("direction")=="rx" for x in wire),
+                "max_animation_drops":max((x.get("animation_drop_count") or 0 for x in s),default=None),
+                "max_udp_tx_bytes":max((x.get("bytes",0) for x in wire if x.get("direction")=="tx"),default=0),
                 "last_sample":s[-1] if s else None}
             print(json.dumps(summary,default=str),flush=True)
             if r["status"]=="INCONCLUSIVE" or not r.get("before"):
