@@ -6,7 +6,7 @@ Standalone Fedora Linux bridge that makes an Anki Cozmo appear as a rover on an 
 
 Use **two network paths**: an Ethernet connection or primary Wi-Fi for reaching MRR, and a **second, dedicated Wi-Fi adapter** for Cozmo. Cozmo provides its own Wi-Fi access point. This bridge binds a NetworkManager connection exclusively to the adapter chosen in config, disables the default route on that connection and uses it only to communicate with Cozmo. Do **not** choose the host's normal uplink adapter. The SSID and password must be read from Cozmo's screen.
 
-## Fedora installation and guided setup
+## Fedora installation and operations dashboard
 
 Plug a **second Wi-Fi adapter** into your Fedora computer. Keep Ethernet or your primary Wi-Fi connected to the MRR network. The setup UI explicitly protects adapters used for default routes.
 
@@ -18,17 +18,61 @@ sudo bash install-fedora.sh
 
 **From another computer on the network, open `http://FEDORA-HOST-IP:8765`.** The web interface is designed for headless servers: it listens on all interfaces and runs separately from the bridge, even when Cozmo is offline. No SSH tunnel, login, or HTTPS setup required. The installer opens TCP 8765 through active firewalld installations.
 
-The four steps are:
-1. **Adapter:** choose your dedicated Wi-Fi device from a dropdown; adapters carrying the host's default route are disabled.
-2. **Cozmo:** display Cozmo's Wi-Fi credentials on the robot, click **Scan networks**, pick its SSID from the results and enter its password.
-3. **MRR server:** enter the WebSocket URL (for example, `ws://192.168.1.100:8080/rover`), then click **Test server connection**. This checks TCP reachability; a successful test does not prove rover authorization or full protocol operation.
-4. **Rover:** choose the name, optional description, color, **Private rover** mode, max wheel speed, and camera exposure and video settings with simple controls. Click **Save & connect Cozmo**.
+The setup page is a utilitarian operations dashboard, not a setup wizard.
+It has live status and diagnostics first, followed by Cozmo Wi-Fi, dock
+channel automation, MRR connection, and rover/video settings. Each section
+can be edited independently. The disconnected video slate reports deliberate
+channel reroll phases, including shutdown, power cycling, Wi-Fi reconnect,
+and channel verification.
 
 The setup UI validates data, keeps existing passwords when appropriate, writes `/etc/cozmo-roverd.toml` atomically with 0600 permissions and maintains a `.bak` copy, enables the rover service, and restarts it with the new settings. The final panel shows service state, recent logs and start/stop controls.
 
 To upgrade an existing installation, `git pull` then rerun `sudo bash install-fedora.sh`. Existing configuration is preserved. You do **not** have to manually edit the TOML. The web UI uses the same configuration file as the daemon.
 
 The setup page listens on `0.0.0.0:8765` and does not change MRR itself. **There is no authentication or encryption**: anyone who can reach this port can change robot networking and restart the service. Keep port 8765 on a trusted LAN and do not forward it onto the internet.
+
+## Optional Home Assistant dock-only Wi-Fi channel reroll
+
+Cozmo's firmware may choose Wi-Fi channel 1, 6, or 11 at boot. Enable
+**Automatic channel reroll** in the operations dashboard if you want a specific
+channel. Select 1, 6, or 11, specify a Home Assistant base URL, a long-lived
+access token, and an entity such as `switch.cozmo_dock` whose power output
+physically supplies Cozmo's charger. No USB hub power controls are involved.
+
+Use **Test Home Assistant switch** to validate the API token and read the
+entity's state without toggling power. This only checks the Home Assistant
+state, not the physical power path. Test that the selected switch really cuts
+and restores charger power separately before enabling automation.
+
+The normal hardware supervisor (not a second PyCozmo client) reads the active
+adapter's channel using `iw dev <interface> link`. If it matches, nothing
+happens. If it differs, Cozmo must be **stationary with confirmed charger
+contacts in the current robot session**. Before sending the experimentally
+verified `ShutdownRobot` command, roverd checks the Home Assistant switch
+is on. It then waits for Cozmo's Wi-Fi to disappear, closes PyCozmo, turns
+the dock power off and back on via HA, reconnects with the existing
+NetworkManager profile and PyCozmo supervisor, and checks the channel again.
+
+- Unknown channel, unavailable switch, missing charger contacts or moving
+  Cozmo: no shutdown or power cycle.
+- During a reroll, MRR commands are withheld and the continuous RTSP stream
+  displays a readable status slate. The dashboard and telemetry JSON report
+  current/target channel, step, attempts, errors and next retry.
+- Attempts are limited per burst (default 6), then pause 10 minutes before
+  trying again if Cozmo remains docked on the wrong channel. Other failures
+  back off 60 seconds. The system continues seeking the configured channel
+  on later checks; it doesn't permanently accept a mismatch.
+- The HA power controller always attempts `turn_on` after `turn_off`, and
+  waits for Home Assistant to report state transitions. However, an HA
+  outage, service termination, or an optimistic switch entity can prevent
+  physical power restoration. For unattended use, configure an independent
+  Home Assistant failsafe that restores dock power after a short outage.
+
+**Disabled by default.** Existing installations behave normally until
+all HA settings are saved and the automation is explicitly enabled. HA
+credentials live in `/etc/cozmo-roverd.toml` (0600), never in public setup
+responses. The setup dashboard itself serves HTTP without authentication:
+use it only on a trusted LAN or protect it with a secure reverse proxy.
 
 ## Controls and integration
 
