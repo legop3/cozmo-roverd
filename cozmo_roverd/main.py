@@ -211,6 +211,10 @@ class Bridge:
             control, value = p.get("control"), p.get("value")
             if control == "lift" and type(value) is int and 0 <= value <= 100:
                 self.robot.lift(value)
+            elif control == "speakerVolume":
+                self.robot.set_speaker_volume(value)
+            elif control == "ttsGain":
+                self.robot.set_tts_gain(value)
             elif control == "reconnect" and value is True:
                 # Request a clean teardown through _hardware. Do not close
                 # the client here: execute() runs on a different thread.
