@@ -94,6 +94,7 @@ details{margin-top:12px}summary{cursor:pointer;color:var(--sub)}.log{white-space
     <div class="field wide"><label for="ha-switch">Dock power switch entity</label><input id="ha-switch" placeholder="switch.cozmo_dock" spellcheck="false"><p class="hint">Must physically interrupt dock power. The underlying switch hardware is managed by Home Assistant.</p></div>
     <div class="field wide"><label for="ha-token">Home Assistant long-lived access token</label><input id="ha-token" type="password" autocomplete="new-password" placeholder="Leave empty to keep existing token"><p class="hint" id="ha-token-hint">Stored in the protected roverd configuration; not returned to the browser.</p></div>
   </div>
+  <div class="actions" style="justify-content:flex-start;margin:14px 0 8px"><button class="btn sm" id="test-dock-switch" type="button">Test Home Assistant switch (read-only)</button><span id="test-dock-result" class="hint" role="status"></span></div>
   <p class="hint">Safety: checks actual channel, confirms docking and Home Assistant switch state before shutdown. Restores dock power after each attempt. Failed attempts pause before retrying. Normal driving is never interrupted while undocked.</p>
 </section>
 <section id="server">
