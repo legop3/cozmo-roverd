@@ -526,6 +526,8 @@ class Bridge:
         }
 
     def _channel_stage(self, status):
+        if self.channel_status == status and self.hardware_stage == "channel_" + status:
+            return
         self.channel_status = status
         self.hardware_stage = "channel_" + status
         self.publish_state()
