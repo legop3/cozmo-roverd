@@ -62,3 +62,23 @@ def test_packet_encodings():
     assert test_wifi_channel.packet_for("wifi-on", 5) == (0xAE, bytes((0,)))
     assert test_wifi_channel.packet_for("sleep", 5) == (0x52, b"")
     assert test_wifi_channel.packet_for("shutdown-legacy", 5) == (0xA9, b"")
+
+
+
+def test_channel_from_current_association_without_scan(monkeypatch):
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout="Connected to aa:bb:cc\\n\\tfreq: 2437\\n")
+
+    monkeypatch.setattr(test_wifi_channel.subprocess, "run", run)
+    assert test_wifi_channel.connected_ap_channel("wlan2") == "channel 6 (2437 MHz)"
+    assert calls == [["iw", "dev", "wlan2", "link"]]
+
+
+def test_disconnected_ap_channel(monkeypatch):
+    monkeypatch.setattr(test_wifi_channel.subprocess, "run",
+                        lambda *_args, **_kwargs: SimpleNamespace(
+                            returncode=0, stdout="Not connected.\\n"))
+    assert test_wifi_channel.connected_ap_channel("wlan2") == "not connected"
