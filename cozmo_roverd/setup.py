@@ -295,7 +295,8 @@ def validate_payload(payload: dict, current: dict) -> dict:
                       "server_url": url, "max_speed": max_speed,
                       },
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
-            "media": {"enabled": video, "camera_enabled": camera_enabled, "diagnostic_minimal": diagnostic_minimal, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud}}
+            "media": {"enabled": video, "camera_enabled": camera_enabled, "diagnostic_minimal": diagnostic_minimal, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud},
+            "channel_reroll": reroll}
 
 
 def render_toml(data: dict) -> str:
