@@ -29,7 +29,6 @@ class Config:
     home_assistant_url: str = ""
     home_assistant_token: str = ""
     home_assistant_switch: str = ""
-    channel_max_attempts: int = 6
 
 def load(path: str) -> Config:
     data = tomllib.loads(Path(path).read_text())
@@ -56,7 +55,6 @@ def load(path: str) -> Config:
         home_assistant_url=str(reroll.get("home_assistant_url", "")).strip(),
         home_assistant_token=str(reroll.get("home_assistant_token", "")),
         home_assistant_switch=str(reroll.get("switch_entity", "")).strip(),
-        channel_max_attempts=reroll.get("max_attempts", 6),
     )
     if type(c.diagnostic_minimal) is not bool:
         raise ValueError("media.diagnostic_minimal must be a boolean")
@@ -70,8 +68,6 @@ def load(path: str) -> Config:
         raise ValueError("channel_reroll.enabled must be a boolean")
     if type(c.channel_target) is not int or c.channel_target not in (1, 6, 11):
         raise ValueError("channel_reroll.target_channel must be 1, 6 or 11")
-    if type(c.channel_max_attempts) is not int or not 1 <= c.channel_max_attempts <= 20:
-        raise ValueError("channel_reroll.max_attempts must be 1–20")
     if c.channel_reroll_enabled:
         ha = urlsplit(c.home_assistant_url)
         if (ha.scheme not in ("http", "https") or not ha.hostname
