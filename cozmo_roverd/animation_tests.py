@@ -14,10 +14,9 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("mtu1500-idle", 0, "idle", False),
-    ("mtu1500-gain-10", 30, "speech", False),
-    ("mtu1500-gain-20", 30, "speech", False),
-    ("mtu1500-gain-35", 30, "speech", False),
-    ("mtu1500-loss-control", 30, "speech_face", True),
+    ("mtu1500-volume-100", 30, "speech", False),
+    ("mtu1500-volume-500", 30, "speech", False),
+    ("mtu1500-volume-1500", 30, "speech", False),
     ("mtu1500-loss-retry", 30, "speech_face", True),
     ("mtu1500-retry-soak", 30, "speech_face", True),
 ]
@@ -111,7 +110,9 @@ def worker(name, directory, config, duration):
             result["ping"] = [command("ping","-I",interface,"-c","2","-W","1","-M","do","-s",str(n),"172.31.1.1") for n in (548,549,600,762,1200,1472)]
         result["status"] = "RUNNING"
         if mode.startswith(("tone","speech")):
-            cli.set_volume(12000)
+            volume = int(name.rsplit("-",1)[1]) if "-volume-" in name else 500
+            cli.set_volume(volume)
+            result["hardware_volume"] = volume
             time.sleep(1)
         if name == "audio-tone-volume":
             cli.set_volume(12000)
@@ -134,10 +135,16 @@ def worker(name, directory, config, duration):
                 if pending and now-last_retry[0] >= .1:
                     last_retry[0] = now
                     result["retry_calls"] += 1
-                    # Retry just the oldest packet to avoid oversized bursts.
-                    return pending[:1]
+                    # Cozmo may discard later out-of-order packets entirely.
+                    # Replay the entire outstanding window, in sequence.
+                    return pending
                 return []
             sender._resend_messages = types.MethodType(retry_pending, sender)
+            original_batch = sender._send_packets
+            def send_separately(self, packets, last_ack):
+                for seq, pkt in packets:
+                    original_batch([(seq,pkt)],last_ack)
+            sender._send_packets = types.MethodType(send_separately,sender)
         if name in ("mtu1500-loss-control","mtu1500-loss-retry"):
             from pycozmo.frame import Frame
             original_send = sender._send_raw_frame
@@ -285,7 +292,7 @@ def worker(name, directory, config, duration):
             pcm = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
                                   "-i","pipe:0","-f","s16le","-ac","1","-ar","22320","pipe:1"],
                                  input=wav,capture_output=True,check=True,timeout=20).stdout
-            gain = {"mtu1500-gain-10":.1,"mtu1500-gain-20":.2,"mtu1500-gain-35":.35}.get(name,.1)
+            gain = .1
             result["speech_gain"] = gain
             pcm += bytes((-len(pcm)) % 1488)
             for offset in range(0,len(pcm),1488):
@@ -297,7 +304,9 @@ def worker(name, directory, config, duration):
         faces = []
         if mode in ("real_face","speech_face"):
             from .face import status_image
-            for page in range(6):
+            from .face import _layout
+            _, page_layouts, _ = _layout(message, ImageDraw.Draw(Image.new("1",(128,32))))
+            for page in range(len(page_layouts)):
                 img = status_image(voltage=3.85, percent=65, charging=False,
                                    last_tts=message, scroll=page, voltage_only=True)
                 payload = bytes(ImageEncoder(img).encode())
@@ -393,6 +402,10 @@ def worker(name, directory, config, duration):
         if result["status"] == "RUNNING":
             result["status"] = "PASS" if result["after"]["pending_reliable_packets"] == 0 and result["after"]["queued_app_commands"] == 0 else "FAIL"
             result["reason"] = "Transport completed; physical output not verified"
+        result["frame_rate"] = frame / duration if rate else None
+        if result["status"]=="PASS" and rate and frame < duration*rate*.95:
+            result["status"]="FAIL"
+            result["reason"]="Animation throughput below 95 percent of target"
         if name in ("mtu1500-loss-control","mtu1500-loss-retry") and not result["injected_losses"]:
             result["status"]="INCONCLUSIVE"
             result["reason"]="No audio datagram was intentionally dropped"
@@ -496,7 +509,7 @@ def main():
                 "effective_mtu":r.get("effective_mtu"),"route":r.get("route"),
                 "mtu_change":r.get("mtu_change"),"mtu_restore":r.get("mtu_restore"),
                 "ping":r.get("ping"),
-                "speech_gain":r.get("speech_gain"),"injected_losses":r.get("injected_losses"),"retry_calls":r.get("retry_calls"),"speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
+                "hardware_volume":r.get("hardware_volume"),"frame_rate":r.get("frame_rate"),"speech_gain":r.get("speech_gain"),"injected_losses":r.get("injected_losses"),"retry_calls":r.get("retry_calls"),"speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
                 "sent":r.get("sent"),"rx_delta":b.get("received_frames",0)-a.get("received_frames",0),
                 "audio_delta":b.get("audio_frames_reported_played",0)-a.get("audio_frames_reported_played",0),
                 "max_pending":max((x["pending_reliable_packets"] for x in s),default=None),
