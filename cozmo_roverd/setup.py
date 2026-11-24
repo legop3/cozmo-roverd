@@ -23,6 +23,7 @@ from threading import Lock
 from urllib.parse import urlsplit
 
 from .config import load, rtsp_target
+from .home_assistant import DockPower, DockPowerError
 
 LOG = logging.getLogger(__name__)
 CONFIG = "/etc/cozmo-roverd.toml"
@@ -450,6 +451,29 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"networks": wifi_scan(data.get("interface", ""))})
             elif self.path == "/api/probe":
                 self.send_json(200, server_probe(str(data.get("url", ""))))
+            elif self.path == "/api/test-dock-switch":
+                with SAVE_LOCK:
+                    existing = read_config(self.config_path).get("channel_reroll", {})
+                requested_url = str(data.get("home_assistant_url", "")).strip()
+                requested_switch = str(data.get("home_assistant_switch", "")).strip()
+                supplied_token = data.get("home_assistant_token", "")
+                if not isinstance(supplied_token, str):
+                    raise ValueError("Invalid Home Assistant token")
+                token = supplied_token.strip()
+                if not token and requested_url == existing.get("home_assistant_url") and requested_switch == existing.get("switch_entity"):
+                    token = existing.get("home_assistant_token", "")
+                # Validate using the same constraints as a saved configuration.
+                from urllib.parse import urlsplit as _urlsplit
+                parts = _urlsplit(requested_url)
+                if (parts.scheme not in ("http", "https") or not parts.hostname or
+                    parts.username or parts.password or parts.path not in ("", "/") or
+                    parts.query or parts.fragment or
+                    not re.fullmatch(r"switch[.][a-z0-9_]+", requested_switch) or not token):
+                    raise ValueError("Enter a valid Home Assistant URL, switch entity and token")
+                status = DockPower(requested_url, token, requested_switch).state()
+                self.send_json(200, {"reachable": True, "switch_state": status,
+                                     "message": "Home Assistant switch is " + status +
+                                                ". No power command was sent."})
             elif self.path == "/api/save":
                 with SAVE_LOCK:
                     saved = validate_payload(data, read_config(self.config_path))
