@@ -96,6 +96,36 @@ async def stop_inspection(_delay):
     raise StopProbe()
 
 
+def test_normal_reconnect_matching_channel_skips_inspection():
+    async def scenario():
+        bridge, power = bridge_case(config(), channels=(6,))
+        async def forbidden_inspection():
+            raise AssertionError("Correct channel must not start an inspection session")
+        bridge._prepare_channel = forbidden_inspection
+        assert await bridge._connect_checked_robot() is True
+        assert bridge.channel_status == "matched"
+        assert bridge.robot.actions == ["normal_connect"]
+        assert power.actions == []
+    asyncio.run(scenario())
+
+
+def test_wrong_channel_still_uses_dock_only_inspection(monkeypatch):
+    async def no_wait(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("cozmo_roverd.main.asyncio.sleep", no_wait)
+
+    async def scenario():
+        bridge, power = bridge_case(config(), channels=(1, 1, 6))
+        assert await bridge._connect_checked_robot() is True
+        assert bridge.robot.actions == [
+            "inspect", "shutdown", "close", "inspect", "promote"
+        ]
+        assert power.actions == ["state", "cycle", "wifi_wait"]
+        assert bridge.channel_status == "matched"
+    asyncio.run(scenario())
+
+
 def test_correct_channel_promotes_only_after_inspection():
     async def scenario():
         bridge, power = bridge_case(config(), channels=(6,))
