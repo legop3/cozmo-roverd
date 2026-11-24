@@ -14,11 +14,11 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("mtu1500-idle", 0, "idle", False),
-    ("mtu1500-codec-standard", 30, "speech", False),
-    ("mtu1500-codec-centered", 30, "speech", False),
-    ("mtu1500-codec-plusone", 30, "speech", False),
-    ("mtu1500-codec-signedmag", 30, "speech", False),
-    ("mtu1500-codec-zero", 30, "speech", False),
+    ("mtu1500-gain-0", 30, "speech", False),
+    ("mtu1500-gain-1", 30, "speech", False),
+    ("mtu1500-gain-10", 30, "speech", False),
+    ("mtu1500-gain-100", 30, "speech", False),
+    ("mtu1500-gain-1000", 30, "speech", False),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
@@ -293,40 +293,40 @@ def worker(name, directory, config, duration):
             pcm = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
                                   "-i","pipe:0","-af","highpass=f=300,lowpass=f=3400" if name.endswith("bandpass") else "anull","-f","s16le","-ac","1","-ar","22320","pipe:1"],
                                  input=wav,capture_output=True,check=True,timeout=20).stdout
-            gain = .015 if name.endswith("lowgain") else .1
-            result["speech_gain"] = gain
-            # Compare byte conventions on the same attenuated speech.
-            pcm += bytes((-len(pcm)) % 1488)
+            # Normalize to an exact peak before encoding. Zero is a negative
+            # control; all other targets are signed 16-bit PCM peak values.
+            target = int(name.rsplit("-",1)[1])
+            pcm += bytes((-len(pcm))%1488)
             samples = struct.unpack("<%dh"%(len(pcm)//2),pcm)
-            scaled = struct.pack("<%dh"%len(samples),*(int(x*gain) for x in samples))
-            codec = name.rsplit("-",1)[1]
-            if codec == "linear":
-                encoded_speech = bytes((int(x*gain)//256+128)&255 for x in samples)
-                silence = 128
-            else:
-                fmt = "alaw" if codec=="alaw" else "mulaw"
-                encoded_speech = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
-                    "-f","s16le","-ar","22320","-ac","1","-i","pipe:0",
-                    "-f",fmt,"pipe:1"],input=scaled,capture_output=True,check=True,timeout=20).stdout
-                if codec=="uncomplemented":
-                    encoded_speech = bytes(x^255 for x in encoded_speech)
-                elif codec=="offset":
-                    encoded_speech = bytes(x^128 for x in encoded_speech)
-                if codec=="centered":
-                    encoded_speech = bytes(128 + (127-(x&127)) * (1 if x&128 else -1) for x in encoded_speech)
-                elif codec=="plusone":
-                    encoded_speech = bytes(min(255,(x^255)+1) for x in encoded_speech)
-                elif codec=="signedmag":
-                    encoded_speech = bytes(((x^255)^128) for x in encoded_speech)
-                elif codec=="zero":
-                    encoded_speech = bytes([255])*len(encoded_speech)
-                silence = {"standard":255,"centered":128,"plusone":1,"signedmag":128,"zero":255}[codec]
-                result["encoded_histogram"] = {str(x):encoded_speech.count(x) for x in set(encoded_speech)}
-                result["encoded_sha256"] = hashlib.sha256(encoded_speech).hexdigest()
-            encoded_speech += bytes([silence])*((-len(encoded_speech))%744)
+            peak = max(map(abs,samples))
+            gain = target/peak if peak else 0
+            values = [round(x*gain) for x in samples]
+            scaled = struct.pack("<%dh"%len(values),*values)
+            encoded_speech = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
+                "-f","s16le","-ar","22320","-ac","1","-i","pipe:0",
+                "-f","mulaw","pipe:1"],input=scaled,capture_output=True,check=True,timeout=20).stdout
+            # Independently decode the final bytes with FFmpeg.
+            decoded = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
+                "-f","mulaw","-ar","22320","-ac","1","-i","pipe:0",
+                "-f","s16le","pipe:1"],input=encoded_speech,capture_output=True,check=True,timeout=20).stdout
+            reconstructed = struct.unpack("<%dh"%(len(decoded)//2),decoded)
+            def rms(v):
+                return round(math.sqrt(sum(x*x for x in v)/len(v)),3)
+            result["speech_gain"] = gain
+            result["gain_verified"] = {
+                "target_peak":target,"source_peak":peak,"source_rms":rms(samples),
+                "scaled_peak":max(map(abs,values)),"scaled_rms":rms(values),
+                "decoded_peak":max(map(abs,reconstructed)),"decoded_rms":rms(reconstructed),
+                "unique_bytes":len(set(encoded_speech)),
+                "sha256":hashlib.sha256(encoded_speech).hexdigest()}
+            print("GAIN CHECK "+json.dumps(result["gain_verified"]),flush=True)
             for offset in range(0,len(encoded_speech),744):
-                speech_packets.append(p.OutputAudio(samples=encoded_speech[offset:offset+744]))
-            result["speech_codec"] = codec
+                payload = encoded_speech[offset:offset+744]
+                packet = p.OutputAudio(samples=payload)
+                if packet.to_bytes()!=payload:
+                    raise RuntimeError("OutputAudio serializer changed payload")
+                speech_packets.append(packet)
+            result["speech_codec"] = "standard"
             if not speech_packets:
                 raise RuntimeError("Speech synthesis produced no audio")
             result["speech_frames"] = len(speech_packets)
@@ -538,7 +538,7 @@ def main():
                 "effective_mtu":r.get("effective_mtu"),"route":r.get("route"),
                 "mtu_change":r.get("mtu_change"),"mtu_restore":r.get("mtu_restore"),
                 "ping":r.get("ping"),
-                "speech_codec":r.get("speech_codec"),"hardware_volume":r.get("hardware_volume"),"frame_rate":r.get("frame_rate"),"speech_gain":r.get("speech_gain"),"injected_losses":r.get("injected_losses"),"retry_calls":r.get("retry_calls"),"speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
+                "gain_verified":r.get("gain_verified"),"speech_codec":r.get("speech_codec"),"hardware_volume":r.get("hardware_volume"),"frame_rate":r.get("frame_rate"),"speech_gain":r.get("speech_gain"),"injected_losses":r.get("injected_losses"),"retry_calls":r.get("retry_calls"),"speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
                 "sent":r.get("sent"),"rx_delta":b.get("received_frames",0)-a.get("received_frames",0),
                 "audio_delta":b.get("audio_frames_reported_played",0)-a.get("audio_frames_reported_played",0),
                 "max_pending":max((x["pending_reliable_packets"] for x in s),default=None),
