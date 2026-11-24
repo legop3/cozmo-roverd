@@ -11,6 +11,10 @@ import time
 
 # Conservative single-cell Li-ion approximate *resting* voltage curve.
 # Calibration against a particular Cozmo battery will improve accuracy.
+# Anki's published typical full-charge time is about 30 minutes:
+# https://support.anki.bot/article/235-how-to-charge-cozmo
+# This is a nominal time model, not measured charging current.
+NOMINAL_CHARGE_SECONDS = 30 * 60
 OCV_POINTS = (
     (3.00, 0), (3.20, 3), (3.30, 6), (3.50, 12), (3.60, 20), (3.70, 30),
     (3.75, 38), (3.80, 48), (3.85, 58), (3.90, 68),
@@ -47,6 +51,8 @@ class VoltageFuelGauge:
         self.learned_sag_v = 0.05
         self.mode = "unknown"
         self._last_at = None
+        self._charging_observed_seconds = 0.0
+        self._docked_idle_seconds = 0.0
         self._rest_since = None
         self._motion_since = None
         self._pre_motion_voltage = None
@@ -92,21 +98,59 @@ class VoltageFuelGauge:
 
     def observe(self, voltage, *, moving=False, charging=False, docked=False, now=None):
         now = time.monotonic() if now is None else now
-        if voltage is None or not math.isfinite(voltage) or not 2.7 <= voltage <= 4.4:
-            return self.soc
-        elapsed = max(0.0, min(60.0, now - self._last_at)) if self._last_at is not None else 0.0
-        self._last_at = now
-
-        # Basic analog noise filtering, independent of packet frequency.
-        if self.filtered_voltage is None:
-            self.filtered_voltage = voltage
-        else:
-            self.filtered_voltage = _approach(
-                self.filtered_voltage, voltage, elapsed, 8.0)
-        v = self.filtered_voltage
         mode = "charging" if charging else "docked" if docked else "moving" if moving else "rest"
         prior = self.mode
+        gap = now - self._last_at if self._last_at is not None else 0.0
+        elapsed = gap if 0 <= gap <= 10 else 0.0
+        self._last_at = now
         self.mode = mode
+        if gap > 10 or gap < 0 or mode not in ("charging", "docked"):
+            self._charging_observed_seconds = 0.0
+            self._docked_idle_seconds = 0.0
+            self._charge_started = None
+            self._last_charge_seen = None
+            self._last_full_detected = None
+        if gap > 10 or gap < 0:
+            self._rest_since = None
+            self._loaded_low_since = None
+            self._loaded_critical_since = None
+            self.rest_confirmed = False
+        if mode == "charging":
+            if prior == "charging":
+                self._charging_observed_seconds += elapsed
+            self._docked_idle_seconds = 0.0
+        elif mode == "docked" and prior == "docked":
+            self._docked_idle_seconds += elapsed
+
+        # Charger readings are observations, not open-circuit voltage.
+        # In particular Cozmo reports about 4.70 V on its charger.
+        measured = voltage is not None and math.isfinite(voltage)
+        usable = measured and 2.7 <= voltage <= 4.4
+        if usable and mode in ("rest", "moving"):
+            if self.filtered_voltage is None or prior in ("charging", "docked"):
+                self.filtered_voltage = voltage
+            else:
+                self.filtered_voltage = _approach(
+                    self.filtered_voltage, voltage, elapsed, 8.0)
+        v = self.filtered_voltage
+        # A saved estimate can be recovered even when the charger voltage
+        # provides no information about the cell's open-circuit voltage.
+        if self.soc is None and self._loaded is not None:
+            if mode in ("charging", "docked") or not usable:
+                self.soc = self._loaded
+                self._loaded = None
+        if self.soc is None and (not usable or (mode == "charging" and voltage > 4.17)):
+            # No defensible initial SOC from elevated charger voltage.
+            # A subsequent rested sample or a persisted estimate can seed it.
+            return self.soc
+        if self.soc is None and v is None:
+            v = voltage
+        if mode in ("rest", "moving") and not usable:
+            self._rest_since = None
+            self._loaded_low_since = None
+            self._loaded_critical_since = None
+            self.rest_confirmed = False
+            return self.soc
         if self.soc is None:
             # Charging voltage is biased high; warm-start saved SOC when present.
             # A first-ever estimate is explicitly uncertain.
@@ -204,23 +248,27 @@ class VoltageFuelGauge:
             self._loaded_low_since = None
             self._loaded_critical_since = None
             self._pre_motion_voltage = None
+            self.rest_confirmed = False
             if charging:
                 if self._charge_started is None:
                     self._charge_started = now
                 self._last_charge_seen = now
                 # Terminal voltage on a charger overstates SOC. Use it only as
                 # an *upper bound*, with a very conservative time limit.
-                upper = ocv_percent(min(4.17, v))
-                if upper > self.soc:
-                    self.soc = min(upper, self.soc + elapsed / 120.0)
+                # No current sensor: the charging rate is a provisional
+                # time-based estimate, not a measured coulomb count.
+                # Do not credit the interval before charging was observed.
+                upper = min(99.0, ocv_percent(voltage)) if measured and voltage >= 2.7 else 99.0
+                if upper > self.soc and prior == "charging":
+                    self.soc = min(upper, self.soc + 100.0 * elapsed / NOMINAL_CHARGE_SECONDS)
             else:
                 # Dock contact alone is not evidence of charging.
                 # Keep the estimate stable rather than jumping with voltage.
-                if (self._last_charge_seen is not None
+                if (self._charging_observed_seconds >= 120
+                        and self._docked_idle_seconds >= 120
+                        and measured and 4.12 <= voltage <= 4.4
                         and self._charge_started is not None
-                        and self._last_charge_seen - self._charge_started >= 120
-                        and now - self._last_charge_seen >= 120
-                        and v >= 4.12 and self._last_full_detected != self._charge_started):
+                        and self._last_full_detected != self._charge_started):
                     # Cozmo ceased charging after a sustained charging period,
                     # while still at near-full terminal voltage.
                     self.soc = max(self.soc, 98.0)
@@ -243,6 +291,9 @@ class VoltageFuelGauge:
             "rest_voltage_v": round(self.rest_voltage, 4) if self.rest_voltage is not None else None,
             "learned_motor_sag_v": round(self.learned_sag_v, 4),
             "method": "voltage_only_state_estimator",
+            "nominal_charge_seconds": NOMINAL_CHARGE_SECONDS,
+            "observed_charging_seconds": round(self._charging_observed_seconds, 2),
+            "observed_docked_idle_seconds": round(self._docked_idle_seconds, 2),
             "rest_confirmed": self.rest_confirmed,
             "low_confirmed": self.low_confirmed,
             "critical_confirmed": self.critical_confirmed,

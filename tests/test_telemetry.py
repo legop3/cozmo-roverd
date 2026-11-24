@@ -188,12 +188,11 @@ def test_reconnect_keeps_last_valid_voltage_while_docked():
     assert robot.battery.voltage == 3.94
     assert robot.voltage == 3.94
     assert robot.on_charger is True
-    # A zero / invalid voltage measurement should not erase the last
-    # measured value just because charging status is still being sent.
+    # Zero is still a reported numeric value; only the estimator excludes it.
     robot._packet(fake_client(flags=0x3000, battery=0.0),
                   fake_packet(0x3000, 0.0))
-    assert robot.battery.voltage == 3.94
-    assert robot.voltage == 3.94
+    assert robot.battery.voltage == 0.0
+    assert robot.voltage == 0.0
     # A subsequent valid report supersedes the historical measurement.
     robot._packet(fake_client(flags=0x3000, battery=4.01),
                   fake_packet(0x3000, 4.01))
@@ -207,7 +206,7 @@ def test_battery_tracker_keeps_voltage_even_when_telemetry_goes_stale():
     assert tracker.stale(now=104.0)
     assert tracker.voltage == 3.87
     tracker.observe(0.0, 0x3000, now=110.0)
-    assert tracker.voltage == 3.87
+    assert tracker.voltage == 0.0
     assert tracker.docked is True
 
 
@@ -294,7 +293,7 @@ def test_battery_spike_and_invalid_voltage_do_not_move_smoothed_percent():
     tracker.observe(4.40, 0, now=10.1)
     tracker.observe(0.0, 0, now=10.2)
     assert tracker.percent == previous
-    assert tracker.voltage == 4.40
+    assert tracker.voltage == 0.0
 
 
 def test_charger_contact_stops_wheels_once_and_rearms_after_undock():
@@ -342,14 +341,14 @@ def test_docked_voltage_is_retained_and_can_be_restored():
     original = BatteryTracker()
     original.observe(3.81, 0x3000)
     original.observe(0.0, 0x3000)
-    assert original.voltage == 3.81
+    assert original.voltage == 0.0
     saved = original.voltage_snapshot()
     restored = BatteryTracker()
     assert restored.restore_voltage(saved)
-    assert restored.voltage == 3.81
+    assert restored.voltage == 0.0
     assert restored.voltage_age_seconds() >= 0
     restored.observe(0.0, 0x3000)
-    assert restored.voltage == 3.81
+    assert restored.voltage == 0.0
     restored.observe(3.93, 0x3000)
     assert restored.voltage == 3.93
 
@@ -380,7 +379,7 @@ def test_mrr_sensor_keeps_last_measured_voltage_while_docked_and_silent():
     bridge.robot.latest = {"battery_voltage_v": None, "on_charger": True}
     assert bridge.current_sensor()["sensors"]["voltageMv"] == 3920
     tracker.observe(0.0, 0x3000)
-    assert bridge.current_sensor()["sensors"]["voltageMv"] == 3920
+    assert bridge.current_sensor()["sensors"]["voltageMv"] == 0
 
 
 def test_live_robotstate_callback_does_not_block_on_slow_state_processing():

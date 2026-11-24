@@ -128,12 +128,15 @@ class BatteryTracker:
         charge_now = bool(flags & CHARGING)
         dock_now = bool(flags & ON_CHARGER) or charge_now
         gauge_voltage = voltage if voltage is not None and 2.7 <= voltage <= 4.4 else None
+        if dock_now or self.raw_docked or self.raw_charging:
+            self.voltages.clear()
         if gauge_voltage is not None:
-            self.voltages.append(gauge_voltage)
+            if not dock_now:
+                self.voltages.append(gauge_voltage)
             self._charge_recovery_voltage = gauge_voltage
             self._charge_recovery_voltage_at = now
         self.gauge.observe(
-            median(self.voltages) if gauge_voltage is not None else None,
+            voltage if dock_now else (median(self.voltages) if gauge_voltage is not None else None),
             moving=bool(moving or flags & MOVING),
             charging=charge_now, docked=dock_now, now=now)
         self._smoothed_voltage = self.gauge.filtered_voltage

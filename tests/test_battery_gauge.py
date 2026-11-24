@@ -26,7 +26,7 @@ def test_charger_voltage_cannot_immediately_set_100_percent():
     g.observe(4.18, now=60, charging=True, docked=True)
     assert g.soc <= before + 1
     tick(g, 4.18, 61, 60, charging=True, docked=True)
-    assert g.soc < before + 2
+    assert before + 3 < g.soc < before + 4
     assert g.mode == "charging"
 
 

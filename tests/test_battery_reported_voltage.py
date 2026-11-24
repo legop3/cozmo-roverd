@@ -64,10 +64,46 @@ def test_nonfinite_voltage_is_not_published_or_persisted():
     assert battery.voltage_snapshot()["last_battery_voltage_v"] == 4.699951171875
 
 
-def test_gauge_rejects_charger_voltage_without_discarding_reported_voltage():
+def test_gauge_interprets_charger_voltage_without_polluting_rest_filter():
     battery = BatteryTracker()
     battery.observe(3.90, 0)
     gauge_voltage = battery.gauge.filtered_voltage
     battery.observe(4.699951171875, CHARGING | ON_CHARGER)
     assert battery.voltage == 4.699951171875
     assert battery.gauge.filtered_voltage == gauge_voltage
+
+
+def test_high_charger_voltage_advances_estimate_without_jumping_to_full():
+    battery = BatteryTracker()
+    battery.observe(3.80, 0, now=0)
+    initial = battery.gauge.soc
+    for second in range(1, 601):
+        battery.observe(4.699951171875, CHARGING | ON_CHARGER, now=second)
+    assert initial + 32 < battery.gauge.soc < initial + 34
+    assert battery.gauge.mode == "charging"
+    assert battery.gauge.filtered_voltage == 3.80
+    assert battery.voltage == 4.699951171875
+    before = battery.gauge.soc
+    battery.observe(4.699951171875, CHARGING | ON_CHARGER, now=3600)
+    assert battery.gauge.soc == before
+    battery.observe(3.90, 0, now=3601)
+    assert battery.gauge.filtered_voltage == 3.90
+
+
+def test_high_charger_voltage_on_cold_start_is_unknown_until_rest():
+    battery = BatteryTracker()
+    battery.observe(4.699951171875, CHARGING | ON_CHARGER, now=0)
+    assert battery.percent is None
+    assert battery.gauge.mode == "charging"
+    battery.observe(3.90, 0, now=1)
+    assert battery.percent == 68
+
+
+def test_high_charger_voltage_full_detection_requires_observed_completion():
+    battery = BatteryTracker()
+    battery.observe(3.80, 0, now=0)
+    for second in range(1, 301):
+        battery.observe(4.699951171875, CHARGING | ON_CHARGER, now=second)
+    for second in range(301, 423):
+        battery.observe(4.20, ON_CHARGER, now=second)
+    assert battery.percent >= 98
