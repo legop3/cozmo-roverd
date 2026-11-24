@@ -16,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -418,10 +419,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"interfaces": interfaces(), "radio": radio_status()})
             elif self.path == "/api/telemetry":
                 try:
-                    item = json.loads(Path("/run/cozmo-roverd/telemetry.json").read_text())
+                    telemetry_path = Path("/run/cozmo-roverd/telemetry.json")
+                    with telemetry_path.open("r") as stream:
+                        item = json.load(stream)
+                        timestamp = os.fstat(stream.fileno()).st_mtime
+                    if not isinstance(item, dict):
+                        raise ValueError("Invalid telemetry snapshot")
+                    # Server-side freshness prevents browser clock skew from
+                    # turning a stale robot snapshot into a live dashboard.
+                    item["snapshot_age_seconds"] = round(max(0, time.time() - timestamp), 2)
                 except (FileNotFoundError, ValueError, OSError):
                     item = {"hardware_connected": False, "mrr_connected": False,
-                            "cozmo": {}, "rover_state": {}, "video": {}}
+                            "cozmo": {}, "rover_state": {}, "video": {},
+                            "snapshot_age_seconds": None}
                 self.send_json(200, item)
             elif self.path == "/api/status":
                 d = public_config(self.config_path)
