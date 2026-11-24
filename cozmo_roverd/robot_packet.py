@@ -96,7 +96,7 @@ class BatteryTracker:
             return False
         voltage = finite_float(data.get("last_battery_voltage_v"))
         saved_at = finite_float(data.get("last_battery_voltage_at"))
-        if (voltage is None or not 2.7 <= voltage <= 4.4 or saved_at is None
+        if (voltage is None or saved_at is None
                 or not 0 <= time.time() - saved_at <= 3600):
             return False
         if self.voltage is None:
@@ -116,19 +116,24 @@ class BatteryTracker:
         flags = int(flags)
         self._last_sample = now
         voltage = finite_float(voltage)
-        valid_voltage = voltage is not None and 2.7 <= voltage <= 4.4
-        if valid_voltage:
-            self._charge_recovery_voltage = voltage
-            self._charge_recovery_voltage_at = now
-            self.voltages.append(voltage)
+        # Report every finite measurement from Cozmo, including elevated
+        # voltage while charging. The public voltage is not the fuel-gauge
+        # input and must never be replaced with a stale lower reading.
+        if voltage is not None:
             self.voltage = voltage
             self._voltage_at_wall = time.time()
-        # Interpret charging and motion before estimating charge. Never use
-        # charger terminal voltage as an instantaneous percentage reading.
+        # Interpret charging and motion before estimating charge. The
+        # approximate resting-voltage model has its own input domain; its
+        # limits never filter the actual telemetry sent to MRR or the UI.
         charge_now = bool(flags & CHARGING)
         dock_now = bool(flags & ON_CHARGER) or charge_now
+        gauge_voltage = voltage if voltage is not None and 2.7 <= voltage <= 4.4 else None
+        if gauge_voltage is not None:
+            self.voltages.append(gauge_voltage)
+            self._charge_recovery_voltage = gauge_voltage
+            self._charge_recovery_voltage_at = now
         self.gauge.observe(
-            median(self.voltages) if valid_voltage else None,
+            median(self.voltages) if gauge_voltage is not None else None,
             moving=bool(moving or flags & MOVING),
             charging=charge_now, docked=dock_now, now=now)
         self._smoothed_voltage = self.gauge.filtered_voltage
@@ -293,7 +298,7 @@ def snapshot_packet(pkt):
     voltage = finite_float(pkt.battery_voltage)
     return {
         "timestamp_ms": int(time.time() * 1000),
-        "battery_voltage_v": voltage if voltage is not None and 2.7 <= voltage <= 4.4 else None,
+        "battery_voltage_v": voltage,
         "on_charger": bool(flags & ON_CHARGER),
         "charging": bool(flags & CHARGING),
         "cliff_detected": bool(flags & CLIFF),
