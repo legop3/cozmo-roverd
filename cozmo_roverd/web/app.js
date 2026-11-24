@@ -115,6 +115,12 @@ function configFromUI() {
     camera_enabled: $("camera-enabled").checked,
     diagnostic_minimal: $("diagnostic-minimal").checked,
     rtsp_url: field("rtsp-url").trim(),
+    channel_reroll_enabled: $("channel-enable").checked,
+    channel_target: Number(field("channel-target")),
+    channel_max_attempts: Number(field("channel-max-attempts")),
+    home_assistant_url: field("ha-url").trim(),
+    home_assistant_switch: field("ha-switch").trim(),
+    home_assistant_token: field("ha-token"),
   };
 }
 function applyConfig(config, options) {
@@ -135,6 +141,15 @@ function applyConfig(config, options) {
   $("diagnostic-minimal").checked = config.diagnostic_minimal === true;
   $("hud").checked = config.hud !== false;
   $("rtsp-url").value = config.rtsp_url;
+  $("channel-enable").checked = config.channel_reroll_enabled === true;
+  $("channel-target").value = String(config.channel_target || 1);
+  $("channel-max-attempts").value = String(config.channel_max_attempts || 6);
+  $("ha-url").value = config.home_assistant_url || "";
+  $("ha-switch").value = config.home_assistant_switch || "";
+  $("ha-token").value = "";
+  $("ha-token-hint").textContent = config.home_assistant_has_token
+    ? "Saved token exists. Leave empty to keep it when the URL and switch stay the same."
+    : "Enter a Home Assistant long-lived access token. It will not be displayed again.";
   selectOptions($("speed"), options.speeds.map(n => ({value:n,label:`${n} mm/s`})), config.max_speed);
   selectOptions($("fps"), options.fps.map(n => ({value:n,label:`${n} FPS`})), config.fps);
   $("fps").disabled = !config.video;
@@ -216,6 +231,13 @@ async function refreshTelemetry() {
     const vid = response.video || {};
     const audio = response.speaker || {};
     const transport = response.transport || {};
+    const reroll = response.channel_reroll || {};
+    const rerollDescription = !reroll.enabled ? "Disabled" :
+      `${reroll.status || "Unknown"} · current ${reroll.actual ?? "?"}, target ${reroll.target ?? "?"}` +
+      (reroll.attempt ? ` · attempt ${reroll.attempt}/${reroll.max_attempts}` : "") +
+      (reroll.retry_in_seconds ? ` · retry in ${reroll.retry_in_seconds}s` : "") +
+      (reroll.error ? ` · ${reroll.error}` : "");
+    $("channel-live").textContent = "Live reroll status: " + rerollDescription;
     const cards = $("telemetry-cards");
     cards.replaceChildren(
       telemetryCard("Battery & charger", [
@@ -262,6 +284,12 @@ async function refreshTelemetry() {
         ["Wire-decoded columns occupied", displayMetric(response.face_decoded_columns)],
         ["Face display error", displayMetric(response.face_last_error)],
       ]),
+      telemetryCard("Wi-Fi channel & dock power", [
+        ["Reroll", rerollDescription],
+        ["Observed Wi-Fi channel", displayMetric(reroll.actual)],
+        ["Requested channel", displayMetric(reroll.target)],
+        ["Remaining cooldown", displayMetric(reroll.retry_in_seconds, " s")],
+      ]),
       telemetryCard("Video & connectivity", [
         ["Cozmo connected", displayMetric(response.hardware_connected)],
         ["Cozmo recovery stage", displayMetric(response.hardware_stage)],
@@ -299,7 +327,7 @@ async function refreshStatus() {
     const running = result.service.active;
     $("status-dot").className = "dot " + (running ? "ok" : result.configured ? "warn" : "bad");
     $("status-text").textContent = running ? "Bridge service running" : (result.configured ? "Bridge service stopped" : "Needs setup");
-    $("setup-pill").textContent = result.configured ? "Setup: saved" : "Setup: incomplete";
+    $("setup-pill").textContent = result.configured ? "Configuration: saved" : "Configuration: incomplete";
     $("service-label").textContent = running ? "Service is running" : `Service is ${result.service.state}`;
     $("start-service").disabled = running || !result.configured;
     $("stop-service").disabled = !running;
@@ -316,6 +344,7 @@ async function save() {
     const result = await api("/api/save", values);
     state.dirty = false;
     $("password").value = "";
+    $("ha-token").value = "";
     $("password-hint").textContent = "Password saved. Leave blank to keep it.";
     $("save-title").textContent = "Settings saved";
     $("save-subtitle").textContent = "Bridge is starting with your configuration.";
@@ -345,6 +374,10 @@ function setupListeners() {
   });
   $("ssid").addEventListener("input", () => { renderNetworks(); markDirty(); });
   $("video").addEventListener("change", () => $("fps").disabled = !$("video").checked);
+  $("channel-enable").addEventListener("change", () => {
+    $("channel-live").textContent = $("channel-enable").checked
+      ? "Reroll configured; save to activate." : "Reroll disabled; save to apply.";
+  });
   $("refresh-adapters").addEventListener("click", () =>
     busy($("refresh-adapters"), () => loadInterfaces(field("adapter-select")), "Checking…"));
   $("enable-wifi").addEventListener("click", () => busy($("enable-wifi"), async () => {
@@ -387,8 +420,8 @@ async function initialize() {
       $("adapter-warning").hidden = false;
       $("adapter-warning").textContent = "Previously selected adapter is missing or is now the host's uplink. Select another adapter.";
     }
-    $("save-title").textContent = config.configured ? "Setup ready" : "Complete the four steps";
-    $("save-subtitle").textContent = config.configured ? "Adjust settings or reconnect whenever you like." : "Choose an adapter, scan, enter Wi-Fi password, and specify MRR.";
+    $("save-title").textContent = config.configured ? "Configuration loaded" : "Configuration incomplete";
+    $("save-subtitle").textContent = config.configured ? "Changes take effect after saving." : "Enter network and server settings to connect.";
   } catch(e) { show(e.message, true); }
   await refreshStatus();
   await refreshTelemetry();
