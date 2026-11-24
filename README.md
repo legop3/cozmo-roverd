@@ -58,10 +58,9 @@ NetworkManager profile and PyCozmo supervisor, and checks the channel again.
 - During a reroll, MRR commands are withheld and the continuous RTSP stream
   displays a readable status slate. The dashboard and telemetry JSON report
   current/target channel, step, attempts, errors and next retry.
-- Attempts are limited per burst (default 6), then pause 10 minutes before
-  trying again if Cozmo remains docked on the wrong channel. Other failures
-  back off 60 seconds. The system continues seeking the configured channel
-  on later checks; it doesn't permanently accept a mismatch.
+- Wrong-channel selections trigger another reroll automatically until Cozmo
+  chooses the configured channel. Only operational errors back off 60 seconds;
+  there is no artificial attempt cap or cooldown for a healthy reroll.
 - The HA power controller always attempts `turn_on` after `turn_off`, and
   waits for Home Assistant to report state transitions. However, an HA
   outage, service termination, or an optimistic switch entity can prevent
