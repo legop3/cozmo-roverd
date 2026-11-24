@@ -278,10 +278,9 @@ class Publisher:
             }
             reroll = data.get("channel_reroll") or {}
             attempt = reroll.get("attempt", 0)
-            limit = reroll.get("max_attempts", 0)
             detail = stage_labels.get(stage, "Adjusting Wi-Fi channel")
-            if attempt and limit:
-                detail = f"{detail} ({attempt}/{limit})"
+            if attempt:
+                detail = f"{detail} (restart {attempt})"
             return ("CHANGING WIFI CHANNEL", detail)
         reroll = data.get("channel_reroll") or {}
         if (not online and reroll.get("status") == "error"
