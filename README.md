@@ -49,14 +49,23 @@ entity's state without toggling power. This only checks the Home Assistant
 state, not the physical power path. Test that the selected switch really cuts
 and restores charger power separately before enabling automation.
 
-The normal hardware supervisor (not a second PyCozmo client) reads the active
-adapter's channel using `iw dev <interface> link`. If it matches, nothing
-happens. If it differs, Cozmo must be **stationary with confirmed charger
-contacts in the current robot session**. Before sending the experimentally
-verified `ShutdownRobot` command, roverd checks the Home Assistant switch
-is on. It then waits for Cozmo's Wi-Fi to disappear, closes PyCozmo, turns
-the dock power off and back on via HA, reconnects with the existing
-NetworkManager profile and PyCozmo supervisor, and checks the channel again.
+MRR registration and the RTSP publisher start independently of Cozmo and
+remain available during Wi-Fi channel selection. The hardware supervisor
+opens a **telemetry-only PyCozmo inspection connection**: the camera,
+normal controls, LEDs, automatic lift maintenance and face updates are not
+started. It reads the associated channel with `iw dev <interface> link` and
+uses fresh RobotState charger-contact telemetry captured during the initial
+handshake. If the channel matches, roverd **promotes that same connection**
+to normal operation, starts the camera, and allows MRR commands.
+
+If the channel is wrong, the robot must be stationary on the dock.
+RoverD sends `ShutdownRobot`, closes the inspection socket, cycles the
+dock power using Home Assistant, reconnects over Wi-Fi and inspects again.
+The RTSP stream displays the appropriate status slate throughout; the
+video does not briefly go live before another reroll. Unavailable Home
+Assistant or missing charger-contact confirmation cannot trigger a shutdown.
+The existing 10-minute MRR offline grace is retained as a rover-list cleanup
+policy, not a limit on retrying.
 
 - Unknown channel, unavailable switch, missing charger contacts or moving
   Cozmo: no shutdown or power cycle.
