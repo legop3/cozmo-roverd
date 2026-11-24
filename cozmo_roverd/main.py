@@ -648,7 +648,10 @@ class Bridge:
                             break  # Close inspection socket and wait for new AP.
                     await asyncio.sleep(1)
             finally:
-                if not verified:
+                # A successful reroll already closed the old PyCozmo socket
+                # before cycling dock power; don't close it a second time.
+                if not verified and (self.robot.ready or
+                                     getattr(self.robot, "client", None) is not None):
                     try:
                         await asyncio.wait_for(
                             asyncio.to_thread(self.robot.close), timeout=8)
