@@ -513,7 +513,6 @@ class Bridge:
             "actual": self.channel_actual,
             "status": self.channel_status,
             "attempt": self.channel_attempts,
-            "max_attempts": self.cfg.channel_max_attempts,
             "retry_in_seconds": (max(0, int(self.channel_next_attempt_at -
                                             time.monotonic()))
                                  if self.channel_next_attempt_at > time.monotonic() else 0),
@@ -541,9 +540,8 @@ class Bridge:
     async def _ensure_channel(self):
         """Run channel checks and power operations under the sole hardware owner.
 
-        Unknown channels, absent dock contact, and unavailable switches never
-        trigger shutdown. Attempts pause for ten minutes after the configured
-        limit and resume afterward, until the desired channel is reached.
+        Keep rerolling a wrong channel while docked. Pause only for operational
+        errors, never because a channel was randomly selected too many times.
         """
         if not self.dock_power:
             return
@@ -564,8 +562,6 @@ class Bridge:
         if now < self.channel_next_attempt_at:
             self.channel_status = "retry_cooldown"
             return
-        if self.channel_attempts >= self.cfg.channel_max_attempts:
-            self.channel_attempts = 0
         try:
             if await asyncio.to_thread(self.dock_power.state) != "on":
                 raise DockPowerError("Dock power is not on")
@@ -634,12 +630,8 @@ class Bridge:
                 LOG.info("Cozmo Wi-Fi channel %s matched target after reroll", self.channel_actual)
             else:
                 self.channel_status = "channel_unknown" if self.channel_actual is None else "mismatch"
-                LOG.info("Cozmo reroll %d/%d: actual=%s target=%s",
-                         self.channel_attempts, self.cfg.channel_max_attempts,
-                         self.channel_actual, self.cfg.channel_target)
-                if self.channel_attempts >= self.cfg.channel_max_attempts:
-                    self.channel_next_attempt_at = time.monotonic() + 600
-                    self.channel_status = "retry_cooldown"
+                LOG.info("Cozmo reroll attempt %d: actual=%s target=%s",
+                         self.channel_attempts, self.channel_actual, self.cfg.channel_target)
             self.channel_cycles += 1
             self.publish_state()
         except Exception as exc:
