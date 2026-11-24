@@ -269,6 +269,11 @@ class Publisher:
         online = data.get("connected", False)
         if stage.startswith("channel_"):
             stage_labels = {
+                "channel_inspecting_dock": "Reading Wi-Fi channel and dock state",
+                "channel_waiting_for_dock": "Place Cozmo on its charging dock",
+                "channel_verified": "Wi-Fi channel verified",
+                "channel_home_assistant_unavailable": "Home Assistant unavailable; retrying",
+                "channel_retry_cooldown": "Waiting after dock-switch failure",
                 "channel_shutting_down": "Shutting down docked Cozmo",
                 "channel_closing_connection": "Closing robot connection",
                 "channel_cycling_dock_power": "Cycling Home Assistant dock power",
