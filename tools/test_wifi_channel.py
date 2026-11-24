@@ -30,8 +30,8 @@ def packet_for(command: str, channel: int) -> tuple[int, bytes]:
     command_id = COMMANDS[command][1]
     payload = {
         "radio": bytes((1, channel)),
-        "wifi-off": b"\\x01",
-        "wifi-on": b"\\x00",
+        "wifi-off": bytes((1,)),
+        "wifi-on": bytes((0,)),
         "sleep": b"",
         "shutdown-legacy": b"",
         "wifi-telemetry": b"",
