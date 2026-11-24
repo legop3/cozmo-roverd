@@ -13,8 +13,8 @@ from . import hardware_tests as h
 # Every condition receives a fresh connection. No automatic escalation after
 # a failed lower-rate prerequisite in the same family.
 CASES = [
-    ("idle-no-animation-state", 0, "idle", False),
     ("idle-animation-state", 0, "idle", False),
+    ("idle-no-animation-state", 0, "idle", False),
     ("silence-once", 0, "silence", False),
     *[(f"silence-{r}hz", r, "silence", False) for r in (1, 5, 10, 15, 30)],
     ("image-once-no-clock", 0, "image", False),
@@ -54,15 +54,30 @@ def worker(name, directory, config, duration):
         if h._service_active():
             raise RuntimeError("Production bridge still running")
         Wifi(load(config)).wait()
-        cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
-        # Client initialization normally starts a controller even with output
-        # disabled, which sends EnableAnimationState. Suppress only for control.
-        if name == "idle-no-animation-state":
-            cli.anim_controller.start = lambda: None
-        observe_socket(cli, wire)
-        cli.start()
-        cli.connect()
-        cli.wait_for_robot(timeout=12)
+        result["connection_attempts"] = []
+        for attempt in range(1, 5):
+            cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
+            if name == "idle-no-animation-state":
+                cli.anim_controller.start = lambda: None
+            observe_socket(cli, wire)
+            entry = {"attempt": attempt}
+            result["connection_attempts"].append(entry)
+            save()
+            try:
+                cli.start()
+                cli.connect()
+                cli.wait_for_robot(timeout=12)
+                entry["status"] = "ready"
+                save()
+                break
+            except Exception as exc:
+                entry["error"] = repr(exc)
+                save()
+                cli.stop()
+                cli = None
+                if type(exc).__name__ not in ("ConnectionTimeout", "Timeout") or attempt == 4:
+                    raise
+                time.sleep(5)
         cli.enable_camera(enable=camera, color=camera)
         time.sleep(3)
         result["status"] = "RUNNING"
@@ -175,10 +190,12 @@ def main():
             h._service_action("stop")
         if h._service_active():
             raise RuntimeError("Could not stop bridge")
+        print("Waiting for previous bridge session to expire...", flush=True)
+        time.sleep(10)
         for name, rate, mode, camera in CASES:
             deps = []
-            if name != "idle-no-animation-state":
-                deps.append("idle-animation-state" if name != "idle-animation-state" else "idle-no-animation-state")
+            if name not in ("idle-no-animation-state", "idle-animation-state"):
+                deps.append("idle-animation-state")
             if name.startswith("silence-") and rate:
                 rates = [0,1,5,10,15,30]
                 prev = rates[rates.index(rate)-1]
@@ -208,7 +225,7 @@ def main():
                 try:
                     proc=subprocess.run([sys.executable,"-m","cozmo_roverd.animation_tests","--worker",name,
                         "--directory",str(d),"--config",args.config,"--duration",str(args.duration)],
-                        stdout=log,stderr=subprocess.STDOUT,timeout=args.duration+60)
+                        stdout=log,stderr=subprocess.STDOUT,timeout=args.duration+150)
                 except subprocess.TimeoutExpired:
                     timedout=True
             try:
@@ -224,6 +241,7 @@ def main():
             b=r.get("after",s[-1] if s else {})
             wire=h._read_records(d/"wire-frames.jsonl")
             summary={"case":name,"status":r["status"],"reason":r.get("reason"),
+                "connection_attempts":r.get("connection_attempts"),
                 "sent":r.get("sent"),"rx_delta":b.get("received_frames",0)-a.get("received_frames",0),
                 "audio_delta":b.get("audio_frames_reported_played",0)-a.get("audio_frames_reported_played",0),
                 "max_pending":max((x["pending_reliable_packets"] for x in s),default=None),
@@ -235,7 +253,18 @@ def main():
             print(json.dumps(summary,default=str),flush=True)
             if r["status"]=="INCONCLUSIVE" or not r.get("before"):
                 print("Worker log tail:",(d/"console.log").read_text(errors="replace")[-2000:],flush=True)
-            time.sleep(2)
+            if not r.get("before"):
+                print("Wire tail:",json.dumps(wire[-5:],default=str),flush=True)
+                for command in (["ip","route","get","172.31.1.1"],
+                                ["ping","-c","5","-W","1","172.31.1.1"],
+                                ["iw","dev"]):
+                    try:
+                        probe=subprocess.run(command,capture_output=True,text=True,timeout=12)
+                        print("Network probe:", " ".join(command),probe.returncode,
+                              probe.stdout,probe.stderr,flush=True)
+                    except (OSError,subprocess.TimeoutExpired) as exc:
+                        print("Network probe error:",repr(exc),flush=True)
+            time.sleep(5)
         print("=== ANIMATION TEST RESULTS ===",flush=True)
         for name,status in results.items():
             print(f"{status:12} {name}",flush=True)
