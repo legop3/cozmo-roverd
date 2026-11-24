@@ -1,123 +1,193 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#101316">
-<title>Cozmo RoverD — Control &amp; Configuration</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101419">
+<title>Cozmo RoverD · Console</title>
 <style>
-:root{color-scheme:dark;--bg:#101316;--panel:#191e22;--field:#11161a;--line:#333d43;--text:#edf1f3;--sub:#aab6be;--accent:#8ad7c6;--warning:#efc17d;--danger:#ef9290}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--text)}
-button,input,select{font:inherit}button{cursor:pointer}button:disabled,input:disabled,select:disabled{opacity:.5;cursor:not-allowed}
-a{color:var(--accent)}h1,h2,h3,p{margin:0}h1{font-size:24px;letter-spacing:-.5px}h2{font-size:17px}h3{font-size:14px}
-.layout{display:grid;grid-template-columns:220px minmax(0,940px);min-height:100vh;justify-content:center}
-aside{position:sticky;top:0;height:100vh;padding:26px 16px;background:#151a1e;border-right:1px solid var(--line)}
-.brand{font-weight:800;font-size:19px;padding:0 10px 24px}.brand small{display:block;color:var(--sub);font-size:11px;font-weight:500;margin-top:3px;letter-spacing:.5px}
-nav{display:grid;gap:3px}nav button{width:100%;text-align:left;border:0;background:transparent;color:var(--sub);padding:11px 12px;border-radius:6px}nav button.active,nav button:hover{background:#283239;color:var(--text)}.side-note{color:var(--sub);font-size:12px;margin:30px 10px}
-main{min-width:0;padding:28px clamp(16px,3vw,44px) 95px}
-.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;padding:0 0 17px;border-bottom:1px solid var(--line);margin-bottom:22px}
-.sub{color:var(--sub);margin-top:5px}.summary{display:flex;flex-wrap:wrap;gap:8px;margin-top:15px}
-.pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:5px;background:var(--panel);padding:7px 10px;color:var(--sub);font-size:12px}
-.dot{display:inline-block;height:8px;width:8px;background:#87939a;border-radius:50%}.dot.ok{background:var(--accent)}.dot.warn{background:var(--warning)}.dot.bad{background:var(--danger)}
-section{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:20px;margin:14px 0}
-.section-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:13px;margin-bottom:16px;gap:12px}.section-head p{color:var(--sub);font-size:12px}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.field{min-width:0}.field.wide{grid-column:1/-1}
-label{display:block;font-weight:600;font-size:12px;margin-bottom:6px;color:#d8e3e7}
-input,select{width:100%;min-height:38px;background:var(--field);border:1px solid #45525a;border-radius:5px;padding:8px 10px;color:var(--text)}
-input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.hint,.muted{color:var(--sub);font-size:12px;margin-top:6px}.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid #65737c;background:#303a40;border-radius:5px;padding:8px 12px;color:var(--text);font-weight:600}
-.btn:hover{background:#39474e}.btn.primary{background:#4a9f90;color:#081b18;border-color:#4a9f90}.btn.danger{color:#ffc6c6;border-color:#8f5a5a}
-.btn.sm{font-size:12px;padding:6px 9px}.btn.ghost{background:transparent}
-.stack{display:grid;gap:8px}.network-list{display:grid;gap:6px;max-height:170px;overflow:auto}.network{display:flex;justify-content:space-between;gap:12px;text-align:left;border:1px solid var(--line);border-radius:5px;background:var(--field);color:var(--text);padding:9px 12px}.network span{color:var(--sub);font-size:12px}.network.selected{border-color:var(--accent)}
-.empty{border:1px dashed var(--line);padding:14px;color:var(--sub)}.password{display:flex;gap:8px}.password input{min-width:0}
-.notice{padding:10px 12px;margin-top:12px;background:#263a3b;border:1px solid #41615f;border-radius:5px;font-size:12px}.notice.warn{background:#403529;border-color:#796548}
-.switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--line);border-radius:5px;background:var(--field)}.switch-row input[type=checkbox]{height:20px;width:20px;min-height:auto;accent-color:var(--accent);flex-shrink:0}
-.colors{display:flex;gap:8px}.color{width:30px;height:30px;border-radius:5px;border:2px solid transparent}.color.selected{outline:2px solid var(--accent);outline-offset:2px}
-.actions,.heading-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
-details{margin-top:12px}summary{cursor:pointer;color:var(--sub)}.log{white-space:pre-wrap;background:var(--field);border:1px solid var(--line);padding:12px;max-height:230px;overflow:auto;font:12px/1.6 ui-monospace,monospace}
-.footer-action{position:sticky;bottom:10px;z-index:3;display:flex;justify-content:space-between;align-items:center;gap:15px;padding:13px 16px;background:#283137f5;border:1px solid #516268;border-radius:7px;box-shadow:0 8px 30px #0007}
-.toast{position:fixed;bottom:20px;right:20px;max-width:460px;background:#304f49;color:white;padding:14px;border-radius:7px;display:none}.toast.error{background:#6b3436}.toast.show{display:block}.spinner{display:inline-block;width:13px;height:13px;border:2px solid #ffffff60;border-top-color:white;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-@media(max-width:800px){.layout{display:block}aside{position:static;height:auto;padding:14px}nav{display:flex;flex-wrap:wrap}nav button{width:auto}.brand{padding-bottom:8px}.side-note{display:none}main{padding:18px 13px 80px}}
-@media(max-width:530px){.grid{grid-template-columns:1fr}.field.wide{grid-column:auto}.section-head,.topbar,.footer-action{flex-direction:column;align-items:stretch}.summary{margin-top:10px}}
+:root{color-scheme:dark;--bg:#101419;--side:#141a20;--panel:#1b232a;--panel2:#202a32;--field:#121a20;--border:#35434c;--text:#eef3f4;--muted:#a6b5bc;--accent:#75d8bc;--amber:#f6c57f;--red:#ff9c9e}
+*{box-sizing:border-box}[hidden]{display:none!important}html{scroll-behavior:auto}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}button,input,select{font:inherit}button{cursor:pointer}button:disabled,input:disabled,select:disabled{opacity:.48;cursor:not-allowed}h1,h2,h3,p{margin:0}h1{font-size:25px;font-weight:720;letter-spacing:-.7px}h2{font-size:18px;letter-spacing:-.25px}h3{font-size:14px}strong{font-weight:650}a{color:var(--accent)}.muted,.hint{color:var(--muted)}.hint{font-size:12px;margin-top:5px}
+.shell{display:grid;grid-template-columns:224px minmax(0,1fr);min-height:100vh;max-width:1540px;margin:0 auto}
+.sidebar{position:sticky;top:0;height:100vh;background:var(--side);border-right:1px solid var(--border);padding:26px 14px;display:flex;flex-direction:column;gap:26px}
+.brand{padding:0 11px}.brand-name{font-weight:790;font-size:20px;letter-spacing:-.7px}.brand-sub{font-size:11px;letter-spacing:1.6px;font-weight:650;color:var(--muted);margin-top:2px}
+.nav{display:grid;gap:3px}.nav button{width:100%;text-align:left;color:var(--muted);background:transparent;border:1px solid transparent;border-radius:7px;padding:11px 12px;display:flex;align-items:center;gap:12px;font-weight:560}.nav button:hover{background:#25313a;color:var(--text)}.nav button.active{background:#253c3b;border-color:#3c6861;color:var(--text)}.nav .nav-icon{font-size:16px;line-height:1;width:19px;text-align:center;color:#92acae}.nav button.active .nav-icon{color:var(--accent)}
+.side-foot{margin-top:auto;border-top:1px solid var(--border);padding:16px 11px 0;color:var(--muted);font-size:12px}.side-foot b{color:var(--text);font-weight:570}
+.workspace{min-width:0;padding:29px clamp(18px,4vw,58px) 100px;max-width:1130px;width:100%;margin:0 auto}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:18px;padding-bottom:24px;border-bottom:1px solid var(--border);margin-bottom:22px}.subtitle{color:var(--muted);font-size:13px;margin-top:4px}
+.header-status{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.chip{font-size:12px;display:inline-flex;align-items:center;gap:7px;background:var(--panel);color:var(--muted);border:1px solid var(--border);padding:7px 10px;border-radius:6px;white-space:nowrap}.dot{display:inline-block;height:8px;width:8px;border-radius:50%;background:#8c9ba4}.dot.ok{background:var(--accent)}.dot.warn{background:var(--amber)}.dot.bad{background:var(--red)}
+.page{animation:appear .13s ease-out}@keyframes appear{from{opacity:.7}to{opacity:1}}.page-header{margin-bottom:22px}.page-header p{color:var(--muted);margin-top:6px;max-width:680px}.page-heading{font-size:20px;font-weight:700;letter-spacing:-.3px}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:9px;margin-bottom:17px;overflow:hidden}.panel-header{padding:17px 19px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:14px}.panel-header p{font-size:12px;color:var(--muted);margin-top:3px}.panel-content{padding:19px}.panel-content.compact{padding:14px 19px}.stack{display:grid;gap:15px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:17px}.field{min-width:0}.wide{grid-column:1/-1}label{display:block;margin-bottom:6px;color:#dbe5e9;font-size:12px;font-weight:670}
+input:not([type=checkbox]),select{width:100%;min-width:0;min-height:40px;background:var(--field);color:var(--text);border:1px solid #4a5a64;border-radius:6px;padding:9px 11px;outline:0}input:focus-visible,select:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input::placeholder{color:#758994}.password{display:flex;gap:9px}.password input{flex:1}.inline-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px}.btn{border:1px solid #5b6d76;background:#293741;color:var(--text);border-radius:6px;padding:8px 13px;min-height:38px;display:inline-flex;justify-content:center;align-items:center;gap:7px;font-weight:620;text-decoration:none}.btn:hover{background:#34464f}.btn.sm{min-height:32px;padding:6px 10px;font-size:12px}.btn.primary{background:var(--accent);border-color:var(--accent);color:#10251f}.btn.primary:hover{background:#98e8d1}.btn.danger{border-color:#89555a;color:#ffb1b2}.btn.ghost{background:transparent}
+.switch-row{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--field);border:1px solid var(--border);border-radius:7px;padding:13px 15px}.switch-row p{font-size:12px;color:var(--muted);margin-top:4px}.switch-row input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent);flex-shrink:0}
+.notice{border:1px solid #3d6a61;border-radius:7px;padding:11px 13px;background:#1d3733;color:#d1f1e8;font-size:13px}.notice.warn{background:#3a3024;border-color:#785d38;color:#f7d9a7}.notice.error{background:#43292d;border-color:#89555a;color:#ffc0c2}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;margin-bottom:18px}.stat{border:1px solid var(--border);border-radius:9px;background:var(--panel);padding:16px;min-width:0}.stat-label{font-size:12px;color:var(--muted);margin-bottom:8px}.stat-value{font-size:21px;font-weight:720;letter-spacing:-.4px;overflow-wrap:anywhere}.stat-sub{margin-top:6px;color:var(--muted);font-size:12px}.state-headline{display:flex;gap:15px;align-items:flex-start}.state-indicator{width:13px;height:13px;border-radius:50%;background:#82959e;flex:none;margin-top:8px}.state-indicator.ok{background:var(--accent)}.state-indicator.bad{background:var(--red)}.state-indicator.warn{background:var(--amber)}.state-headline h2{font-size:21px}.status-detail{color:var(--muted);margin-top:6px;max-width:650px}.status-metadata{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}.status-metadata span{border:1px solid var(--border);border-radius:5px;padding:5px 9px;color:var(--muted);font-size:12px}
+.keyvalues{display:grid;grid-template-columns:minmax(100px,1fr) minmax(0,1.6fr);gap:9px 12px;font-size:13px}.keyvalues dt{color:var(--muted)}.keyvalues dd{margin:0;overflow-wrap:anywhere;text-align:right}.section-note{color:var(--muted);font-size:12px;padding-top:12px}
+.network-list{display:grid;gap:6px;max-height:190px;overflow:auto}.network{width:100%;display:flex;justify-content:space-between;text-align:left;align-items:center;gap:12px;background:var(--field);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:10px 12px}.network:hover{border-color:var(--accent)}.network.selected{border-color:var(--accent);background:#243e3a}.network span{font-size:12px;color:var(--muted)}.empty{border:1px dashed var(--border);padding:14px;border-radius:6px;color:var(--muted);font-size:13px}
+.colors{display:flex;flex-wrap:wrap;gap:9px}.color{height:31px;width:31px;border:2px solid transparent;border-radius:6px}.color.selected{outline:2px solid var(--accent);outline-offset:2px}
+details{border-top:1px solid var(--border);padding-top:13px;margin-top:17px}summary{cursor:pointer;font-weight:630;font-size:13px;color:#dce8e8}details>div{padding-top:13px}.log{max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--field);border:1px solid var(--border);border-radius:6px;padding:15px;font:12px/1.65 ui-monospace,SFMono-Regular,monospace;color:#bcd0d6}.diag-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.diag-card{border:1px solid var(--border);background:var(--panel);border-radius:8px;padding:16px}.diag-card h3{padding-bottom:11px;border-bottom:1px solid var(--border);margin-bottom:13px}.diag-card dl{margin:0}.diag-card .keyvalues{gap:7px 10px;font-size:12px}
+.footer-action{position:sticky;bottom:12px;z-index:3;background:#26343aee;backdrop-filter:blur(12px);border:1px solid #53666c;box-shadow:0 10px 38px #0007;border-radius:9px;padding:13px 16px;display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:28px}.footer-action strong{font-size:13px}.footer-action p{color:var(--muted);font-size:12px;margin-top:3px}.toast{position:fixed;z-index:8;right:20px;bottom:20px;background:#255247;color:white;border:1px solid #477b70;padding:13px 16px;border-radius:7px;max-width:min(470px,calc(100vw - 40px));box-shadow:0 8px 30px #0008;display:none}.toast.error{background:#613037;border-color:#a35a60}.toast.show{display:block}.spinner{display:inline-block;width:13px;height:13px;border:2px solid #ffffff55;border-top-color:white;border-radius:50%;animation:spin .75s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:1100px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:780px){.shell{display:block}.sidebar{position:sticky;z-index:5;top:0;height:auto;padding:10px 14px;gap:10px;border-right:0;border-bottom:1px solid var(--border)}.brand{display:flex;gap:12px;align-items:baseline;padding:0}.brand-name{font-size:16px}.brand-sub{font-size:10px}.nav{display:flex;overflow-x:auto}.nav button{white-space:nowrap;padding:8px 10px}.side-foot{display:none}.workspace{padding:22px 14px 90px}.topbar{flex-wrap:wrap}.diag-grid{grid-template-columns:1fr}}
+@media(max-width:500px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stat-value{font-size:18px}.panel-header{align-items:flex-start;flex-wrap:wrap}.footer-action{align-items:stretch;flex-direction:column}.footer-action button{width:100%}.header-status{width:100%}}
 </style>
 <script src="/app.js" defer></script>
 </head>
 <body>
-<div class="layout">
-<aside>
-  <div class="brand">Cozmo RoverD<small>OPERATIONS CONSOLE</small></div>
-  <nav aria-label="Dashboard sections">
-    <button type="button" data-nav="monitor" class="active">Overview &amp; diagnostics</button>
-    <button type="button" data-nav="adapter">Cozmo connection</button>
-    <button type="button" data-nav="channel">Wi-Fi channel &amp; dock power</button>
-    <button type="button" data-nav="server">MRR connection</button>
-    <button type="button" data-nav="options">Rover &amp; video</button>
+<div class="shell">
+<aside class="sidebar">
+  <div class="brand"><div class="brand-name">Cozmo RoverD</div><div class="brand-sub">OPERATIONS CONSOLE</div></div>
+  <nav class="nav" aria-label="Console pages">
+    <button type="button" data-nav="monitor" class="active" aria-current="page"><span class="nav-icon">◉</span>Overview</button>
+    <button type="button" data-nav="adapter"><span class="nav-icon">⌁</span>Connections</button>
+    <button type="button" data-nav="channel"><span class="nav-icon">↻</span>Dock automation</button>
+    <button type="button" data-nav="options"><span class="nav-icon">⚙</span>Rover &amp; video</button>
+    <button type="button" data-nav="diagnostics"><span class="nav-icon">≡</span>Diagnostics</button>
   </nav>
-  <p class="side-note">Persistent headless bridge. Settings are independent of Cozmo being online.</p>
+  <div class="side-foot"><b id="side-name">Cozmo</b><div id="side-location">Host status loading…</div></div>
 </aside>
-<main>
-<header class="topbar"><div><h1>Rover control &amp; settings</h1><p class="sub">Connection status, hardware automation and configuration in one place.</p></div></header>
-<div class="summary" aria-live="polite">
-  <span class="pill"><span class="dot" id="status-dot"></span><span id="status-text">Checking bridge…</span></span>
-  <span class="pill" id="adapter-pill">Wi-Fi: checking…</span>
-  <span class="pill" id="setup-pill">Configuration: checking…</span>
-</div>
-<section id="monitor">
-  <div class="section-head"><div><h2>Live status</h2><p>Read-only hardware status and diagnostics</p></div><button class="btn sm" id="refresh-status" type="button">Refresh</button></div>
-  <div class="heading-row"><strong id="service-label">Checking service…</strong><span class="hint" id="telemetry-age">Waiting for telemetry…</span></div>
-  <div class="grid" id="telemetry-cards" aria-live="off"><div class="empty">Waiting for robot telemetry…</div></div>
-  <div class="actions" style="margin-top:16px"><button class="btn" id="start-service" type="button">Start bridge</button><button class="btn danger" id="stop-service" type="button">Stop bridge</button></div>
-  <details><summary>Raw hardware telemetry</summary><pre class="log" id="telemetry-raw">Waiting…</pre></details>
-  <details><summary>Recent service log</summary><pre class="log" id="logs">Loading…</pre></details>
-</section>
-<section id="adapter">
-  <div class="section-head"><div><h2>Cozmo Wi-Fi</h2><p>Dedicated wireless interface and network credentials</p></div><button class="btn sm" id="refresh-adapters" type="button">Refresh adapters</button></div>
-  <div class="field"><label for="adapter-select">Wi-Fi adapter (host uplink protected)</label><select id="adapter-select"></select></div>
-  <div id="adapter-warning" class="notice warn" hidden></div>
-  <div id="radio-alert" class="notice warn" hidden><span id="radio-explanation"></span> <button class="btn sm" id="enable-wifi" type="button">Enable Wi-Fi</button></div>
-  <div id="cozmo" style="margin-top:16px">
-    <div class="heading-row"><strong>Robot network</strong><button class="btn sm" id="scan" type="button">Scan</button></div>
-    <div class="network-list" id="networks"><div class="empty">Select an adapter to scan nearby Cozmo networks.</div></div>
-    <div class="grid" style="margin-top:14px">
-      <div class="field"><label for="ssid">SSID</label><input id="ssid" placeholder="Cozmo_XXXXXX" spellcheck="false"></div>
-      <div class="field"><label for="password">Wi-Fi password</label><div class="password"><input type="password" id="password" autocomplete="new-password"><button class="btn sm" id="reveal" type="button">Show</button></div><p class="hint" id="password-hint">Leave blank to preserve saved credentials.</p></div>
+<main class="workspace">
+  <header class="topbar">
+    <div><h1 id="page-title">Overview</h1><p class="subtitle" id="page-subtitle">Live bridge and robot health</p></div>
+    <div class="header-status">
+      <span class="chip"><span class="dot" id="status-dot"></span><span id="status-text">Checking bridge…</span></span>
+      <span class="chip" id="adapter-pill">Wi-Fi: —</span>
+      <span class="chip" id="setup-pill">Configuration: —</span>
     </div>
+  </header>
+
+  <section id="monitor" class="page" data-page>
+    <div class="panel">
+      <div class="panel-content">
+        <div class="state-headline"><span class="state-indicator" id="robot-indicator"></span><div>
+          <h2 id="robot-headline">Checking Cozmo…</h2>
+          <p class="status-detail" id="robot-stage">Waiting for hardware status.</p>
+        </div></div>
+        <div class="status-metadata"><span id="bridge-connection">Bridge: —</span><span id="mrr-connection">MRR: —</span><span id="video-connection">Video: —</span></div>
+      </div>
+    </div>
+    <div class="stats" aria-label="Current robot values">
+      <div class="stat"><div class="stat-label">Battery estimate</div><div class="stat-value" id="overview-battery">—</div><div class="stat-sub" id="overview-voltage">Voltage unavailable</div></div>
+      <div class="stat"><div class="stat-label">Charging dock</div><div class="stat-value" id="overview-dock">—</div><div class="stat-sub" id="overview-charging">No contact data</div></div>
+      <div class="stat"><div class="stat-label">Wi-Fi channel</div><div class="stat-value" id="overview-channel">—</div><div class="stat-sub" id="overview-target">Channel monitoring inactive</div></div>
+      <div class="stat"><div class="stat-label">Camera input</div><div class="stat-value" id="overview-fps">—</div><div class="stat-sub" id="overview-camera">Waiting for video data</div></div>
+    </div>
+    <div class="grid">
+      <div class="panel"><div class="panel-header"><div><h3>Connections</h3><p>Network and server status</p></div><button type="button" class="btn sm" data-go="adapter">Configure</button></div>
+        <div class="panel-content"><dl class="keyvalues">
+          <dt>Wi-Fi device</dt><dd id="summary-adapter">—</dd>
+          <dt>Robot Wi-Fi</dt><dd id="summary-wifi">—</dd>
+          <dt>MRR server</dt><dd id="summary-server">—</dd>
+        </dl></div></div>
+      <div class="panel"><div class="panel-header"><div><h3>Channel automation</h3><p>Power-cycle only when safely docked</p></div><button type="button" class="btn sm" data-go="channel">Configure</button></div>
+        <div class="panel-content"><dl class="keyvalues">
+          <dt>Mode</dt><dd id="summary-reroll">—</dd>
+          <dt>Progress</dt><dd id="summary-reroll-progress">—</dd>
+          <dt>Dock switch</dt><dd id="summary-reroll-switch">—</dd>
+        </dl></div></div>
+    </div>
+    <div class="inline-actions" style="margin-top:6px">
+      <button type="button" id="refresh-status" class="btn sm">Refresh status</button>
+      <button type="button" class="btn sm ghost" data-go="diagnostics">Detailed diagnostics</button>
+      <span class="hint" id="telemetry-age">Waiting for robot telemetry…</span>
+    </div>
+  </section>
+
+  <section id="adapter" class="page" data-page hidden>
+    <div class="page-header"><h2 class="page-heading">Connections</h2><p>The dedicated Cozmo Wi-Fi adapter and MRR server are independent. Changing either requires saving and restarting the bridge.</p></div>
+    <div class="panel"><div class="panel-header"><div><h3>Cozmo Wi-Fi</h3><p>Dedicated robot network; your host uplink stays protected</p></div><button class="btn sm" type="button" id="refresh-adapters">Refresh devices</button></div>
+      <div class="panel-content stack">
+        <div class="field"><label for="adapter-select">Dedicated Wi-Fi interface</label><select id="adapter-select"></select></div>
+        <div id="adapter-warning" class="notice warn" hidden></div>
+        <div id="radio-alert" class="notice warn" hidden><span id="radio-explanation"></span> <button class="btn sm" id="enable-wifi" type="button">Enable Wi-Fi</button></div>
+        <div class="grid">
+          <div class="field"><label for="ssid">Robot network name (SSID)</label><input id="ssid" autocomplete="off" spellcheck="false" placeholder="Cozmo_XXXXXX"></div>
+          <div class="field"><label for="password">Robot Wi-Fi password</label><div class="password"><input id="password" type="password" autocomplete="new-password"><button class="btn sm" id="reveal" type="button">Show</button></div><p id="password-hint" class="hint">Leave blank to keep saved password.</p></div>
+        </div>
+        <details id="wifi-discovery">
+          <summary>Find another Cozmo network</summary>
+          <div class="stack"><div class="inline-actions"><button type="button" class="btn sm" id="scan">Scan networks</button><span class="hint">Only needed when choosing or changing Cozmo's network.</span></div>
+            <div class="network-list" id="networks"><div class="empty">Scan to see available robot networks.</div></div></div>
+        </details>
+      </div>
+    </div>
+    <div class="panel" id="server"><div class="panel-header"><div><h3>MultiRoombaRover server</h3><p>Remote rover registration and stream destination</p></div></div>
+      <div class="panel-content stack">
+        <div class="field"><label for="server-url">MRR WebSocket address</label><input id="server-url" spellcheck="false" placeholder="ws://host:8080/rover"></div>
+        <div class="inline-actions"><button class="btn sm" type="button" id="test-server">Test server reachability</button><span class="hint" id="probe-result" role="status"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="channel" class="page" data-page hidden>
+    <div class="page-header"><h2 class="page-heading">Dock automation</h2><p>Keep Cozmo on the selected Wi-Fi channel by restarting it through a Home Assistant power switch, only when safely docked.</p></div>
+    <div class="panel"><div class="panel-header"><div><h3>Channel management</h3><p>Current radio state and desired behavior</p></div></div>
+      <div class="panel-content stack">
+        <div id="channel-live" class="notice" role="status">Waiting for live channel status…</div>
+        <label class="switch-row" for="channel-enable"><span><strong>Automatically correct the Wi-Fi channel</strong><p>If the channel differs, restart Cozmo while it is safely parked on the dock.</p></span><input type="checkbox" id="channel-enable"></label>
+        <div class="field" style="max-width:280px"><label for="channel-target">Target Wi-Fi channel</label><select id="channel-target"><option value="1">Channel 1</option><option value="6">Channel 6</option><option value="11">Channel 11</option></select></div>
+        <p class="hint">Wrong channel → shutdown → cycle dock power → reconnect → check again. Repeats until matched; operational failures back off before retrying.</p>
+      </div>
+    </div>
+    <div class="panel"><div class="panel-header"><div><h3>Home Assistant dock power</h3><p>Controls the charging dock, not Cozmo's network adapter</p></div></div>
+      <div class="panel-content stack">
+        <div class="grid">
+          <div class="field"><label for="ha-url">Home Assistant address</label><input id="ha-url" placeholder="http://homeassistant.local:8123" spellcheck="false"></div>
+          <div class="field"><label for="ha-switch">Switch entity</label><input id="ha-switch" spellcheck="false" placeholder="switch.cozmo_dock"></div>
+          <div class="field wide"><label for="ha-token">Long-lived access token</label><input id="ha-token" type="password" autocomplete="new-password" placeholder="Leave blank to preserve the saved token"><p id="ha-token-hint" class="hint">Saved token is never returned to the browser.</p></div>
+        </div>
+        <div class="inline-actions"><button type="button" class="btn sm" id="test-dock-switch">Check Home Assistant switch</button><span class="hint" id="test-dock-result" role="status"></span></div>
+        <div class="notice warn">The check reads the entity's state; it does not toggle power or verify the physical dock wiring. Configure an independent power-restoration failsafe in Home Assistant.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="options" class="page" data-page hidden>
+    <div class="page-header"><h2 class="page-heading">Rover &amp; video</h2><p>Rover identity and behavior are separate from video transmission and publishing.</p></div>
+    <div class="panel"><div class="panel-header"><div><h3>Rover identity</h3><p>How Cozmo appears on the MRR server</p></div></div>
+      <div class="panel-content"><div class="grid">
+        <div class="field"><label for="rover-name">Rover name</label><input id="rover-name" maxlength="48"></div>
+        <div class="field"><label for="description">Description</label><input id="description" maxlength="100"></div>
+        <div class="field"><label for="speed">Maximum drive speed</label><select id="speed"></select></div>
+        <div class="field"><label for="color-choices">Rover color</label><div class="colors" id="color-choices" role="group" aria-label="Rover color"></div></div>
+        <div class="field wide"><label class="switch-row" for="private"><span><strong>Private rover</strong><p>Use MRR's private rover mode.</p></span><input type="checkbox" id="private"></label></div>
+      </div></div>
+    </div>
+    <div class="panel"><div class="panel-header"><div><h3>Camera &amp; streaming</h3><p>Video output and Cozmo's camera are independently controlled</p></div></div>
+      <div class="panel-content stack">
+        <label class="switch-row" for="video"><span><strong>Publish RTSP video</strong><p>Keep the stream and its disconnected-status screen running.</p></span><input type="checkbox" id="video"></label>
+        <label class="switch-row" for="camera-enabled"><span><strong>Enable Cozmo camera</strong><p>Receive frames from the robot; driving and telemetry still work when disabled.</p></span><input type="checkbox" id="camera-enabled"></label>
+        <label class="switch-row" for="hud"><span><strong>Overlay video telemetry</strong><p>Display compact orientation and lift indicators on camera frames.</p></span><input type="checkbox" id="hud"></label>
+        <div class="field" style="max-width:280px"><label for="fps">Published frame rate</label><select id="fps"></select></div>
+        <details><summary>Advanced RTSP destination</summary><div class="field"><label for="rtsp-url">Override publishing URL</label><input id="rtsp-url" spellcheck="false" placeholder="Automatic from MRR server"><p class="hint">Leave blank to use the MRR hostname and default stream path.</p></div></details>
+      </div>
+    </div>
+    <div class="panel"><div class="panel-header"><div><h3>Troubleshooting mode</h3><p>Only change this when diagnosing robot transport behavior</p></div></div>
+      <div class="panel-content"><label class="switch-row" for="diagnostic-minimal"><span><strong>Minimal command traffic</strong><p>Suppress optional periodic camera-exposure, dock/lift maintenance and LED commands.</p></span><input type="checkbox" id="diagnostic-minimal"></label></div>
+    </div>
+  </section>
+
+  <section id="diagnostics" class="page" data-page hidden>
+    <div class="page-header"><h2 class="page-heading">Diagnostics</h2><p>Detailed measurements, last failures, protocol counters and service logs. The live Overview intentionally shows only operational status.</p></div>
+    <div class="panel"><div class="panel-header"><div><h3>Robot telemetry</h3><p id="diagnostic-update">Waiting for hardware data…</p></div><button type="button" class="btn sm" id="refresh-diagnostics">Refresh</button></div>
+      <div class="panel-content"><div class="diag-grid" id="telemetry-cards"><div class="empty">Telemetry unavailable.</div></div></div>
+    </div>
+    <div class="panel"><div class="panel-header"><div><h3>Service</h3><p id="service-label">Checking service…</p></div></div>
+      <div class="panel-content">
+        <div class="inline-actions"><button id="start-service" type="button" class="btn sm">Start bridge</button><button id="stop-service" type="button" class="btn sm danger">Stop bridge</button></div>
+        <details open><summary>Recent service log</summary><div><pre id="logs" class="log">Loading…</pre></div></details>
+        <details><summary>Full telemetry JSON</summary><div><pre id="telemetry-raw" class="log">Waiting…</pre></div></details>
+      </div>
+    </div>
+  </section>
+
+  <div class="footer-action" id="save-bar" hidden>
+    <div><strong id="save-title">Unsaved changes</strong><p id="save-subtitle">Saving restarts the bridge to apply changes.</p></div>
+    <div class="inline-actions"><button class="btn ghost" id="discard" type="button">Discard edits</button><button class="btn primary" id="save" type="button">Save &amp; restart bridge</button></div>
   </div>
-</section>
-<section id="channel">
-  <div class="section-head"><div><h2>Wi-Fi channel reroll</h2><p>Automatic dock-only channel selection using a Home Assistant power switch</p></div></div>
-  <div class="field wide switch-row"><div><strong>Enable automatic channel reroll</strong><p class="hint">Only acts when Cozmo is stationary and confirmed on its charging contacts. Disabled unless configured.</p></div><input type="checkbox" id="channel-enable" aria-label="Enable channel reroll"></div>
-  <div class="notice" id="channel-live" role="status">Waiting for channel status…</div>
-  <div class="grid" style="margin-top:14px">
-    <div class="field"><label for="channel-target">Required Wi-Fi channel</label><select id="channel-target"><option value="1">Channel 1</option><option value="6">Channel 6</option><option value="11">Channel 11</option></select></div>
-    <div class="field wide"><label for="ha-url">Home Assistant URL</label><input id="ha-url" placeholder="http://homeassistant.local:8123" spellcheck="false"></div>
-    <div class="field wide"><label for="ha-switch">Dock power switch entity</label><input id="ha-switch" placeholder="switch.cozmo_dock" spellcheck="false"><p class="hint">Must physically interrupt dock power. The underlying switch hardware is managed by Home Assistant.</p></div>
-    <div class="field wide"><label for="ha-token">Home Assistant long-lived access token</label><input id="ha-token" type="password" autocomplete="new-password" placeholder="Leave empty to keep existing token"><p class="hint" id="ha-token-hint">Stored in the protected roverd configuration; not returned to the browser.</p></div>
-  </div>
-  <div class="actions" style="justify-content:flex-start;margin:14px 0 8px"><button class="btn sm" id="test-dock-switch" type="button">Test Home Assistant switch (read-only)</button><span id="test-dock-result" class="hint" role="status"></span></div>
-  <p class="hint">Safety: checks actual channel, confirms docking and Home Assistant switch state before shutdown. Restores dock power after each attempt. Failed attempts pause before retrying. Normal driving is never interrupted while undocked.</p>
-</section>
-<section id="server">
-  <div class="section-head"><div><h2>MRR server</h2><p>Rover registration and transport destination</p></div></div>
-  <div class="grid"><div class="field wide"><label for="server-url">MRR WebSocket URL</label><input id="server-url" placeholder="ws://server:8080/rover" spellcheck="false"></div></div>
-  <div class="actions" style="justify-content:flex-start;margin:12px 0 0"><button class="btn sm" id="test-server" type="button">Check connection</button><span class="hint" id="probe-result" role="status"></span></div>
-</section>
-<section id="options">
-  <div class="section-head"><div><h2>Rover &amp; video</h2><p>Identity, controls and streaming behavior</p></div></div>
-  <div class="grid">
-    <div class="field"><label for="rover-name">Rover name</label><input id="rover-name" maxlength="48"></div>
-    <div class="field"><label for="description">Description</label><input id="description" maxlength="100"></div>
-    <div class="field wide"><label>Rover color</label><div class="colors" id="color-choices"></div></div>
-    <div class="field"><label for="speed">Maximum wheel speed</label><select id="speed"></select></div>
-    <div class="field"><label for="fps">RTSP FPS</label><select id="fps"></select></div>
-    <div class="field wide switch-row"><div><strong>Private rover</strong></div><input type="checkbox" id="private"></div>
-    <div class="field wide switch-row"><div><strong>RTSP camera stream</strong><p class="hint">Keep a disconnected-video status slate visible when Cozmo is restarting.</p></div><input type="checkbox" id="video"></div>
-    <div class="field wide switch-row"><div><strong>Camera transmission</strong><p class="hint">Enable camera frames from Cozmo.</p></div><input type="checkbox" id="camera-enabled"></div>
-    <div class="field wide switch-row"><div><strong>Telemetry HUD</strong></div><input type="checkbox" id="hud"></div>
-    <div class="field wide switch-row"><div><strong>Minimal traffic diagnostic mode</strong><p class="hint">Disable optional periodic robot maintenance while troubleshooting.</p></div><input type="checkbox" id="diagnostic-minimal"></div>
-    <div class="field wide"><label for="rtsp-url">Optional RTSP URL override</label><input id="rtsp-url" placeholder="Auto from MRR server" spellcheck="false"></div>
-  </div>
-</section>
-<div class="footer-action"><div><strong id="save-title">Ready</strong><p class="muted" id="save-subtitle">Save configuration and restart the bridge.</p></div><button class="btn primary" id="save" type="button">Save configuration</button></div>
-</main></div>
-<div class="toast" id="toast" role="status"></div>
-</body></html>
+</main>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
