@@ -97,7 +97,7 @@ class Bridge:
         if battery.voltage is None and battery.docked is None:
             return state(charging=None, docked=None,
                          headlight=self.robot.headlight, voltage=None,
-                         driving=self.robot.ready and not self._reroll_active,
+                         driving=self.hardware_ready.is_set(),
                          dock_assist=self.robot.dock_assist,
                          docking_phase=self.robot.docking_phase)
         return state(charging=battery.charging,
@@ -105,7 +105,7 @@ class Bridge:
                      headlight=self.robot.headlight,
                      voltage=battery.voltage,
                      battery=battery.battery_state(),
-                     driving=self.robot.ready,
+                     driving=self.hardware_ready.is_set(),
                      dock_assist=self.robot.dock_assist,
                      docking_phase=self.robot.docking_phase)
 
@@ -130,7 +130,10 @@ class Bridge:
         pass
 
     def handle_frame(self, image):
-        # No image analysis in the PyCozmo camera callback.
+        # Never leak preflight frames into RTSP or run brightness analysis
+        # until the hardware supervisor has promoted the verified connection.
+        if not self.hardware_ready.is_set():
+            return
         if self.publisher:
             self.publisher.submit(image)
         self.robot.queue_camera_analysis(image)
@@ -277,7 +280,7 @@ class Bridge:
         pose = latest.get("pose") or {}
         wheels = latest.get("wheel_speeds_mmps") or {}
         return {
-            "connected": self.robot.ready and not self._reroll_active,
+            "connected": self.hardware_ready.is_set(),
             "mrr_offline_remaining_seconds": self._mrr_offline_remaining(),
             "mrr_connected": self.mrr_connected,
             "hardware_stage": self.hardware_stage,
@@ -310,7 +313,9 @@ class Bridge:
         """
         while not self.stop_event.is_set():
             try:
-                if self._reroll_active:
+                if self.dock_power and not self.hardware_ready.is_set():
+                    # Channel inspection is for reading charger contact only.
+                    # No LED, exposure, lift, idle-wake or face commands.
                     await asyncio.sleep(min(interval, 0.5))
                     continue
                 await asyncio.to_thread(method)
@@ -356,7 +361,7 @@ class Bridge:
                 snap["charging"] = self.robot.battery.charging
                 output = {
                     "generated_at_ms": int(time.time() * 1000),
-                    "hardware_connected": self.robot.ready and not self._reroll_active,
+                    "hardware_connected": self.hardware_ready.is_set(),
                     "hardware_stage": self.hardware_stage,
                     "last_hardware_error": self.last_hardware_error,
                     "hardware_reconnect_attempts": self.hardware_reconnect_attempts,
@@ -538,122 +543,102 @@ class Bridge:
                 and not self.robot.dock_assist
                 and not any(self.robot.commanded_wheels))
 
-    async def _ensure_channel(self):
-        """Run channel checks and power operations under the sole hardware owner.
-
-        Keep rerolling a wrong channel while docked. Pause only for operational
-        errors, never because a channel was randomly selected too many times.
-        """
-        if not self.dock_power:
-            return
-        self.channel_actual = await asyncio.to_thread(self.wifi.channel)
-        if self.channel_actual is None:
-            self.channel_status = "channel_unknown"
-            return
-        if self.channel_actual == self.cfg.channel_target:
-            self.channel_status = "matched"
-            self.channel_attempts = 0
-            self.channel_next_attempt_at = 0
-            self.channel_last_error = None
-            return
-        if not self._docked_for_reroll():
-            self.channel_status = "waiting_for_dock"
-            return
-        now = time.monotonic()
-        if now < self.channel_next_attempt_at:
-            self.channel_status = "retry_cooldown"
-            return
-        try:
-            if await asyncio.to_thread(self.dock_power.state) != "on":
-                raise DockPowerError("Dock power is not on")
-        except DockPowerError as exc:
-            self.channel_status = "home_assistant_unavailable"
-            self.channel_last_error = str(exc)
-            self.channel_next_attempt_at = time.monotonic() + 60
-            return
+    async def _restart_docked_for_channel(self):
+        """One dock-verified shutdown/wake cycle, never normal robot startup."""
         self.channel_attempts += 1
         self._reroll_active = True
-        self.hardware_ready.clear()
         self._channel_stage("shutting_down")
         shutdown_queued = False
         cycle_started = False
         try:
             await asyncio.to_thread(self.robot.shutdown_for_channel_reroll)
             shutdown_queued = True
-            # Let the reliable sender deliver shutdown before closing UDP.
+            # Allow the reliable sender to transmit the shutdown command.
             await asyncio.sleep(2)
-            # Observe the AP disappearing; if it doesn't, the robot may still
-            # have shut down and the dock must still be cycled to wake it.
-            vanished = False
-            for _ in range(15):
-                if await asyncio.to_thread(self.wifi.channel) is None:
-                    vanished = True
-                    break
-                await asyncio.sleep(1)
-            if not vanished:
-                LOG.warning("Cozmo Wi-Fi did not disappear after shutdown; "
-                            "cycling dock anyway to avoid leaving Cozmo powered off")
-            self._channel_stage("closing_connection")
-            cleanup_error = None
-            try:
-                await asyncio.wait_for(asyncio.to_thread(self.robot.close), timeout=8)
-            except BaseException as exc:
-                # Once shutdown is queued, restoring dock power is more
-                # important than the local PyCozmo cleanup result.
-                cleanup_error = exc
-                LOG.error("PyCozmo cleanup failed after shutdown; waking dock anyway")
             self._channel_stage("cycling_dock_power")
             cycle_started = True
+            # DockPower.cycle restores ON in its own finally, including
+            # when Home Assistant rejects or times out during turn_off.
             await asyncio.shield(asyncio.to_thread(self.dock_power.cycle))
-            if cleanup_error is not None:
-                raise cleanup_error
-            self._channel_stage("waiting_for_wifi")
-            await asyncio.sleep(5)
-            last_error = None
-            for _ in range(3):
-                try:
-                    await asyncio.to_thread(self.wifi.connect)
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    await asyncio.sleep(3)
-            else:
-                raise RuntimeError("Cozmo Wi-Fi did not reconnect after dock power cycle") from last_error
-            self._channel_stage("connecting_robot")
-            await asyncio.wait_for(asyncio.to_thread(self.robot.connect), timeout=35)
-            self._channel_stage("verifying")
-            self.channel_actual = await asyncio.to_thread(self.wifi.channel)
-            if self.channel_actual == self.cfg.channel_target:
-                self.channel_status = "matched"
-                self.channel_attempts = 0
-                self.channel_next_attempt_at = 0
-                self.channel_last_error = None
-                LOG.info("Cozmo Wi-Fi channel %s matched target after reroll", self.channel_actual)
-            else:
-                self.channel_status = "channel_unknown" if self.channel_actual is None else "mismatch"
-                LOG.info("Cozmo reroll attempt %d: actual=%s target=%s",
-                         self.channel_attempts, self.channel_actual, self.cfg.channel_target)
-            self.channel_cycles += 1
-            self.publish_state()
-        except Exception as exc:
-            self.channel_last_error = str(exc)[:180]
-            self.channel_status = "error"
-            self.channel_next_attempt_at = time.monotonic() + 60
-            LOG.error("Cozmo channel reroll failed: %s", exc)
-            raise
         finally:
             try:
-                # Even cancellation or a failed UDP cleanup must not strand
-                # a robot which has already been given ShutdownRobot.
+                # Never leave a robot shut down if interrupted between
+                # the command and the power cycle.
                 if shutdown_queued and not cycle_started:
                     self._channel_stage("cycling_dock_power")
                     try:
                         await asyncio.shield(asyncio.to_thread(self.dock_power.cycle))
                     except Exception:
-                        LOG.critical("Could not wake Cozmo after shutdown; "
-                                     "Home Assistant dock power needs recovery")
+                        LOG.critical("Unable to wake Cozmo after shutdown; check dock switch")
             finally:
                 self._reroll_active = False
+
+    async def _prepare_channel(self):
+        """Keep the robot in telemetry-only inspection until target channel.
+
+        The RTSP publisher and MRR client run separately throughout this
+        method. hardware_ready remains clear: no commands, sensors, camera,
+        lights or maintenance can run until normal promotion succeeds.
+        """
+        if not self.dock_power:
+            return
+        while not self.stop_event.is_set():
+            self._channel_stage("inspecting_dock")
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self.robot.connect, inspection=True),
+                    timeout=35)
+            except asyncio.TimeoutError:
+                LOG.critical("Cozmo inspection connect stuck; restarting service")
+                os._exit(1)
+
+            verified = False
+            try:
+                while not self.stop_event.is_set():
+                    if not await asyncio.to_thread(self.wifi.active):
+                        raise RuntimeError("Cozmo Wi-Fi disconnected during channel selection")
+                    self.channel_actual = await asyncio.to_thread(self.wifi.channel)
+                    if self.channel_actual == self.cfg.channel_target:
+                        self.channel_status = "matched"
+                        self.channel_next_attempt_at = 0
+                        self.channel_last_error = None
+                        self._channel_stage("verified")
+                        self.channel_status = "matched"
+                        verified = True
+                        return  # Keep this inspection socket for promotion.
+
+                    if self.channel_actual is None:
+                        self._channel_stage("waiting_for_wifi")
+                    elif not self._docked_for_reroll():
+                        self._channel_stage("waiting_for_dock")
+                    elif time.monotonic() < self.channel_next_attempt_at:
+                        self._channel_stage("retry_cooldown")
+                    else:
+                        try:
+                            if await asyncio.to_thread(self.dock_power.state) != "on":
+                                raise DockPowerError("Home Assistant dock switch is off")
+                        except DockPowerError as exc:
+                            self.channel_last_error = str(exc)
+                            self.channel_next_attempt_at = time.monotonic() + 60
+                            self._channel_stage("home_assistant_unavailable")
+                        else:
+                            await self._restart_docked_for_channel()
+                            self._channel_stage("waiting_for_wifi")
+                            break  # Close inspection socket and wait for new AP.
+                    await asyncio.sleep(1)
+            finally:
+                if not verified:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.to_thread(self.robot.close), timeout=8)
+                    except asyncio.TimeoutError:
+                        LOG.critical("Cozmo inspection cleanup stuck; restarting service")
+                        os._exit(1)
+            if self.stop_event.is_set():
+                return
+            # Wi-Fi association must complete again before any new inspection.
+            await asyncio.to_thread(self.wifi.wait)
+        raise asyncio.CancelledError()
 
     async def _hardware(self):
         while not self.stop_event.is_set():
@@ -662,24 +647,32 @@ class Bridge:
                 if diagnostics.active():
                     diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
                 await asyncio.to_thread(self.wifi.wait)
-                self.hardware_stage = "connecting_robot"
-                if diagnostics.active():
-                    diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
-                try:
-                    await asyncio.wait_for(asyncio.to_thread(self.robot.connect),
-                                           timeout=35.0)
-                except asyncio.TimeoutError:
-                    # A blocked PyCozmo connect/stop leaves its UDP thread
-                    # alive. Only process isolation guarantees a clean new
-                    # socket; systemd automatically restarts this service.
-                    LOG.critical("PyCozmo connect stuck for 35s; restarting service")
+                if self.dock_power:
+                    self.hardware_stage = "channel_inspecting_dock"
+                else:
+                    self.hardware_stage = "connecting_robot"
                     if diagnostics.active():
-                        diagnostics.active().incident(
-                            reason="connect_timeout_35s", stage=self.hardware_stage,
-                            reconnect_attempts=self.hardware_reconnect_attempts)
-                    os._exit(1)
-                await self._ensure_channel()
+                        diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
+                    try:
+                        await asyncio.wait_for(asyncio.to_thread(self.robot.connect),
+                                               timeout=35.0)
+                    except asyncio.TimeoutError:
+                        LOG.critical("PyCozmo connect stuck for 35s; restarting service")
+                        if diagnostics.active():
+                            diagnostics.active().incident(
+                                reason="connect_timeout_35s", stage=self.hardware_stage,
+                                reconnect_attempts=self.hardware_reconnect_attempts)
+                        os._exit(1)
+                if self.dock_power:
+                    # The initial PyCozmo connection is telemetry-only.
+                    # No camera, lights, MRR controls or maintenance until
+                    # the selected Wi-Fi channel has been verified.
+                    await self._prepare_channel()
+                    if self.stop_event.is_set():
+                        break
+                    await asyncio.to_thread(self.robot.promote_inspection)
                 self.hardware_stage = "online"
+                self.channel_status = "matched" if self.dock_power else "disabled"
                 self.last_hardware_error = None
                 LOG.info("Cozmo hardware ready")
                 if diagnostics.active():
@@ -696,7 +689,6 @@ class Bridge:
                 last_wifi_check = 0.0
                 stalled_ack_since = None
                 previous_expected_seq = None
-                last_channel_check = 0.0
                 while not self.stop_event.is_set():
                     if self._reconnect_requested.is_set():
                         LOG.info("Manual Cozmo reconnection requested from MRR")
@@ -704,18 +696,6 @@ class Bridge:
                             diagnostics.active().event("hardware_manual_reconnect")
                         break
                     now = time.monotonic()
-                    if self.dock_power and now - last_channel_check >= 5.0:
-                        old_cycles = self.channel_cycles
-                        await self._ensure_channel()
-                        if self.channel_cycles != old_cycles:
-                            # New PyCozmo session means a new ACK sequence.
-                            wifi_misses = 0
-                            stalled_ack_since = None
-                            previous_expected_seq = None
-                        if self.robot.ready:
-                            self.hardware_stage = "online"
-                            self.hardware_ready.set()
-                        last_channel_check = time.monotonic()
                     if now - last_wifi_check >= 2.0:
                         if self.wifi.active():
                             wifi_misses = 0
