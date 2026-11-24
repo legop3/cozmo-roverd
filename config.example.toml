@@ -21,3 +21,13 @@ camera_mode = "auto"
 hud = true
 # Optional override, otherwise rtsp://SERVER-HOST:8554/<rover.name>
 # rtsp_url = "rtsp://YOUR-MRR-SERVER:8554/cozmo"
+
+# Optional: keep docked Cozmo on a chosen Wi-Fi channel.
+# Requires a Home Assistant switch that physically controls dock power.
+[channel_reroll]
+enabled = false
+target_channel = 6 # 1, 6, or 11
+max_attempts = 6
+home_assistant_url = ""
+home_assistant_token = ""
+switch_entity = ""
