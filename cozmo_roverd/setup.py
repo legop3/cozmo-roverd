@@ -186,7 +186,6 @@ def public_config(path: str) -> dict:
         "rtsp_url": media.get("rtsp_url", ""),
         "channel_reroll_enabled": reroll.get("enabled", False),
         "channel_target": reroll.get("target_channel", 1),
-        "channel_max_attempts": reroll.get("max_attempts", 6),
         "home_assistant_url": reroll.get("home_assistant_url", ""),
         "home_assistant_switch": reroll.get("switch_entity", ""),
         "home_assistant_has_token": bool(reroll.get("home_assistant_token", "")),
@@ -200,7 +199,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
         raise ValueError("Invalid configuration")
     allowed = {"name", "description", "color", "private", "server_url", "interface", "ssid", "password",
                "max_speed", "video", "camera_enabled", "diagnostic_minimal", "fps", "rtsp_url", "camera_mode", "hud", "watchdog_seconds",
-                "channel_reroll_enabled", "channel_target", "channel_max_attempts",
+                "channel_reroll_enabled", "channel_target",
                 "home_assistant_url", "home_assistant_switch", "home_assistant_token"}
     if set(payload) - allowed:
         raise ValueError("Unknown configuration field")
@@ -267,7 +266,6 @@ def validate_payload(payload: dict, current: dict) -> dict:
     previous_reroll = current.get("channel_reroll", {})
     reroll_enabled = payload.get("channel_reroll_enabled", previous_reroll.get("enabled", False))
     target_channel = payload.get("channel_target", previous_reroll.get("target_channel", 1))
-    max_attempts = payload.get("channel_max_attempts", previous_reroll.get("max_attempts", 6))
     ha_url = str(payload.get("home_assistant_url", previous_reroll.get("home_assistant_url", ""))).strip()
     ha_switch = str(payload.get("home_assistant_switch", previous_reroll.get("switch_entity", ""))).strip()
     new_token = payload.get("home_assistant_token", "")
@@ -282,14 +280,14 @@ def validate_payload(payload: dict, current: dict) -> dict:
         ha_token = previous_reroll.get("home_assistant_token", "")
     else:
         ha_token = ""
-    if type(reroll_enabled) is not bool or type(target_channel) is not int or type(max_attempts) is not int:
+    if type(reroll_enabled) is not bool or type(target_channel) is not int:
         raise ValueError("Invalid Wi-Fi channel reroll settings")
-    if target_channel not in (1, 6, 11) or not 1 <= max_attempts <= 20:
-        raise ValueError("Channel must be 1, 6 or 11; attempts must be 1–20")
+    if target_channel not in (1, 6, 11):
+        raise ValueError("Channel must be 1, 6 or 11")
     if reroll_enabled and (not ha_url or not ha_switch or not ha_token):
         raise ValueError("Home Assistant URL, token and switch are required for reroll")
     reroll = {"enabled": reroll_enabled, "target_channel": target_channel,
-              "max_attempts": max_attempts, "home_assistant_url": ha_url,
+              "home_assistant_url": ha_url,
               "home_assistant_token": ha_token, "switch_entity": ha_switch}
     return {"rover": {"name": name, "description": desc, "color": color, "private": private,
                       "server_url": url, "max_speed": max_speed,
