@@ -181,6 +181,28 @@ class Robot:
                 LOG.exception("Could not close failed PyCozmo connection")
             raise
 
+    def promote_inspection(self):
+        """Enable normal robot features only after supervisor verifies Wi-Fi.
+
+        The inspection session is retained so no extra PyCozmo reconnect or
+        brief live-camera burst occurs while selecting the channel.
+        """
+        import pycozmo
+        with self.lock:
+            if self.client is None or not self.ready or not self._inspection_mode:
+                raise RuntimeError("No active inspection connection to promote")
+            cli = self.client
+            # Match the regular connect() setup, delayed until channel match.
+            cli.enable_camera(enable=self.camera_enabled, color=True)
+            cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
+            if self.camera_enabled:
+                self.configure_camera(cli)
+            self._inspection_mode = False
+            self._dock_contact_handled = False
+            self._idle_activity_at = time.monotonic()
+        self.on_state()
+        LOG.info("Cozmo inspection promoted to normal operation")
+
     def _camera_chunk(self, pkt):
         """Observe incoming image traffic without decoding or copying it."""
         self.camera_chunks_received += 1
