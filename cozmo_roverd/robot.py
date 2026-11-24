@@ -9,7 +9,8 @@ import queue
 import threading
 import time
 from PIL import Image, ImageDraw
-from .face import bounded_status_pages
+from .animation import Animation, install_recovery
+from .face import status_image, _layout
 from .status_lights import backpack_lights, charger_lights, charger_signature
 from .telemetry import snapshot
 from .robot_packet import BatteryTracker, snapshot_packet
@@ -78,13 +79,17 @@ class Robot:
         self.last_packet_error = None
         self.packet_status = {}
         self.last_tts = ""
-        self.last_tts_error = "Hardware speech disabled for robot stability"
-        self._tts_transport_faulted = True
+        self.last_tts_error = None
+        self._tts_transport_faulted = False
         self._tts_last_stream_at = 0.0
         self.last_tts_frames = 0
         self.last_tts_played_at = None
         # Static face is enabled, but never run the 30 Hz animation sender.
-        self._face_transport_enabled = False
+        self._face_transport_enabled = True
+        self._animation = None
+        self._animation_control_at = 0.0
+        self._camera_gap_max = 0.0
+        self._sensor_gap_max = 0.0
         self._face_blocked_since = None
         self._face_suspended_until = 0.0
         self.face_frames_sent = 0
@@ -114,6 +119,7 @@ class Robot:
         # Keep PyCozmo's 30 Hz animation/audio loop off: it caused
         # repeated reconnects on the physical robot.
         cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
+        install_recovery(cli)
         cli.start()
         try:
             # Register before the handshake: a docked robot may send its
@@ -170,6 +176,8 @@ class Robot:
                 self._charger_connect_at = 0.0
                 self._charger_last_signature = None
                 self._charger_last_attempt = 0.0
+            if not inspection:
+                self._start_animation(cli)
             self.on_state()
             LOG.info("Cozmo connected")
         except Exception:
@@ -202,6 +210,7 @@ class Robot:
             self._inspection_mode = False
             self._dock_contact_handled = False
             self._idle_activity_at = time.monotonic()
+        self._start_animation(cli)
         self.on_state()
         LOG.info("Cozmo inspection promoted to normal operation")
 
@@ -214,7 +223,10 @@ class Robot:
         if self._inspection_mode:
             return
         self.camera_images_completed += 1
-        self.camera_last_image_at = time.monotonic()
+        now = time.monotonic()
+        if self.camera_last_image_at is not None:
+            self._camera_gap_max = max(self._camera_gap_max, now-self.camera_last_image_at)
+        self.camera_last_image_at = now
         self.on_frame(image)
 
     def _charging(self, value):
@@ -293,7 +305,10 @@ class Robot:
     def _packet(self, cli, pkt):
         """Keep PyCozmo's receive callback bounded and nonblocking."""
         self.packets_received += 1
-        self.last_sensor = time.monotonic()
+        now = time.monotonic()
+        if self.last_sensor and self.ready:
+            self._sensor_gap_max = max(self._sensor_gap_max,now-self.last_sensor)
+        self.last_sensor = now
         if self._state_stop.is_set() and self._had_packet_workers:
             return  # A late callback from a closed real client.
         if self._state_worker is not None and self._state_worker.is_alive():
@@ -396,6 +411,7 @@ class Robot:
 
     def stop_drive(self):
         with self.lock:
+            self._animation_control_at = time.monotonic()
             if self.client is not None:
                 try: self.client.drive_wheels(0, 0)
                 except Exception: LOG.exception("Unable to stop wheels")
@@ -423,6 +439,7 @@ class Robot:
         """Reset dock idle timer; called before an actual driver/motor action."""
         with self.lock:
             self._idle_activity_at = time.monotonic()
+            self._animation_control_at = self._idle_activity_at
             self._idle_wake_restore_at = None
 
     def refresh_idle_wake(self):
@@ -944,167 +961,93 @@ class Robot:
             "transmitted_packets_including_retries": sender.sent_packets,
             "pending_application_commands": sender.queue.qsize(),
             "received_frames": cli.conn.recv_thread.received_frames,
+            "recovery_cycles": getattr(sender,"roverd_retries",0),
+            "camera_max_gap_seconds": self._camera_gap_max,
+            "telemetry_max_gap_seconds": self._sensor_gap_max,
+            "animation_backoffs": self._animation.backoffs if self._animation else 0,
         }
 
-    def speaker_diagnostics(self):
-        """Distinguish TTS synthesis/queueing from actual playback reports."""
+    def _start_animation(self, cli):
         with self.lock:
-            cli = self.client
-            played = (getattr(cli.anim_controller, "num_audio_frames_played", None)
-                      if cli else None)
-            queue_size = None
-            if cli is not None:
-                q = cli.anim_controller.queue
-                with q.lock:
-                    queue_size = len(q.audio_queue)
+            if self.client is not cli or self._animation is not None:
+                return
+            self._camera_gap_max = self._sensor_gap_max = 0.0
+            self._animation = Animation(self, cli)
+            self._animation.start()
+
+    def speaker_diagnostics(self):
+        with self.lock:
+            anim = self._animation
+            played = getattr(self.client.anim_controller,"num_audio_frames_played",None) if self.client else None
             return {
                 "last_message": self.last_tts,
                 "last_error": self.last_tts_error,
                 "last_queued_frames": self.last_tts_frames,
                 "last_queued_at": self.last_tts_played_at,
                 "robot_reported_audio_frames": played,
-                "queued_frames_remaining": queue_size,
+                "queued_frames_remaining": len(anim.audio) if anim else 0,
                 "speaker_disabled_after_transport_failure": self._tts_transport_faulted,
-                "hardware_speech_enabled": False,
+                "hardware_speech_enabled": anim is not None,
             }
 
     def note_tts(self, text):
-        """Remember a speech message even if synthesis or playback fails."""
         message = " ".join(str(text).split())[:512]
-        if not message:
-            return
-        with self.lock:
-            self.last_tts = message
-            self.last_tts_error = "Hardware speech disabled for robot stability"
-            self._face_scroll = 0
-            self._face_last_content = None
-        # Do not bypass the 5-second face-send cooldown for every TTS request.
-        # A rapid sequence of messages must not fill the animation keyframe
-        # buffer and stall reliable wheel commands. The periodic face task
-        # will display the latest message at its next permitted refresh.
-        self.refresh_face()
+        if message:
+            with self.lock:
+                self.last_tts = message
+                self._face_scroll = 0
+                self._face_sent_at = 0.0
 
     def refresh_face(self):
-        """Send a bounded static image frame without starting its 30 Hz sender."""
         if not self._face_transport_enabled:
             return False
-        return self._refresh_face_unverified()
-
-    def _refresh_face_unverified(self):
-        """Render one clipped status screen without holding the motor lock."""
         with self.lock:
-            if self.client is None or not self.ready:
+            anim = self._animation
+            if anim is None or not self.ready or time.monotonic()-self._face_sent_at < 2:
                 return False
-            now = time.monotonic()
-            if now < self._face_suspended_until:
-                return False
-            if now - self._face_sent_at < 5.0:
-                return False
-            cli = self.client
             voltage = self.battery.voltage
-            percent = self.battery.percent
-            charging = self.battery.charging
             message = self.last_tts
-
-        # Image/font layout and RLE compression can be expensive. NEVER hold
-        # the same lock used by wheel/head/lift controls while rendering them.
-        from .face import static_status_image
-        from pycozmo.image_encoder import ImageEncoder, ImageDecoder
-        from pycozmo.protocol_declaration import MAX_FRAME_PAYLOAD_SIZE
-        # A UDP frame carries a four-byte command header plus DisplayImage's
-        # two-byte array length. The old 184-byte limit was not a transport
-        # limit and caused even the battery icon to be rejected.
-        max_encoded_bytes = MAX_FRAME_PAYLOAD_SIZE - 6
+            page = self._face_scroll
+        from pycozmo.image_encoder import ImageEncoder
         try:
-            image = static_status_image(
-                voltage=voltage, percent=percent, charging=charging,
-                last_tts=message, max_encoded_bytes=max_encoded_bytes)
+            _, pages, _ = _layout(message or "NO MESSAGE",ImageDraw.Draw(Image.new("1",(128,32))))
+            image = status_image(voltage=voltage,last_tts=message,scroll=page,voltage_only=True)
             encoded = bytes(ImageEncoder(image).encode())
-            if not encoded or len(encoded) > max_encoded_bytes:
-                raise ValueError(
-                    f"Encoded face size {len(encoded)} exceeds {max_encoded_bytes} bytes")
-            decoded = ImageDecoder(encoded).decode()
-            foreground = sum(bool(px) for px in decoded)
-            columns = sum(
-                any(decoded[y * 128 + x] for y in range(32))
-                for x in range(128))
-            if foreground == 0 or columns < 8:
-                raise ValueError(f"Encoded face unexpectedly sparse: {foreground} pixels, {columns} columns")
-        except (ValueError, IndexError, AssertionError) as exc:
-            with self.lock:
-                self.face_last_error = str(exc)[:180]
-            LOG.warning("Cozmo face skipped: %s", exc)
+            if len(encoded)+20 > 1472:
+                raise ValueError("Face exceeds safe datagram size")
+        except Exception as exc:
+            self.face_last_error = str(exc)[:180]
             return False
-
         with self.lock:
-            # A reconnect or a newer message invalidates the rendered frame.
-            if (self.client is not cli or not self.ready
-                    or time.monotonic() < self._face_suspended_until
-                    or self.last_tts != message
-                    or time.monotonic() - self._face_sent_at < 5.0):
+            if anim is not self._animation or message != self.last_tts:
                 return False
-            sender = getattr(getattr(cli, "conn", None), "send_thread", None)
-            if sender is not None:
-                with sender.lock:
-                    pending = ((sender.window.next_seq - sender.window.expected_seq)
-                               % sender.window.max_seq)
-                if pending >= 4 or sender.queue.qsize() >= 4:
-                    now = time.monotonic()
-                    if self._face_blocked_since is None:
-                        self._face_blocked_since = now
-                    elif now - self._face_blocked_since > 3:
-                        # Back off temporarily rather than leaving the
-                        # display permanently disabled until reconnect.
-                        self._face_suspended_until = now + 10.0
-                        self._face_blocked_since = None
-                        self.face_last_error = (
-                            "Display cooling down for 10 seconds: reliable send queue busy")
-                        LOG.warning("%s", self.face_last_error)
-                    return False
-                self._face_blocked_since = None
-            content = image.tobytes()
-            if (content == self._face_last_content
-                    and time.monotonic() - self._face_sent_at < 15.0):
-                return False
-            conn = getattr(cli, "conn", None)
-            if conn is not None and callable(getattr(conn, "send", None)):
-                from pycozmo.protocol_encoder import DisplayImage, OutputSilence
-                # Keep the already-working bounded packet sequence untouched.
-                conn.send(OutputSilence())
-                conn.send(DisplayImage(image=encoded))
-                conn.send(OutputSilence())
-            else:
-                cli.display_image(image)
-            self.face_frames_sent += 1
+            with anim.lock:
+                anim.face = encoded
+            self._face_scroll = (page+1)%len(pages)
             self._face_sent_at = time.monotonic()
-            self._face_last_content = content
             self.face_last_encoded_bytes = len(encoded)
-            self.face_encoded_on_pixels = foreground
-            self.face_decoded_columns = columns
             self.face_last_error = None
-            return True
+        return True
 
     def advance_face_display(self):
-        """Legacy compatibility: never send periodic silence packets."""
         return False
 
     def mark_speech_unstable(self, reason):
-        """Disable speaker output until service restart after transport failure.
-
-        A failed OutputAudio can freeze Cozmo's reliable command channel.
-        Keep the rover usable and retain latest message text; do not retry
-        the same dangerous packet repeatedly on every new TTS request.
-        """
-        with self.lock:
-            self._tts_transport_faulted = True
-            self.last_tts_error = str(reason)[:180]
-        LOG.error("Cozmo speaker disabled for this service session: %s", reason)
+        self.last_tts_error = str(reason)[:180]
+        anim = self._animation
+        if anim:
+            with anim.lock:
+                anim.generation += 1
+                anim.audio.clear()
+                anim.request = None
 
     def speak(self, text, *, speed=1.0):
-        """Hardware speech is intentionally disabled after repeated crashes."""
-        self.last_tts_error = "Hardware speech disabled for robot stability"
-        raise RuntimeError(self.last_tts_error)
-
+        self.note_tts(text)
+        with self.lock:
+            if self._animation is None or not self.ready:
+                raise RuntimeError("Cozmo disconnected")
+            self.last_tts_error = None
+            self._animation.speak(self.last_tts,max(.5,min(2.0,float(speed))))
 
     def close(self):
         """Release the robot promptly without network writes on a dead link.
@@ -1116,6 +1059,7 @@ class Robot:
         socket and threads is sufficient before a fresh connection attempt.
         """
         with self.lock:
+            anim, self._animation = self._animation, None
             cli, self.client = self.client, None
             self.ready = False
             self.moving = False
@@ -1148,6 +1092,8 @@ class Robot:
             self.on_charger = self.battery.docked
             self.charging = self.battery.charging
             self.cliff = None
+        if anim is not None:
+            anim.close()
         if cli is None:
             self._stop_packet_workers()
             return
