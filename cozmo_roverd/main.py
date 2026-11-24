@@ -646,6 +646,9 @@ class Bridge:
                                 self.channel_next_attempt_at = time.monotonic() + 60
                                 self._channel_stage("error")
                                 raise
+                            # The AP has been power-cycled; the previous
+                            # channel is no longer a current measurement.
+                            self.channel_actual = None
                             self._channel_stage("waiting_for_wifi")
                             break  # Close inspection socket and wait for new AP.
                     await asyncio.sleep(1)
@@ -706,6 +709,9 @@ class Bridge:
     async def _hardware(self):
         while not self.stop_event.is_set():
             try:
+                # An old association's channel must not appear as the
+                # current channel on a fresh reconnect.
+                self.channel_actual = None
                 self.hardware_stage = "connecting_wifi"
                 if diagnostics.active():
                     diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
