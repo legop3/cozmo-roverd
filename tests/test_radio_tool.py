@@ -70,7 +70,7 @@ def test_channel_from_current_association_without_scan(monkeypatch):
 
     def run(args, **kwargs):
         calls.append(args)
-        return SimpleNamespace(returncode=0, stdout="Connected to aa:bb:cc\\n\\tfreq: 2437\\n")
+        return SimpleNamespace(returncode=0, stdout=chr(10).join(("Connected to aa:bb:cc", "freq: 2437", "")))
 
     monkeypatch.setattr(test_wifi_channel.subprocess, "run", run)
     assert test_wifi_channel.connected_ap_channel("wlan2") == "channel 6 (2437 MHz)"
@@ -80,5 +80,5 @@ def test_channel_from_current_association_without_scan(monkeypatch):
 def test_disconnected_ap_channel(monkeypatch):
     monkeypatch.setattr(test_wifi_channel.subprocess, "run",
                         lambda *_args, **_kwargs: SimpleNamespace(
-                            returncode=0, stdout="Not connected.\\n"))
+                            returncode=0, stdout="Not connected."))
     assert test_wifi_channel.connected_ap_channel("wlan2") == "not connected"
