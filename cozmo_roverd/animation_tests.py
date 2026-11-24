@@ -14,26 +14,25 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("idle-animation-state", 0, "idle", False),
-    ("idle-no-animation-state", 0, "idle", False),
-    ("silence-once", 0, "silence", False),
-    *[(f"silence-{r}hz", r, "silence", False) for r in (1, 5, 10, 15, 30)],
-    ("image-once-no-clock", 0, "image", False),
-    ("image-once-with-clock", 30, "image_once", False),
-    ("image-1hz-with-clock", 30, "image_sparse", False),
-    ("image-30hz-with-clock", 30, "image", False),
-    ("audio-silent-frame", 30, "audio_silent", False),
-    ("audio-tone-100ms", 30, "tone3", False),
-    ("audio-tone-1s", 30, "tone30", False),
-    ("image-and-tone", 30, "combined", False),
-    ("stock-controller", 0, "stock", False),
+    ("silence-30hz", 30, "silence", False),
+    ("audio-ff-alone", 0, "audio_ff_once", False),
+    ("audio-7f-alone", 0, "audio_7f_once", False),
+    ("audio-stock-zero-alone", 0, "audio_stock_once", False),
+    ("audio-tone-alone", 0, "audio_tone_once", False),
+    ("audio-ff-after-clock", 30, "audio_ff_clock", False),
+    ("audio-tone-after-clock", 30, "audio_tone_clock", False),
+    ("audio-tone-isolated-datagram", 30, "audio_tone_isolated", False),
     ("camera-idle", 0, "idle", True),
-    ("camera-silence-30hz", 30, "silence", True),
-    ("camera-image-and-tone", 30, "combined", True),
+    ("camera-display-sparse", 30, "image_sparse", True),
+    ("camera-display-patterns", 30, "patterns", True),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
 def worker(name, directory, config, duration):
     import pycozmo
+    from pycozmo import audio
+    import hashlib
+    import types
     from pycozmo import protocol_encoder as p
     from pycozmo.image_encoder import ImageEncoder
     from PIL import Image, ImageDraw
@@ -99,12 +98,38 @@ def worker(name, directory, config, duration):
             cli.conn.send(packet)
             key = type(packet).__name__
             counts[key] = counts.get(key, 0) + 1
+        def audio_probe(kind):
+            if kind == "ff":
+                payload = bytes([255])*744
+            elif kind == "7f":
+                payload = bytes([127])*744
+            elif kind == "stock":
+                payload = bytes(audio.bytes_to_cozmo(bytes(1488), 1, 1))
+            else:
+                payload = bytes(ulaw(int(1800*math.sin(2*math.pi*440*i/22320)))
+                                for i in range(744))
+            packet = p.OutputAudio(samples=payload)
+            serialized = packet.to_bytes()
+            result["audio_payload"] = {"length":len(serialized),
+                "sha256":hashlib.sha256(serialized).hexdigest(),
+                "first16":serialized[:16].hex(),"matches_input":serialized==payload}
+            save()
+            send(packet)
+        if mode == "audio_tone_isolated":
+            sender = cli.conn.send_thread
+            original = sender._send_packets
+            def isolated(self, packets, last_ack):
+                for seq, packet in packets:
+                    original([(seq, packet)], last_ack)
+            sender._send_packets = types.MethodType(isolated, sender)
         if mode == "stock":
             cli.enable_animations(True)
         if rate == 0 and mode == "silence":
             send(p.OutputSilence())
         if rate == 0 and mode == "image":
             send(p.DisplayImage(image=encoded))
+        if mode.endswith("_once") and mode.startswith("audio_"):
+            audio_probe(mode.split("_")[1])
         start = time.monotonic()
         next_frame = start
         next_sample = start
@@ -128,23 +153,28 @@ def worker(name, directory, config, duration):
                 save()
                 next_sample = now + .25
                 if (now-last_rx > 3 or now-last_ack > 3 or
-                    m["queued_app_commands"] > 60 or m["pending_reliable_packets"] >= 60):
+                    m["queued_app_commands"] > 12 or m["pending_reliable_packets"] >= 12):
                     result["status"] = "FAIL"
                     result["reason"] = "RX/ACK stalled or transport backlog exceeded limit"
                     break
             if rate and now >= next_frame:
-                n = {"audio_silent":1,"tone3":3,"tone30":30,"combined":30}.get(mode,0)
-                if frame < n:
-                    samples = bytes([255]*744) if mode == "audio_silent" else bytes(
-                        ulaw(int(1800*math.sin(2*math.pi*440*(frame*744+i)/22320)))
-                        for i in range(744))
-                    send(p.OutputAudio(samples=samples))
+                if mode.startswith("audio_") and frame == 30:
+                    audio_probe(mode.split("_")[1])
                 else:
                     send(p.OutputSilence())
-                if (mode in ("image","combined") or
-                    (mode=="image_once" and frame==0) or
-                    (mode=="image_sparse" and frame%30==0)):
+                if mode == "image_sparse" and frame % 30 == 0:
                     send(p.DisplayImage(image=encoded))
+                if mode == "patterns" and frame % 30 == 0:
+                    img = Image.new("1",(128,32),0)
+                    draw = ImageDraw.Draw(img)
+                    if (frame//30)%3 == 0:
+                        draw.rectangle((32,8,95,23),fill=1)
+                    elif (frame//30)%3 == 1:
+                        for x in range(0,128,16):
+                            draw.rectangle((x,0,x+7,31),fill=1)
+                    else:
+                        draw.text((4,8),"BAT 3.85V TEST",fill=1)
+                    send(p.DisplayImage(image=bytes(ImageEncoder(img).encode())))
                 frame += 1
                 # Never catch up by bursting after a delayed iteration.
                 next_frame = max(next_frame + 1/rate, time.monotonic())
@@ -154,7 +184,7 @@ def worker(name, directory, config, duration):
         time.sleep(2)
         result["after"] = h._snapshot(cli)
         if result["status"] == "RUNNING":
-            result["status"] = "PASS" if result["after"]["pending_reliable_packets"] < 6 else "FAIL"
+            result["status"] = "PASS" if result["after"]["pending_reliable_packets"] == 0 and result["after"]["queued_app_commands"] == 0 else "FAIL"
             result["reason"] = "Transport completed; physical output not verified"
         save()
     except Exception as exc:
@@ -193,25 +223,11 @@ def main():
         print("Waiting for previous bridge session to expire...", flush=True)
         time.sleep(10)
         for name, rate, mode, camera in CASES:
-            deps = []
-            if name not in ("idle-no-animation-state", "idle-animation-state"):
-                deps.append("idle-animation-state")
-            if name.startswith("silence-") and rate:
-                rates = [0,1,5,10,15,30]
-                prev = rates[rates.index(rate)-1]
-                deps.append("silence-once" if prev==0 else f"silence-{prev}hz")
-            if rate==30 and not name.startswith("silence-"):
-                deps.append("silence-30hz")
-            if name in ("image-1hz-with-clock","image-30hz-with-clock"):
-                deps.append("image-once-with-clock" if name=="image-1hz-with-clock" else "image-1hz-with-clock")
-            if name.startswith("audio-tone"):
-                deps.append("audio-silent-frame" if name.endswith("100ms") else "audio-tone-100ms")
-            if mode=="combined":
-                deps.extend(["audio-tone-1s","image-30hz-with-clock"])
-            if camera and name!="camera-idle":
+            deps = [] if name=="idle-animation-state" else ["idle-animation-state"]
+            if name.startswith("camera-display"):
                 deps.append("camera-idle")
-            if name=="camera-image-and-tone":
-                deps.append("camera-silence-30hz")
+            if rate==30 and name!="silence-30hz":
+                deps.append("silence-30hz")
             blocked = [d for d in deps if results.get(d)!="PASS"]
             if blocked:
                 results[name]="SKIP"
@@ -248,7 +264,12 @@ def main():
                 "max_queue":max((x["queued_app_commands"] for x in s),default=None),
                 "wire_tx":sum(x.get("direction")=="tx" for x in wire),
                 "wire_rx":sum(x.get("direction")=="rx" for x in wire),
-                "wire_problems":[x for x in wire if x.get("problem")][:3],
+                "audio_payload":r.get("audio_payload"),
+                "tx_problems":[x for x in wire if x.get("problem") and x.get("direction")=="tx"][:5],
+                "audio_wire":[x for x in wire if x.get("direction")=="tx" and any(p.get("id")==142 for p in x.get("packets",[]))][:4],
+                "ack_tail":[{k:x.get(k) for k in ("kind","ack","first_seq","last_seq","bytes")} for x in wire if x.get("direction")=="rx"][-5:],
+                "after":r.get("after"),
+                "rx_problem_count":sum(bool(x.get("problem")) and x.get("direction")=="rx" for x in wire),
                 "last_sample":s[-1] if s else None}
             print(json.dumps(summary,default=str),flush=True)
             if r["status"]=="INCONCLUSIVE" or not r.get("before"):
