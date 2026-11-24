@@ -14,11 +14,13 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("idle-animation-state", 0, "idle", False),
-    *[(f"display-size-{n}", 0, f"large{n}", False) for n in
-      (518, 560, 600, 630, 650, 680, 710, 744)],
-    *[(f"batched-silence-{n}", 0, f"batch{n}", False) for n in
-      (536, 600, 640, 680, 720, 762)],
-    ("camera-display-patterns", 30, "patterns", True),
+    ("original-display-744", 0, "large744", False),
+    ("original-audio", 0, "audio_tone_once", False),
+    ("mtu1500-idle", 0, "idle", False),
+    ("mtu1500-display-744", 0, "large744", False),
+    ("mtu1500-audio", 0, "audio_tone_once", False),
+    ("mtu1500-audio-clock", 30, "audio_tone_clock", False),
+    ("mtu1500-camera-display", 30, "patterns", True),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
@@ -37,6 +39,8 @@ def worker(name, directory, config, duration):
     directory = Path(directory)
     wire = WireRecorder(directory)
     cli = None
+    original_mtu = None
+    interface = None
     report = directory / "result.json"
     result = {"case": name, "status": "INCONCLUSIVE", "sent": {},
               "samples": [], "pycozmo": pycozmo.__file__}
@@ -46,9 +50,40 @@ def worker(name, directory, config, duration):
     try:
         if h._service_active():
             raise RuntimeError("Production bridge still running")
-        Wifi(load(config)).wait()
+        cfg = load(config)
+        wifi = Wifi(cfg)
+        interface = cfg.interface
+        def command(*args):
+            proc = subprocess.run(args, capture_output=True, text=True, timeout=10)
+            return {"command":list(args),"exit":proc.returncode,
+                    "out":proc.stdout.strip(),"err":proc.stderr.strip()}
+        def ensure_link():
+            nonlocal original_mtu
+            wifi.wait()
+            route = command("ip","-j","route","get","172.31.1.1")
+            if route["exit"] or json.loads(route["out"])[0].get("dev") != interface:
+                wifi.connect()
+                route = command("ip","-j","route","get","172.31.1.1")
+            if route["exit"] or json.loads(route["out"])[0].get("dev") != interface:
+                raise RuntimeError("No Cozmo route via configured adapter: "+str(route))
+            current = int(Path("/sys/class/net",interface,"mtu").read_text())
+            if original_mtu is None:
+                original_mtu = current
+            result["network_before"] = [
+                command("ip","-d","link","show","dev",interface),
+                command("ip","-4","route","get","172.31.1.1"),
+                command("nmcli","-f","802-11-wireless.mtu,IP4,DHCP4","connection","show",wifi.profile)]
+            if name.startswith("mtu1500-") and current != 1500:
+                change = command("ip","link","set","dev",interface,"mtu","1500")
+                result["mtu_change"] = change
+                if change["exit"]:
+                    raise RuntimeError(str(change))
+            result["effective_mtu"] = int(Path("/sys/class/net",interface,"mtu").read_text())
+            result["route"] = command("ip","-4","route","get","172.31.1.1")
+            save()
         result["connection_attempts"] = []
         for attempt in range(1, 5):
+            ensure_link()
             cli = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
             if name == "idle-no-animation-state":
                 cli.anim_controller.start = lambda: None
@@ -73,6 +108,8 @@ def worker(name, directory, config, duration):
                 time.sleep(5)
         cli.enable_camera(enable=camera, color=camera)
         time.sleep(3)
+        if mode=="idle":
+            result["ping"] = [command("ping","-I",interface,"-c","2","-W","1","-M","do","-s",str(n),"172.31.1.1") for n in (548,549,600,762,1200,1472)]
         result["status"] = "RUNNING"
         if name == "audio-tone-volume":
             cli.set_volume(12000)
@@ -263,9 +300,14 @@ def worker(name, directory, config, duration):
         result["reason"] = repr(exc)
         save()
     finally:
-        if cli is not None:
-            cli.stop()
-        wire.close()
+        try:
+            if cli is not None:
+                cli.stop()
+        finally:
+            if original_mtu is not None and interface and name.startswith("mtu1500-"):
+                result["mtu_restore"] = command("ip","link","set","dev",interface,"mtu",str(original_mtu))
+                save()
+            wire.close()
     return 0
 
 def main():
@@ -283,7 +325,10 @@ def main():
         ap.error("duration must be 5..120 seconds")
     root = Path("/var/log/cozmo-roverd/animation-tests") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     root.mkdir(parents=True)
+    from .config import load
+    interface = load(args.config).interface
     active = h._service_active()
+    restore_mtu = None
     results = {}
     try:
         if active:
@@ -292,19 +337,11 @@ def main():
             raise RuntimeError("Could not stop bridge")
         print("Waiting for previous bridge session to expire...", flush=True)
         time.sleep(10)
-        print("=== NETWORK SIZE CONTROLS (ICMP, not UDP) ===",flush=True)
-        for command in (["ip","route","get","172.31.1.1"],["ip","-br","link"],
-                        *[["ping","-c","3","-W","1","-M","do","-s",str(n),"172.31.1.1"]
-                          for n in (256,508,536,600,640,700,762,1000,1200,1400)]):
-            try:
-                probe=subprocess.run(command,capture_output=True,text=True,timeout=8)
-                print(" ".join(command),probe.returncode,probe.stdout,probe.stderr,flush=True)
-            except (OSError,subprocess.TimeoutExpired) as exc:
-                print("Network probe error:",repr(exc),flush=True)
         for name, rate, mode, camera in CASES:
-            deps = [] if name=="idle-animation-state" else ["idle-animation-state"]
-            if name.startswith("camera-display"):
-                pass
+            deps = (["mtu1500-idle"] if name.startswith("mtu1500-") and name!="mtu1500-idle"
+                    else ["idle-animation-state"] if name.startswith("original-") else [])
+            if name=="mtu1500-audio-clock":
+                deps.append("mtu1500-audio")
 
             blocked = [d for d in deps if results.get(d)!="PASS"]
             if blocked:
@@ -313,6 +350,12 @@ def main():
                 continue
             d = root/name
             d.mkdir()
+            restore_mtu = None
+            if name.startswith("mtu1500-"):
+                try:
+                    restore_mtu = int(Path("/sys/class/net",interface,"mtu").read_text())
+                except OSError:
+                    pass
             print(f"Testing {name}...",flush=True)
             timedout=False
             with (d/"console.log").open("w") as log:
@@ -322,6 +365,12 @@ def main():
                         stdout=log,stderr=subprocess.STDOUT,timeout=args.duration+150)
                 except subprocess.TimeoutExpired:
                     timedout=True
+            if restore_mtu is not None:
+                restore = subprocess.run(["ip","link","set","dev",interface,"mtu",str(restore_mtu)],capture_output=True,text=True)
+                if restore.returncode:
+                    print("WARNING: parent MTU restore failed:",restore.stderr,flush=True)
+                else:
+                    restore_mtu = None
             try:
                 r=json.loads((d/"result.json").read_text())
             except (OSError,ValueError):
@@ -336,6 +385,10 @@ def main():
             wire=h._read_records(d/"wire-frames.jsonl")
             summary={"case":name,"status":r["status"],"reason":r.get("reason"),
                 "connection_attempts":r.get("connection_attempts"),
+                "network_before":r.get("network_before") if mode=="idle" or not r.get("before") else None,
+                "effective_mtu":r.get("effective_mtu"),"route":r.get("route"),
+                "mtu_change":r.get("mtu_change"),"mtu_restore":r.get("mtu_restore"),
+                "ping":r.get("ping"),
                 "sent":r.get("sent"),"rx_delta":b.get("received_frames",0)-a.get("received_frames",0),
                 "audio_delta":b.get("audio_frames_reported_played",0)-a.get("audio_frames_reported_played",0),
                 "max_pending":max((x["pending_reliable_packets"] for x in s),default=None),
@@ -374,6 +427,8 @@ def main():
             print(f"{status:12} {name}",flush=True)
         print(f"Full evidence: {root}",flush=True)
     finally:
+        if restore_mtu is not None:
+            subprocess.run(["ip","link","set","dev",interface,"mtu",str(restore_mtu)],check=False)
         if active:
             h._service_action("start")
             print("Production bridge restarted.",flush=True)
