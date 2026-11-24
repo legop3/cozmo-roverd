@@ -276,7 +276,7 @@ class Bridge:
         pose = latest.get("pose") or {}
         wheels = latest.get("wheel_speeds_mmps") or {}
         return {
-            "connected": self.robot.ready,
+            "connected": self.robot.ready and not self._reroll_active,
             "mrr_offline_remaining_seconds": self._mrr_offline_remaining(),
             "mrr_connected": self.mrr_connected,
             "hardware_stage": self.hardware_stage,
@@ -580,6 +580,16 @@ class Bridge:
             await asyncio.to_thread(self.robot.shutdown_for_channel_reroll)
             # Let the reliable sender deliver shutdown before closing UDP.
             await asyncio.sleep(2)
+            # Shutdown must actually make the robot disappear before the
+            # charger is switched. Never power-cycle a still-running robot.
+            vanished = False
+            for _ in range(15):
+                if await asyncio.to_thread(self.wifi.channel) is None:
+                    vanished = True
+                    break
+                await asyncio.sleep(1)
+            if not vanished:
+                raise RuntimeError("Shutdown did not disconnect Cozmo Wi-Fi; dock power unchanged")
             self._channel_stage("closing_connection")
             await asyncio.wait_for(asyncio.to_thread(self.robot.close), timeout=8)
             self._channel_stage("cycling_dock_power")
