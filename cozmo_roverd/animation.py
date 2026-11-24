@@ -41,15 +41,21 @@ def ulaw(sample):
     exponent = max(0,mag.bit_length()-8)
     return (~(sign | (exponent<<4) | ((mag>>(exponent+3))&15)))&255
 
-def synthesize(text, speed=1.0):
+def synthesize(text, speed=1.0, gain_peak=100):
     wav = subprocess.run(["espeak-ng","--stdout","-s",str(round(145*speed)),"--",text],
                          capture_output=True,check=True,timeout=20).stdout
     pcm = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-i","pipe:0",
                           "-f","s16le","-ac","1","-ar","22320","pipe:1"],
                          input=wav,capture_output=True,check=True,timeout=20).stdout
     pcm += bytes((-len(pcm))%1488)
-    return deque(bytes(ulaw(int(x*.1)) for x in struct.unpack("<744h",pcm[i:i+1488]))
-                 for i in range(0,len(pcm),1488))
+    samples = struct.unpack("<%dh"%(len(pcm)//2),pcm)
+    peak = max(map(abs,samples),default=0)
+    scale = gain_peak/peak if peak else 0
+    scaled = struct.pack("<%dh"%len(samples),*(round(x*scale) for x in samples))
+    encoded = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
+        "-f","s16le","-ar","22320","-ac","1","-i","pipe:0",
+        "-f","mulaw","pipe:1"],input=scaled,capture_output=True,check=True,timeout=20).stdout
+    return deque(encoded[i:i+744] for i in range(0,len(encoded),744))
 
 class Animation:
     def __init__(self, robot, cli):
@@ -73,7 +79,7 @@ class Animation:
     def speak(self,text,speed):
         with self.lock:
             self.generation += 1
-            self.request = (self.generation,text,speed)
+            self.request = (self.generation,text,speed,self.robot.tts_gain)
             self.audio.clear()
         self.wake.set()
 
@@ -85,9 +91,9 @@ class Animation:
                 req,self.request = self.request,None
             if req is None:
                 continue
-            generation,text,speed = req
+            generation,text,speed,gain_peak = req
             try:
-                frames = synthesize(text,speed)
+                frames = synthesize(text,speed,gain_peak)
                 with self.lock:
                     if generation == self.generation and not self.stop.is_set():
                         self.audio = frames
@@ -102,7 +108,7 @@ class Animation:
         from pycozmo.protocol_encoder import OutputAudio, OutputSilence, DisplayImage
         sender = self.cli.conn.send_thread
         try:
-            self.cli.set_volume(500)
+            self.cli.set_volume(self.robot.speaker_volume)
             while not self.stop.is_set():
                 start = time.monotonic()
                 with self.robot.lock:
