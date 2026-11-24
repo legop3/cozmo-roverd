@@ -32,6 +32,7 @@ class FakeRobot:
     def __init__(self, docked=True):
         self.ready = True
         self.on_charger = docked
+        self._dock_confirmed_session = docked
         self.battery = SimpleNamespace(docked=docked)
         self.moving = False
         self.undock_active = False
@@ -80,6 +81,17 @@ def test_correct_channel_never_calls_ha_or_shutdown():
         bridge, power = bridge_case(config(), channels=(6,))
         await bridge._ensure_channel()
         assert bridge.channel_status == "matched"
+        assert bridge.robot.actions == []
+        assert power.actions == []
+    asyncio.run(scenario())
+
+
+def test_stale_dock_contact_from_previous_connection_cannot_shutdown():
+    async def scenario():
+        bridge, power = bridge_case(config(), channels=(1,))
+        bridge.robot._dock_confirmed_session = False
+        await bridge._ensure_channel()
+        assert bridge.channel_status == "waiting_for_dock"
         assert bridge.robot.actions == []
         assert power.actions == []
     asyncio.run(scenario())
