@@ -578,12 +578,15 @@ class Bridge:
         self._reroll_active = True
         self.hardware_ready.clear()
         self._channel_stage("shutting_down")
+        shutdown_queued = False
+        cycle_started = False
         try:
             await asyncio.to_thread(self.robot.shutdown_for_channel_reroll)
+            shutdown_queued = True
             # Let the reliable sender deliver shutdown before closing UDP.
             await asyncio.sleep(2)
-            # Shutdown must actually make the robot disappear before the
-            # charger is switched. Never power-cycle a still-running robot.
+            # Observe the AP disappearing; if it doesn't, the robot may still
+            # have shut down and the dock must still be cycled to wake it.
             vanished = False
             for _ in range(15):
                 if await asyncio.to_thread(self.wifi.channel) is None:
@@ -591,20 +594,22 @@ class Bridge:
                     break
                 await asyncio.sleep(1)
             if not vanished:
-                raise RuntimeError("Shutdown did not disconnect Cozmo Wi-Fi; dock power unchanged")
+                LOG.warning("Cozmo Wi-Fi did not disappear after shutdown; "
+                            "cycling dock anyway to avoid leaving Cozmo powered off")
             self._channel_stage("closing_connection")
             cleanup_error = None
             try:
                 await asyncio.wait_for(asyncio.to_thread(self.robot.close), timeout=8)
-            except Exception as exc:
-                # Once the shutdown was confirmed, restoring dock power is
-                # more important than the local PyCozmo cleanup result.
+            except BaseException as exc:
+                # Once shutdown is queued, restoring dock power is more
+                # important than the local PyCozmo cleanup result.
                 cleanup_error = exc
                 LOG.error("PyCozmo cleanup failed after shutdown; waking dock anyway")
             self._channel_stage("cycling_dock_power")
-            await asyncio.to_thread(self.dock_power.cycle)
+            cycle_started = True
+            await asyncio.shield(asyncio.to_thread(self.dock_power.cycle))
             if cleanup_error is not None:
-                raise RuntimeError("PyCozmo cleanup failed; dock power was restored") from cleanup_error
+                raise cleanup_error
             self._channel_stage("waiting_for_wifi")
             await asyncio.sleep(5)
             last_error = None
@@ -644,7 +649,18 @@ class Bridge:
             LOG.error("Cozmo channel reroll failed: %s", exc)
             raise
         finally:
-            self._reroll_active = False
+            try:
+                # Even cancellation or a failed UDP cleanup must not strand
+                # a robot which has already been given ShutdownRobot.
+                if shutdown_queued and not cycle_started:
+                    self._channel_stage("cycling_dock_power")
+                    try:
+                        await asyncio.shield(asyncio.to_thread(self.dock_power.cycle))
+                    except Exception:
+                        LOG.critical("Could not wake Cozmo after shutdown; "
+                                     "Home Assistant dock power needs recovery")
+            finally:
+                self._reroll_active = False
 
     async def _hardware(self):
         while not self.stop_event.is_set():
