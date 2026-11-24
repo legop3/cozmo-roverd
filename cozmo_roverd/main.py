@@ -593,9 +593,18 @@ class Bridge:
             if not vanished:
                 raise RuntimeError("Shutdown did not disconnect Cozmo Wi-Fi; dock power unchanged")
             self._channel_stage("closing_connection")
-            await asyncio.wait_for(asyncio.to_thread(self.robot.close), timeout=8)
+            cleanup_error = None
+            try:
+                await asyncio.wait_for(asyncio.to_thread(self.robot.close), timeout=8)
+            except Exception as exc:
+                # Once the shutdown was confirmed, restoring dock power is
+                # more important than the local PyCozmo cleanup result.
+                cleanup_error = exc
+                LOG.error("PyCozmo cleanup failed after shutdown; waking dock anyway")
             self._channel_stage("cycling_dock_power")
             await asyncio.to_thread(self.dock_power.cycle)
+            if cleanup_error is not None:
+                raise RuntimeError("PyCozmo cleanup failed; dock power was restored") from cleanup_error
             self._channel_stage("waiting_for_wifi")
             await asyncio.sleep(5)
             last_error = None
