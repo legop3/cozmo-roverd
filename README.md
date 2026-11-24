@@ -18,14 +18,19 @@ sudo bash install-fedora.sh
 
 **From another computer on the network, open `http://FEDORA-HOST-IP:8765`.** The web interface is designed for headless servers: it listens on all interfaces and runs separately from the bridge, even when Cozmo is offline. No SSH tunnel, login, or HTTPS setup required. The installer opens TCP 8765 through active firewalld installations.
 
-The setup page is a utilitarian operations dashboard, not a setup wizard.
-It has live status and diagnostics first, followed by Cozmo Wi-Fi, dock
-channel automation, MRR connection, and rover/video settings. Each section
-can be edited independently. The disconnected video slate reports deliberate
-channel reroll phases, including shutdown, power cycling, Wi-Fi reconnect,
-and channel verification.
+The setup page is a utilitarian **five-page operations console**, not a setup
+wizard or a long scrolling form. **Overview** shows connection health, battery,
+dock contact, Wi-Fi channel, camera rate and bridge Start/Stop. **Connections**
+holds the dedicated Cozmo adapter, optional network discovery and MRR server
+address. **Dock automation** contains the channel target and Home Assistant
+dock switch. **Rover & video** groups identity, drive limits and camera
+controls. **Diagnostics** holds detailed sensor/protocol measurements, raw
+JSON and service logs. Moving between pages preserves unsaved edits; Save
+appears only when settings change and restarts the bridge. The disconnected
+video slate reports shutdown, power cycling, Wi-Fi reconnection and channel
+verification when a reroll is running.
 
-The setup UI validates data, keeps existing passwords when appropriate, writes `/etc/cozmo-roverd.toml` atomically with 0600 permissions and maintains a `.bak` copy, enables the rover service, and restarts it with the new settings. The final panel shows service state, recent logs and start/stop controls.
+The setup UI validates data, keeps existing passwords when appropriate, writes `/etc/cozmo-roverd.toml` atomically with 0600 permissions and maintains a `.bak` copy, enables the rover service, and restarts it with the new settings. Service controls are on Overview; diagnostics and logs are separate. The dashboard uses server-measured telemetry freshness to avoid presenting old robot data as live.
 
 To upgrade an existing installation, `git pull` then rerun `sudo bash install-fedora.sh`. Existing configuration is preserved. You do **not** have to manually edit the TOML. The web UI uses the same configuration file as the daemon.
 
