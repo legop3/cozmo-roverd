@@ -355,6 +355,7 @@ class Bridge:
                 snap["on_charger"] = self.robot.battery.docked
                 snap["charging"] = self.robot.battery.charging
                 output = {
+                    "generated_at_ms": int(time.time() * 1000),
                     "hardware_connected": self.robot.ready,
                     "hardware_stage": self.hardware_stage,
                     "last_hardware_error": self.last_hardware_error,
