@@ -14,10 +14,12 @@ from . import hardware_tests as h
 # a failed lower-rate prerequisite in the same family.
 CASES = [
     ("mtu1500-idle", 0, "idle", False),
-    ("mtu1500-speech", 30, "speech", False),
-    ("mtu1500-real-face", 30, "real_face", True),
-    ("mtu1500-speech-face", 30, "speech_face", True),
-    ("mtu1500-speech-face-soak", 30, "speech_face", True),
+    ("mtu1500-gain-10", 30, "speech", False),
+    ("mtu1500-gain-20", 30, "speech", False),
+    ("mtu1500-gain-35", 30, "speech", False),
+    ("mtu1500-loss-control", 30, "speech_face", True),
+    ("mtu1500-loss-retry", 30, "speech_face", True),
+    ("mtu1500-retry-soak", 30, "speech_face", True),
 ]
 BY_NAME = {c[0]: c for c in CASES}
 
@@ -114,21 +116,43 @@ def worker(name, directory, config, duration):
         if name == "audio-tone-volume":
             cli.set_volume(12000)
             time.sleep(1)
-        if name.startswith("audio-"):
-            # A stream of duplicate ACKs should not prevent retransmission
-            # of an outstanding command. Probe this in the worker only.
-            sender = cli.conn.send_thread
-            original_resend = sender._resend_messages
+        sender = cli.conn.send_thread
+        result["injected_losses"] = []
+        result["retry_calls"] = 0
+        if name in ("mtu1500-loss-retry","mtu1500-retry-soak"):
+            # Retry on lack of forward ACK progress, not lack of incoming ACKs.
             last_retry = [time.perf_counter()]
+            previous_head = [None]
             def retry_pending(self):
                 now = time.perf_counter()
                 with self.lock:
                     pending = self.window.get()
-                if pending and now - last_retry[0] >= .15:
+                head = pending[0][0] if pending else None
+                if head != previous_head[0] or head is None:
+                    previous_head[0] = head
                     last_retry[0] = now
-                    return pending
+                if pending and now-last_retry[0] >= .1:
+                    last_retry[0] = now
+                    result["retry_calls"] += 1
+                    # Retry just the oldest packet to avoid oversized bursts.
+                    return pending[:1]
                 return []
             sender._resend_messages = types.MethodType(retry_pending, sender)
+        if name in ("mtu1500-loss-control","mtu1500-loss-retry"):
+            from pycozmo.frame import Frame
+            original_send = sender._send_raw_frame
+            def drop_once(self, raw):
+                if not result["injected_losses"]:
+                    try:
+                        decoded = Frame.from_bytes(raw)
+                        if any(isinstance(pkt,p.OutputAudio) for pkt in decoded.pkts):
+                            result["injected_losses"].append({"seq":decoded.first_seq,
+                                "last_seq":decoded.seq,"bytes":len(raw)})
+                            return
+                    except Exception:
+                        pass
+                return original_send(raw)
+            sender._send_raw_frame = types.MethodType(drop_once,sender)
         before = h._snapshot(cli)
         result["before"] = before
         save()
@@ -261,10 +285,12 @@ def worker(name, directory, config, duration):
             pcm = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
                                   "-i","pipe:0","-f","s16le","-ac","1","-ar","22320","pipe:1"],
                                  input=wav,capture_output=True,check=True,timeout=20).stdout
+            gain = {"mtu1500-gain-10":.1,"mtu1500-gain-20":.2,"mtu1500-gain-35":.35}.get(name,.1)
+            result["speech_gain"] = gain
             pcm += bytes((-len(pcm)) % 1488)
             for offset in range(0,len(pcm),1488):
                 samples = struct.unpack("<744h",pcm[offset:offset+1488])
-                speech_packets.append(p.OutputAudio(samples=bytes(ulaw(int(x*.5)) for x in samples)))
+                speech_packets.append(p.OutputAudio(samples=bytes(ulaw(int(x*gain)) for x in samples)))
             if not speech_packets:
                 raise RuntimeError("Speech synthesis produced no audio")
             result["speech_frames"] = len(speech_packets)
@@ -312,6 +338,15 @@ def worker(name, directory, config, duration):
                     result["reason"] = "RX/ACK stalled or transport backlog exceeded limit"
                     break
             if rate and now >= next_frame:
+                if name in ("mtu1500-loss-retry","mtu1500-retry-soak"):
+                    # Pause animation generation during a transport backlog.
+                    # Preserve audio ordering rather than skipping samples.
+                    with sender.lock:
+                        backlog = len(sender.window.get())
+                    if backlog >= 4:
+                        next_frame = now + 1/rate
+                        time.sleep(.002)
+                        continue
                 if mode.startswith("speech"):
                     cycle = len(speech_packets) + 120
                     phase = frame % cycle
@@ -358,6 +393,9 @@ def worker(name, directory, config, duration):
         if result["status"] == "RUNNING":
             result["status"] = "PASS" if result["after"]["pending_reliable_packets"] == 0 and result["after"]["queued_app_commands"] == 0 else "FAIL"
             result["reason"] = "Transport completed; physical output not verified"
+        if name in ("mtu1500-loss-control","mtu1500-loss-retry") and not result["injected_losses"]:
+            result["status"]="INCONCLUSIVE"
+            result["reason"]="No audio datagram was intentionally dropped"
         save()
     except Exception as exc:
         if result["status"] == "RUNNING":
@@ -408,10 +446,8 @@ def main():
         for name, rate, mode, camera in CASES:
             deps = (["mtu1500-idle"] if name.startswith("mtu1500-") and name!="mtu1500-idle"
                     else ["idle-animation-state"] if name.startswith("original-") else [])
-            if name=="mtu1500-speech-face":
-                deps.extend(["mtu1500-speech","mtu1500-real-face"])
-            if name=="mtu1500-speech-face-soak":
-                deps.append("mtu1500-speech-face")
+            if name=="mtu1500-retry-soak":
+                deps.append("mtu1500-loss-retry")
 
             blocked = [d for d in deps if results.get(d)!="PASS"]
             if blocked:
@@ -428,7 +464,7 @@ def main():
                     pass
             print(f"Testing {name}...",flush=True)
             timedout=False
-            case_duration = max(args.duration, 120) if name.endswith("-soak") else max(args.duration, 20)
+            case_duration = max(args.duration, 300) if name.endswith("-soak") else max(args.duration, 20)
             with (d/"console.log").open("w") as log:
                 try:
                     proc=subprocess.run([sys.executable,"-m","cozmo_roverd.animation_tests","--worker",name,
@@ -460,7 +496,7 @@ def main():
                 "effective_mtu":r.get("effective_mtu"),"route":r.get("route"),
                 "mtu_change":r.get("mtu_change"),"mtu_restore":r.get("mtu_restore"),
                 "ping":r.get("ping"),
-                "speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
+                "speech_gain":r.get("speech_gain"),"injected_losses":r.get("injected_losses"),"retry_calls":r.get("retry_calls"),"speech_frames":r.get("speech_frames"),"face_sizes":r.get("face_sizes"),
                 "sent":r.get("sent"),"rx_delta":b.get("received_frames",0)-a.get("received_frames",0),
                 "audio_delta":b.get("audio_frames_reported_played",0)-a.get("audio_frames_reported_played",0),
                 "max_pending":max((x["pending_reliable_packets"] for x in s),default=None),
