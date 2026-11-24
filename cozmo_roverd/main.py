@@ -673,9 +673,19 @@ class Bridge:
                 if diagnostics.active():
                     diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
                 await asyncio.to_thread(self.wifi.wait)
-                if self.dock_power:
-                    self.hardware_stage = "channel_inspecting_dock"
-                else:
+                # The associated channel is already available from Linux:
+                # don't spend another PyCozmo handshake on inspection when
+                # a normal reconnect is ALREADY on the desired channel.
+                # An unknown channel still fails closed into inspection.
+                self.channel_actual = (await asyncio.to_thread(self.wifi.channel)
+                                       if self.dock_power else None)
+                channel_ok = (self.dock_power is None or
+                              self.channel_actual == self.cfg.channel_target)
+                if channel_ok:
+                    if self.dock_power:
+                        self.channel_status = "matched"
+                        self.channel_last_error = None
+                        self.channel_next_attempt_at = 0
                     self.hardware_stage = "connecting_robot"
                     if diagnostics.active():
                         diagnostics.active().event("hardware_stage", stage=self.hardware_stage)
@@ -689,10 +699,10 @@ class Bridge:
                                 reason="connect_timeout_35s", stage=self.hardware_stage,
                                 reconnect_attempts=self.hardware_reconnect_attempts)
                         os._exit(1)
-                if self.dock_power:
-                    # The initial PyCozmo connection is telemetry-only.
-                    # No camera, lights, MRR controls or maintenance until
-                    # the selected Wi-Fi channel has been verified.
+                else:
+                    # Wrong or unknown channel: telemetry-only inspection
+                    # checks dock contact before ever requesting shutdown.
+                    # Keep MRR and the RTSP status slate running throughout.
                     await self._prepare_channel()
                     if self.stop_event.is_set():
                         break
