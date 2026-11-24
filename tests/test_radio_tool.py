@@ -82,3 +82,10 @@ def test_disconnected_ap_channel(monkeypatch):
                         lambda *_args, **_kwargs: SimpleNamespace(
                             returncode=0, stdout="Not connected."))
     assert test_wifi_channel.connected_ap_channel("wlan2") == "not connected"
+
+
+def test_fractional_frequency_from_iw(monkeypatch):
+    monkeypatch.setattr(test_wifi_channel.subprocess, "run",
+                        lambda *_args, **_kwargs: SimpleNamespace(
+                            returncode=0, stdout="Connected to aa:bb:cc\nfreq: 2437.0\n"))
+    assert test_wifi_channel.connected_ap_channel("wlan2") == "channel 6 (2437 MHz)"
