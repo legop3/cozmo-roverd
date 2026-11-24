@@ -78,6 +78,8 @@ class Robot:
         self.camera_last_image_at = None
         self.last_packet_error = None
         self.packet_status = {}
+        self.speaker_volume = 500
+        self.tts_gain = 100
         self.last_tts = ""
         self.last_tts_error = None
         self._tts_transport_faulted = False
@@ -980,6 +982,8 @@ class Robot:
             anim = self._animation
             played = getattr(self.client.anim_controller,"num_audio_frames_played",None) if self.client else None
             return {
+                "speaker_volume": self.speaker_volume,
+                "tts_gain": self.tts_gain,
                 "last_message": self.last_tts,
                 "last_error": self.last_tts_error,
                 "last_queued_frames": self.last_tts_frames,
@@ -1040,6 +1044,20 @@ class Robot:
                 anim.generation += 1
                 anim.audio.clear()
                 anim.request = None
+
+    def set_speaker_volume(self, value):
+        if type(value) is not int or not 0 <= value <= 65535:
+            raise ValueError("Speaker volume must be an integer 0..65535")
+        with self.lock:
+            self.speaker_volume = value
+            if self.client is not None and self.ready and not self._inspection_mode:
+                self.client.set_volume(value)
+
+    def set_tts_gain(self, value):
+        if type(value) is not int or not 0 <= value <= 32767:
+            raise ValueError("TTS gain must be an integer 0..32767")
+        with self.lock:
+            self.tts_gain = value
 
     def speak(self, text, *, speed=1.0):
         self.note_tts(text)
