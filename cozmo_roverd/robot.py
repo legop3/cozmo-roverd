@@ -39,6 +39,7 @@ class Robot:
         self.on_charger = None
         self._dock_contact_handled = False
         self._dock_confirmed_session = False
+        self._inspection_mode = False
         # Only the last commanded automatic lift target is remembered.
         # Actual lift height in RobotState determines whether to retry.
         self._dock_lift_target = None
@@ -101,8 +102,14 @@ class Robot:
         self._charger_last_signature = None
         self._charger_last_attempt = 0.0
 
-    def connect(self):
+    def connect(self, *, inspection=False):
+        """Connect only for dock detection when inspection is requested.
+
+        Inspection must not start video, lights, motion or periodic features.
+        Normal setup is retained verbatim for the operational connection.
+        """
         self._dock_confirmed_session = False
+        self._inspection_mode = bool(inspection)
         import pycozmo
         # Keep PyCozmo's 30 Hz animation/audio loop off: it caused
         # repeated reconnects on the physical robot.
@@ -128,14 +135,14 @@ class Robot:
             # Start bounded consumers before enabling the camera. The raw
             # protocol callback must never perform motor I/O or rich decoding.
             self._start_packet_workers()
-            cli.enable_camera(enable=self.camera_enabled, color=True)
-            # Do not enable speaker playback or alter camera streaming
-            # in this stable driver. The last requested TTS remains visible.
+            cli.enable_camera(enable=self.camera_enabled and not inspection, color=True)
+            # Keep firmware audio/animation disabled in both modes.
             cli.enable_animations(False)
             cli.enable_procedural_face(False)
-            cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
-            if self.camera_enabled:
-                self.configure_camera(cli)
+            if not inspection:
+                cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
+                if self.camera_enabled:
+                    self.configure_camera(cli)
             with self.lock:
                 self.client = cli
                 self.last_sensor = time.monotonic()
@@ -180,6 +187,8 @@ class Robot:
         self.camera_last_chunk_at = time.monotonic()
 
     def _camera_image(self, image):
+        if self._inspection_mode:
+            return
         self.camera_images_completed += 1
         self.camera_last_image_at = time.monotonic()
         self.on_frame(image)
@@ -294,7 +303,8 @@ class Robot:
             contact = battery.raw_docked or battery.raw_charging
             # Reset across PyCozmo sessions; never authorize shutdown from old dock telemetry.
             self._dock_confirmed_session = bool(contact)
-            if (contact and not self._dock_contact_handled
+            if (contact and not self._inspection_mode and
+                    not self._dock_contact_handled
                     and self.ready and self.client is not None):
                 self._dock_contact_handled = True
                 if not self.undock_active:
@@ -304,8 +314,9 @@ class Robot:
                     self.head(0)
             elif not contact and battery.docked is False:
                 self._dock_contact_handled = False
-            if (was_docked is not False and self.on_charger is False
-                    and not self.undock_active and self.client is not None):
+            if (not self._inspection_mode and was_docked is not False and
+                    self.on_charger is False and not self.undock_active and
+                    self.client is not None):
                 # Actual departure, including manually lifting Cozmo off.
                 # Assist still active means keep lift up for the approach.
                 if not self.dock_assist:
@@ -1099,6 +1110,7 @@ class Robot:
             self.headlight = False
             self._dock_contact_handled = False
             self._dock_confirmed_session = False
+            self._inspection_mode = False
             self._dock_lift_target = None
             self._dock_lift_sent_at = 0.0
             self._status_light_signature = None
