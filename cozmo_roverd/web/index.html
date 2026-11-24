@@ -65,6 +65,7 @@ details{border-top:1px solid var(--border);padding-top:13px;margin-top:17px}summ
           <p class="status-detail" id="robot-stage">Waiting for hardware status.</p>
         </div></div>
         <div class="status-metadata"><span id="bridge-connection">Bridge: —</span><span id="mrr-connection">MRR: —</span><span id="video-connection">Video: —</span></div>
+        <div class="inline-actions" style="margin-top:15px"><button id="start-service" type="button" class="btn sm" disabled>Start bridge</button><button id="stop-service" type="button" class="btn sm danger" disabled>Stop bridge</button><span id="service-action-hint" class="hint">Service control</span></div>
       </div>
     </div>
     <div class="stats" aria-label="Current robot values">
@@ -150,7 +151,7 @@ details{border-top:1px solid var(--border);padding-top:13px;margin-top:17px}summ
         <div class="field"><label for="rover-name">Rover name</label><input id="rover-name" maxlength="48"></div>
         <div class="field"><label for="description">Description</label><input id="description" maxlength="100"></div>
         <div class="field"><label for="speed">Maximum drive speed</label><select id="speed"></select></div>
-        <div class="field"><label for="color-choices">Rover color</label><div class="colors" id="color-choices" role="group" aria-label="Rover color"></div></div>
+        <div class="field"><label>Rover color</label><div class="colors" id="color-choices" role="group" aria-label="Rover color"></div></div>
         <div class="field wide"><label class="switch-row" for="private"><span><strong>Private rover</strong><p>Use MRR's private rover mode.</p></span><input type="checkbox" id="private"></label></div>
       </div></div>
     </div>
@@ -175,7 +176,7 @@ details{border-top:1px solid var(--border);padding-top:13px;margin-top:17px}summ
     </div>
     <div class="panel"><div class="panel-header"><div><h3>Service</h3><p id="service-label">Checking service…</p></div></div>
       <div class="panel-content">
-        <div class="inline-actions"><button id="start-service" type="button" class="btn sm">Start bridge</button><button id="stop-service" type="button" class="btn sm danger">Stop bridge</button></div>
+        <p class="hint">Start and stop the bridge from the Overview. Logs and telemetry remain available here.</p>
         <details open><summary>Recent service log</summary><div><pre id="logs" class="log">Loading…</pre></div></details>
         <details><summary>Full telemetry JSON</summary><div><pre id="telemetry-raw" class="log">Waiting…</pre></div></details>
       </div>
