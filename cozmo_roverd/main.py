@@ -597,6 +597,10 @@ class Bridge:
                 while not self.stop_event.is_set():
                     if not await asyncio.to_thread(self.wifi.active):
                         raise RuntimeError("Cozmo Wi-Fi disconnected during channel selection")
+                    if (not self.robot.ready or
+                            (not self.robot.battery.docked and self.robot.last_sensor and
+                             time.monotonic() - self.robot.last_sensor > 45)):
+                        raise RuntimeError("Cozmo stopped responding during channel inspection")
                     self.channel_actual = await asyncio.to_thread(self.wifi.channel)
                     if self.channel_actual == self.cfg.channel_target:
                         self.channel_status = "matched"
@@ -622,7 +626,13 @@ class Bridge:
                             self.channel_next_attempt_at = time.monotonic() + 60
                             self._channel_stage("home_assistant_unavailable")
                         else:
-                            await self._restart_docked_for_channel()
+                            try:
+                                await self._restart_docked_for_channel()
+                            except Exception as exc:
+                                self.channel_last_error = str(exc)[:180]
+                                self.channel_next_attempt_at = time.monotonic() + 60
+                                self._channel_stage("error")
+                                raise
                             self._channel_stage("waiting_for_wifi")
                             break  # Close inspection socket and wait for new AP.
                     await asyncio.sleep(1)
