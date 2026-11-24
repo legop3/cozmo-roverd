@@ -232,7 +232,8 @@ async function refreshTelemetry() {
     const audio = response.speaker || {};
     const transport = response.transport || {};
     const reroll = response.channel_reroll || {};
-    const rerollDescription = !reroll.enabled ? "Disabled" :
+    const rerollDescription = !("enabled" in reroll) ? "No live channel status (bridge offline)" :
+      !reroll.enabled ? "Disabled" :
       `${reroll.status || "Unknown"} · current ${reroll.actual ?? "?"}, target ${reroll.target ?? "?"}` +
       (reroll.attempt ? ` · attempt ${reroll.attempt}/${reroll.max_attempts}` : "") +
       (reroll.retry_in_seconds ? ` · retry in ${reroll.retry_in_seconds}s` : "") +
