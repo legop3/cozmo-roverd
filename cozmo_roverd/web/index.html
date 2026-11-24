@@ -89,7 +89,6 @@ details{margin-top:12px}summary{cursor:pointer;color:var(--sub)}.log{white-space
   <div class="notice" id="channel-live" role="status">Waiting for channel status…</div>
   <div class="grid" style="margin-top:14px">
     <div class="field"><label for="channel-target">Required Wi-Fi channel</label><select id="channel-target"><option value="1">Channel 1</option><option value="6">Channel 6</option><option value="11">Channel 11</option></select></div>
-    <div class="field"><label for="channel-max-attempts">Attempts per cycle</label><select id="channel-max-attempts"><option value="3">3 attempts</option><option value="6">6 attempts</option><option value="10">10 attempts</option><option value="20">20 attempts</option></select></div>
     <div class="field wide"><label for="ha-url">Home Assistant URL</label><input id="ha-url" placeholder="http://homeassistant.local:8123" spellcheck="false"></div>
     <div class="field wide"><label for="ha-switch">Dock power switch entity</label><input id="ha-switch" placeholder="switch.cozmo_dock" spellcheck="false"><p class="hint">Must physically interrupt dock power. The underlying switch hardware is managed by Home Assistant.</p></div>
     <div class="field wide"><label for="ha-token">Home Assistant long-lived access token</label><input id="ha-token" type="password" autocomplete="new-password" placeholder="Leave empty to keep existing token"><p class="hint" id="ha-token-hint">Stored in the protected roverd configuration; not returned to the browser.</p></div>
