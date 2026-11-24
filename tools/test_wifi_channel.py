@@ -12,6 +12,10 @@ only the existing PyCozmo packet, not an invented 32-byte body.
 from __future__ import annotations
 
 import argparse
+import logging
+import re
+import subprocess
+import sys
 import time
 from cozmo_roverd.config import load
 from cozmo_roverd.wifi import Wifi
@@ -41,7 +45,26 @@ def packet_for(command: str, channel: int) -> tuple[int, bytes]:
     return command_id, payload
 
 
-def connect_configured_wifi(config_path: str) -> None:
+def connected_ap_channel(interface: str) -> str:
+    """Read the current association without forcing a scan or reassociation."""
+    try:
+        proc = subprocess.run(["iw", "dev", interface, "link"], capture_output=True,
+                              text=True, timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"unavailable ({exc})"
+    if proc.returncode:
+        return "unavailable (iw link failed)"
+    if "Not connected." in proc.stdout:
+        return "not connected"
+    match = re.search(r"\\bfreq:\\s*(\\d+)", proc.stdout)
+    if not match:
+        return "connected; frequency unavailable"
+    frequency = int(match.group(1))
+    channel = 14 if frequency == 2484 else (frequency - 2407) // 5
+    return f"channel {channel} ({frequency} MHz)"
+
+
+def connect_configured_wifi(config_path: str) -> str:
     """Reuse or establish roverd's dedicated Wi-Fi connection before robot I/O."""
     cfg = load(config_path)
     wifi = Wifi(cfg)
@@ -55,7 +78,8 @@ def connect_configured_wifi(config_path: str) -> None:
         wifi.connect()
     if not wifi.active():
         raise RuntimeError("Cozmo Wi-Fi profile did not become active; command not sent")
-    print("Configured Cozmo Wi-Fi connected.", flush=True)
+    print(f"Configured Cozmo Wi-Fi connected; AP {connected_ap_channel(cfg.interface)}.", flush=True)
+    return cfg.interface
 
 
 def main() -> int:
@@ -108,7 +132,17 @@ def main() -> int:
     if args.command.startswith("wifi-"):
         print("WiFiOff's 'enable' flag meaning and reconnect behavior are unverified.", flush=True)
 
-    connect_configured_wifi(args.config)
+    interface = connect_configured_wifi(args.config)
+
+    if args.command == "wifi-telemetry":
+        # PyCozmo already decodes the ESP8266 DebugData frames through its
+        # robot logger; expose those logs during this explicitly selected test.
+        robot_log = logging.getLogger("pycozmo.robot")
+        robot_log.setLevel(logging.DEBUG)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("[robot debug] %(message)s"))
+        robot_log.addHandler(handler)
+        print("Showing robot debug output during telemetry observation.", flush=True)
 
     client = pycozmo.Client(enable_animations=False, enable_procedural_face=False)
     client.start()
@@ -127,6 +161,7 @@ def main() -> int:
         remaining = start + args.observe_seconds - time.monotonic()
         if remaining > 0:
             time.sleep(remaining)
+        print(f"Final AP association: {connected_ap_channel(interface)}", flush=True)
         print("Observation finished.", flush=True)
     finally:
         # Never automatically try to undo a Wi-Fi command over a lost connection.
