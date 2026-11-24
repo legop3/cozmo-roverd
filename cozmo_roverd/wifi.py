@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 import subprocess
 import time
+from pathlib import Path
 from .config import Config
 
 LOG = logging.getLogger(__name__)
 PROFILE = "cozmo-roverd"
+COZMO_MTU = 1500
 
 def nm(*args: str, timeout: int = 30) -> str:
     proc = subprocess.run(["nmcli", *args], capture_output=True, text=True,
@@ -73,6 +75,7 @@ class Wifi:
            "connection.interface-name", self.cfg.interface,
            "connection.autoconnect", "no",
            "802-11-wireless.ssid", self.cfg.ssid,
+           "802-11-wireless.mtu", str(COZMO_MTU),
            "802-11-wireless-security.key-mgmt", "wpa-psk",
            "802-11-wireless-security.psk", self.cfg.password,
            "ipv4.method", "auto", "ipv4.never-default", "yes",
@@ -86,6 +89,21 @@ class Wifi:
         nm("--wait", "20", "connection", "up", self.profile,
            "ifname", self.cfg.interface, timeout=25)
 
+    def ensure_mtu(self):
+        """Override Cozmo DHCP option 26 (576), which breaks large UDP commands."""
+        if not self.active():
+            raise RuntimeError("Cozmo profile is not active")
+        self.verify()
+        configured = nm("-g", "802-11-wireless.mtu", "connection", "show", self.profile)
+        if configured != str(COZMO_MTU):
+            nm("connection", "modify", self.profile, "802-11-wireless.mtu", str(COZMO_MTU))
+        mtu_path = Path("/sys/class/net", self.cfg.interface, "mtu")
+        if int(mtu_path.read_text()) != COZMO_MTU:
+            subprocess.run(["ip", "link", "set", "dev", self.cfg.interface,
+                            "mtu", str(COZMO_MTU)], check=True, timeout=10)
+        if int(mtu_path.read_text()) != COZMO_MTU:
+            raise RuntimeError("Could not apply Cozmo MTU 1500")
+
     def wait(self):
         """Re-use an existing Cozmo association; don't bounce a working link.
 
@@ -97,9 +115,11 @@ class Wifi:
             try:
                 if self.active():
                     self.disconnect_other_cozmo_profiles()
+                    self.ensure_mtu()
                     LOG.info("Reusing active Cozmo Wi-Fi association on %s", self.cfg.interface)
                     return
                 self.connect()
+                self.ensure_mtu()
                 return
             except Exception as exc:
                 LOG.warning("Cozmo Wi-Fi unavailable: %s; retry in 3 seconds", exc)
