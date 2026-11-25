@@ -80,6 +80,8 @@ class Robot:
         self.packet_status = {}
         self.speaker_volume = 500
         self.tts_gain = 100
+        self.tts_multiplier = 1.0
+        self.horn_multiplier = 1.0
         self.last_tts = ""
         self.last_tts_error = None
         self._tts_transport_faulted = False
@@ -1059,13 +1061,39 @@ class Robot:
         with self.lock:
             self.tts_gain = value
 
-    def speak(self, text, *, speed=1.0):
+    def speak(self, text, *, speed=1.0, engine="", voice="", pitch=0):
+        aliases = {"e":"espeak","f":"flite","gtts":"google","googletts":"google","chromegtts":"google"}
+        engine = str(engine or "espeak").strip().lower()
+        engine = aliases.get(engine,engine)
+        if engine not in ("espeak","flite","google"):
+            raise ValueError("Unsupported TTS engine: "+engine)
+        speed = float(speed or 1)
+        pitch = float(pitch or 0)
+        if not math.isfinite(speed) or not math.isfinite(pitch):
+            raise ValueError("Invalid TTS pitch or speed")
+        pitch = max(0,min(99,pitch)) if engine=="espeak" else max(.5,min(2,pitch or 1))
+        if not str(text).strip():
+            raise ValueError("TTS text required")
         self.note_tts(text)
         with self.lock:
             if self._animation is None or not self.ready:
                 raise RuntimeError("Cozmo disconnected")
             self.last_tts_error = None
-            self._animation.speak(self.last_tts,max(.5,min(2.0,float(speed))))
+            self._animation.speak(self.last_tts,max(.5,min(2,speed)),engine,str(voice or ""),pitch)
+
+    def horn(self, action, waveform, freqs):
+        with self.lock:
+            if self._animation is None or not self.ready:
+                raise RuntimeError("Cozmo disconnected")
+            if action in ("stop","off"):
+                self._animation.set_horn("sine",[])
+            elif action in ("start","on","honk"):
+                if not isinstance(freqs,list):
+                    raise ValueError("Horn frequencies must be an array")
+                valid = [float(f) for f in freqs if type(f) in (int,float) and math.isfinite(f) and 0<f<11160][:4]
+                self._animation.set_horn("sine" if waveform=="sine" else "saw",valid)
+            else:
+                raise ValueError("Unsupported horn action")
 
     def close(self):
         """Release the robot promptly without network writes on a dead link.
