@@ -210,7 +210,6 @@ class Bridge:
             payload = msg.get("audioLevels")
             if not isinstance(payload,dict):
                 raise ValueError("audioLevels payload required")
-            from .protocol import finite
             levels = {key:max(0,min(4,finite(payload[key]))) for key in ("ttsGain","hornGain") if key in payload}
             with self.robot.lock:
                 if "ttsGain" in levels:
