@@ -79,6 +79,7 @@ class Robot:
         self.last_packet_error = None
         self.packet_status = {}
         self.speaker_volume = 500
+        self.audio_codec = 0
         self.tts_gain = 100
         self.tts_multiplier = 1.0
         self.horn_multiplier = 1.0
@@ -986,6 +987,7 @@ class Robot:
             return {
                 "speaker_volume": self.speaker_volume,
                 "tts_gain": self.tts_gain,
+                "audio_codec": self.audio_codec,
                 "last_message": self.last_tts,
                 "last_error": self.last_tts_error,
                 "last_queued_frames": self.last_tts_frames,
