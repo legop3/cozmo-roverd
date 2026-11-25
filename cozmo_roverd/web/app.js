@@ -156,6 +156,7 @@ function configFromUI() {
     max_speed: Number(field("speed")),
     speaker_volume: field("speaker-volume").trim() === "" ? null : Number(field("speaker-volume")),
     tts_gain: field("tts-gain").trim() === "" ? null : Number(field("tts-gain")),
+    horn_gain: field("horn-gain").trim() === "" ? null : Number(field("horn-gain")),
     camera_mode: "auto",
     hud: $("hud").checked,
     fps: Number(field("fps")),
@@ -194,6 +195,7 @@ function applyConfig(config, options) {
     : "Enter a long-lived Home Assistant access token.";
   $("speaker-volume").value = config.speaker_volume ?? 65535;
   $("tts-gain").value = config.tts_gain ?? 9000;
+  $("horn-gain").value = config.horn_gain ?? 9000;
   $("video").checked = config.video !== false;
   $("camera-enabled").checked = config.camera_enabled !== false;
   $("hud").checked = config.hud !== false;
