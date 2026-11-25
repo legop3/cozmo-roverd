@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 import websockets
-from .config import load, rtsp_target, VIDEO_DEFAULTS
+from .config import load, rtsp_target, VIDEO_DEFAULTS, CAMERA_DEFAULTS
 from .preview import publish_preview, requested
 from .media import Publisher
 from .protocol import ack, bounded_speed, finite, hello, sensor, state
@@ -69,7 +69,8 @@ class Bridge:
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
                            camera_mode=config.camera_mode, camera_enabled=config.camera_enabled,
                            speaker_volume=config.speaker_volume, tts_gain=config.tts_gain,
-                           horn_gain=config.horn_gain)
+                           horn_gain=config.horn_gain,
+                           **{key: getattr(config, key, default) for key, default in CAMERA_DEFAULTS.items()})
         # Reuse recent SOC/sag learning across service restarts. Do not write
         # persistent files from the PyCozmo receive callback.
         self._gauge_file = Path("/var/log/cozmo-roverd/battery-gauge.json")
@@ -140,7 +141,7 @@ class Bridge:
         # until the hardware supervisor has promoted the verified connection.
         if not self.hardware_ready.is_set():
             return
-        self._preview_frame = (time.monotonic(), image)
+        self._preview_frame = (time.monotonic(), image.info.get("cozmo_native_frame", image))
         if self.publisher:
             self.publisher.submit(image)
         self.robot.queue_camera_analysis(image)
@@ -386,6 +387,7 @@ class Bridge:
                     "state_packets_coalesced": self.robot.state_packets_coalesced,
                     "camera_analysis_skipped": self.robot.camera_analysis_skipped,
                     "diagnostic_minimal": self.cfg.diagnostic_minimal,
+                    "camera_input": self.robot.camera_input_diagnostics(),
                     "camera_transport": {
                         "enabled": self.robot.camera_enabled,
                         "image_chunks_received": self.robot.camera_chunks_received,
@@ -884,7 +886,9 @@ class Bridge:
                 current = Path(self.config_path).stat().st_mtime_ns
                 if stamp != current:
                     config = await asyncio.to_thread(load, self.config_path)
-                    self.publisher.configure(**{key: getattr(config, key) for key in VIDEO_DEFAULTS})
+                    if self.publisher:
+                        self.publisher.configure(**{key: getattr(config, key) for key in VIDEO_DEFAULTS})
+                    await asyncio.to_thread(self.robot.set_camera_input, **{key: getattr(config, key) for key in CAMERA_DEFAULTS})
                     stamp = current
             except (OSError, ValueError, KeyError):
                 LOG.warning("Cannot reload video settings", exc_info=True)
@@ -895,7 +899,7 @@ class Bridge:
         tasks = [asyncio.create_task(self._hardware()), asyncio.create_task(self._mrr()),
                  asyncio.create_task(self._telemetry_file()),
                  asyncio.create_task(self._preview_worker())]
-        if self.publisher and self.config_path:
+        if self.config_path:
             tasks.append(asyncio.create_task(self._video_config_worker()))
         # Maintain independent cadences rather than one serial 50ms loop.
         if not self.cfg.diagnostic_minimal:

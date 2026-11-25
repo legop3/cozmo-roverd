@@ -23,7 +23,7 @@ from importlib.resources import files
 from threading import Lock
 from urllib.parse import urlsplit
 
-from .config import load, rtsp_target, VIDEO_DEFAULTS, video_options
+from .config import load, rtsp_target, VIDEO_DEFAULTS, video_options, CAMERA_DEFAULTS, camera_options
 from .preview import request_preview
 from .home_assistant import DockPower, DockPowerError
 
@@ -187,6 +187,7 @@ def public_config(path: str) -> dict:
         "hud": media.get("hud", True),
         "video": media.get("enabled", True),
         "camera_enabled": media.get("camera_enabled", True),
+        **{key: media.get(key, value) for key, value in CAMERA_DEFAULTS.items()},
         "diagnostic_minimal": media.get("diagnostic_minimal", False),
         "fps": media.get("fps", 15),
         **{key: media.get(key, value) for key, value in VIDEO_DEFAULTS.items()},
@@ -311,7 +312,8 @@ def validate_payload(payload: dict, current: dict) -> dict:
                       },
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
             "media": {"enabled": video, "camera_enabled": camera_enabled, "diagnostic_minimal": diagnostic_minimal, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud,
-                       **video_options(current.get("media", {}))},
+                       **video_options(current.get("media", {})),
+                       **camera_options(current.get("media", {}))},
             "audio": {"speaker_volume": speaker_volume, "tts_gain": tts_gain, "horn_gain": horn_gain},
             "channel_reroll": reroll}
 
@@ -517,6 +519,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"reachable": True, "switch_state": status,
                                      "message": "Home Assistant switch is " + status +
                                                 ". No power command was sent."})
+            elif self.path == "/api/camera-input":
+                if set(data) != set(CAMERA_DEFAULTS):
+                    raise ValueError("Expected native camera mode and resolution")
+                options = camera_options(data)
+                with SAVE_LOCK:
+                    saved = read_config(self.config_path)
+                    saved.setdefault("media", {}).update(options)
+                    write_config(self.config_path, saved)
+                self.send_json(200, {"saved": True, "message": "Camera request saved. Check received mode below."})
             elif self.path == "/api/video-settings":
                 if set(data) != set(VIDEO_DEFAULTS):
                     raise ValueError("Expected all four video settings")

@@ -200,6 +200,8 @@ function applyConfig(config, options) {
   $("video").checked = config.video !== false;
   $("camera-enabled").checked = config.camera_enabled !== false;
   $("hud").checked = config.hud !== false;
+  $("camera-color").value = String(config.camera_color !== false);
+  $("camera-resolution").value = config.camera_resolution || "QVGA";
   $("output-scale").value = String(config.output_scale ?? 1);
   $("scale-filter").value = config.scale_filter ?? "lanczos";
   $("h264-crf").value = config.h264_crf ?? 17;
@@ -336,6 +338,12 @@ function renderServiceStatus() {
   setText("bridge-connection", "Service: " + (!service ? "unknown" : active ? "running" : service.state));
   setText("mrr-connection", "MRR: " + (fresh ? data.mrr_connected ? "connected" : "disconnected" : "unknown"));
   const stream = fresh ? data.video || {} : {};
+  const input = fresh ? data.camera_input : null;
+  const received = input?.received;
+  const request = input ? "Requested " + input.camera_resolution + " " + (input.camera_color ? "color" : "grayscale") : "No camera telemetry";
+  const actual = received ? " · Received " + (received.resolution || "unknown mode") + " " + (received.color == null ? "unknown color" : received.color ? "color" : "grayscale") + " · Native " + received.native_size.join(" × ") + " · Decoded " + received.decoded_size.join(" × ") + " · " + (received.encoding || "unknown encoding") : " · No fresh decoded frames";
+  const mismatch = received && (received.resolution && received.resolution !== input.camera_resolution || received.color != null && received.color !== input.camera_color);
+  setText("camera-input-status", request + actual + (mismatch ? " · Requested mode not received" : "") + (input ? " · " + input.input_fps + " FPS · " + input.payload_kbps + " kb/s camera payload" : ""));
   setText("video-quality-status", "Active encoder: " + (stream.encoder || "—") + (stream.output_resolution ? " · " + stream.output_resolution : "") + (stream.encoder === "libx264" ? " · CRF " + stream.h264_crf + " · " + stream.h264_preset : ""));
   setText("video-connection", "RTSP: " + (stream.enabled ? stream.publisher_running ? "publishing" : "unavailable" : "disabled"));
   setText("service-label", active ? "Bridge service is running" : "Bridge service is " + (service?.state || "unknown"));
@@ -579,6 +587,13 @@ function setupListeners() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopPreview();
   });
+  $("apply-camera-input").addEventListener("click", () =>
+    busy($("apply-camera-input"), async () => {
+      const options = {camera_color: field("camera-color") === "true", camera_resolution: field("camera-resolution")};
+      const result = await api("/api/camera-input", options);
+      Object.assign(state.config, options);
+      show(result.message);
+    }, "Applying…"));
   $("apply-video-quality").addEventListener("click", () =>
     busy($("apply-video-quality"), async () => {
       if (!$("h264-crf").reportValidity() || field("h264-crf") === "") throw new Error("Enter a CRF from 0 to 35");
@@ -589,7 +604,7 @@ function setupListeners() {
       show(result.message);
     }, "Applying…"));
   for (const control of document.querySelectorAll("[data-page] input,[data-page] select")) {
-    if (control.closest("#video-quality-panel")) continue;
+    if (control.closest("#video-quality-panel, #camera-input-panel")) continue;
     control.addEventListener("change", markDirty);
     if (control.matches('input:not([type=checkbox])')) {
       control.addEventListener("input", markDirty);

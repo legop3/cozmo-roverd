@@ -12,11 +12,15 @@ git clone --quiet --no-checkout "$UPSTREAM" "$WORK/pycozmo"
 git -C "$WORK/pycozmo" checkout --quiet "$COMMIT"
 git -C "$WORK/pycozmo" apply --check "$ROOT/patches/pycozmo-udp-frame-sequence.patch"
 git -C "$WORK/pycozmo" apply "$ROOT/patches/pycozmo-udp-frame-sequence.patch"
+git -C "$WORK/pycozmo" apply --check "$ROOT/patches/pycozmo-native-camera.patch"
+git -C "$WORK/pycozmo" apply "$ROOT/patches/pycozmo-native-camera.patch"
 "$PYTHON" -m pip install --no-deps --force-reinstall "$WORK/pycozmo"
 "$PYTHON" - <<'PY'
 import inspect
 import pycozmo
 from pycozmo.conn import SendThread
+from pycozmo.client import Client
+assert "cozmo_native_frame" in inspect.getsource(Client._process_completed_image)
 source = inspect.getsource(SendThread._send_packets)
 assert "self._send_frame(to_frame, first_seq, last_seq, last_ack)" in source, (
     "The patched pycozmo module was not installed")

@@ -13,14 +13,20 @@ from .animation import Animation, install_recovery
 from .face import status_image, _layout
 from .status_lights import backpack_lights, charger_lights, charger_signature
 from .telemetry import snapshot
+from .config import camera_options
+from collections import deque
 from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
-    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True, speaker_volume=65535, tts_gain=9000, horn_gain=9000):
+    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True, speaker_volume=65535, tts_gain=9000, horn_gain=9000, camera_color=True, camera_resolution="QVGA"):
         self.max_speed = max_speed
         self.camera_mode = camera_mode
         self.camera_enabled = camera_enabled
+        self.camera_input = camera_options({"camera_color": camera_color, "camera_resolution": camera_resolution})
+        self.camera_received = None
+        self.camera_frame_times = deque(maxlen=240)
+        self.camera_payload_samples = deque(maxlen=4096)
         self.manual_exposure_ms = 10
         self._auto_gain = 1.0
         self._auto_exposure_ms = 16
@@ -147,7 +153,7 @@ class Robot:
             self._start_packet_workers()
             cli.connect()
             cli.wait_for_robot(timeout=12)
-            cli.enable_camera(enable=self.camera_enabled and not inspection, color=True)
+            self._send_camera_mode(cli, self.camera_enabled and not inspection)
             # Keep firmware audio/animation disabled in both modes.
             cli.enable_animations(False)
             cli.enable_procedural_face(False)
@@ -207,7 +213,7 @@ class Robot:
                 raise RuntimeError("No active inspection connection to promote")
             cli = self.client
             # Match the regular connect() setup, delayed until channel match.
-            cli.enable_camera(enable=self.camera_enabled, color=True)
+            self._send_camera_mode(cli, self.camera_enabled)
             cli.conn.send(pycozmo.protocol_encoder.EnableStopOnCliff(enable=False))
             if self.camera_enabled:
                 self.configure_camera(cli)
@@ -218,10 +224,45 @@ class Robot:
         self.on_state()
         LOG.info("Cozmo inspection promoted to normal operation")
 
+    def _send_camera_mode(self, cli, enabled):
+        options = self.camera_input
+        self.camera_received = None
+        self.camera_frame_times.clear()
+        self.camera_payload_samples.clear()
+        if options["camera_resolution"] == "QVGA":
+            cli.enable_camera(enable=enabled, color=options["camera_color"])
+        else:
+            from pycozmo import protocol_encoder as p
+            cli.conn.send(p.EnableCamera(
+                image_send_mode=p.ImageSendMode.Stream if enabled else p.ImageSendMode.Off,
+                image_resolution=getattr(p.ImageResolution, options["camera_resolution"])))
+            cli.conn.send(p.EnableColorImages(enable=options["camera_color"]))
+
+    def set_camera_input(self, **options):
+        desired = camera_options(options)
+        with self.lock:
+            if desired == self.camera_input:
+                return
+            self.camera_input = desired
+            if self.client is not None and self.ready and not self._inspection_mode and self.camera_enabled:
+                self._send_camera_mode(self.client, True)
+
+    def camera_input_diagnostics(self):
+        now = time.monotonic()
+        frames = tuple(self.camera_frame_times)
+        payload = tuple(self.camera_payload_samples)
+        received = self.camera_received
+        actual = ({k: v for k, v in received.items() if k != "at"}
+                  if received and now - received["at"] <= 3 else None)
+        return {**self.camera_input, "received": actual,
+                "input_fps": round(sum(t >= now - 2 for t in frames) / 2, 1),
+                "payload_kbps": round(sum(size for t, size in payload if t >= now - 2) * 8 / 2000, 1)}
+
     def _camera_chunk(self, pkt):
         """Observe incoming image traffic without decoding or copying it."""
         self.camera_chunks_received += 1
         self.camera_last_chunk_at = time.monotonic()
+        self.camera_payload_samples.append((self.camera_last_chunk_at, len(getattr(pkt, "data", b""))))
 
     def _camera_image(self, image):
         if self._inspection_mode:
@@ -231,6 +272,13 @@ class Robot:
         if self.camera_last_image_at is not None:
             self._camera_gap_max = max(self._camera_gap_max, now-self.camera_last_image_at)
         self.camera_last_image_at = now
+        self.camera_frame_times.append(now)
+        raw = image.info.get("cozmo_native_frame", image)
+        self.camera_received = {"at": now, "decoded_size": list(image.size),
+                                "native_size": list(raw.size),
+                                "resolution": image.info.get("cozmo_resolution"),
+                                "encoding": image.info.get("cozmo_encoding"),
+                                "color": image.info.get("cozmo_color")}
         self.on_frame(image)
 
     def _charging(self, value):

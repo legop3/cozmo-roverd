@@ -6,6 +6,17 @@ from urllib.parse import urlsplit
 import re
 import tomllib
 
+CAMERA_DEFAULTS = {"camera_color": True, "camera_resolution": "QVGA"}
+CAMERA_RESOLUTIONS = ("QQVGA", "QVGA", "CVGA", "VGA")
+
+def camera_options(media):
+    options = {key: media.get(key, value) for key, value in CAMERA_DEFAULTS.items()}
+    if type(options["camera_color"]) is not bool:
+        raise ValueError("Camera color must be a boolean")
+    if options["camera_resolution"] not in CAMERA_RESOLUTIONS:
+        raise ValueError("Invalid native camera resolution")
+    return options
+
 VIDEO_DEFAULTS = {"output_scale": 1, "scale_filter": "lanczos",
                   "h264_crf": 17, "h264_preset": "veryfast"}
 SCALE_FILTERS = ("nearest", "bilinear", "bicubic", "lanczos")
@@ -36,6 +47,8 @@ class Config:
     camera_mode: str = "auto"
     video: bool = True
     camera_enabled: bool = True
+    camera_color: bool = True
+    camera_resolution: str = "QVGA"
     diagnostic_minimal: bool = False
     private: bool = False
     rtsp_url: str = ""
@@ -70,6 +83,7 @@ def load(path: str) -> Config:
         camera_mode="auto",
         video=bool(media.get("enabled", True)),
         camera_enabled=media.get("camera_enabled", True),
+        **camera_options(media),
         diagnostic_minimal=media.get("diagnostic_minimal", False),
         private=rover.get("private", False),
         rtsp_url=str(media.get("rtsp_url", "")),

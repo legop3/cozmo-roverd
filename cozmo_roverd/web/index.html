@@ -164,9 +164,17 @@ details{border-top:1px solid var(--border);padding-top:13px;margin-top:17px}summ
         <details><summary>Advanced RTSP destination</summary><div class="field"><label for="rtsp-url">Override publishing URL</label><input id="rtsp-url" spellcheck="false" placeholder="Automatic from MRR server"><p class="hint">Leave blank to use the MRR hostname and default stream path.</p></div></details>
       </div>
     </div>
+    <div class="panel" id="camera-input-panel"><div class="panel-header"><div><h3>Native camera input</h3><p>Requests sent to Cozmo itself, independent of H.264 output.</p></div></div>
+      <div class="panel-content stack">
+        <div class="field"><label for="camera-color">Color mode</label><select id="camera-color"><option value="true">Color</option><option value="false">Grayscale</option></select></div>
+        <div class="field"><label for="camera-resolution">Requested native resolution</label><select id="camera-resolution"><option value="QQVGA">160 × 120 (experimental)</option><option value="QVGA">320 × 240 (standard)</option><option value="CVGA">400 × 296 (experimental)</option><option value="VGA">640 × 480 (experimental)</option></select><p class="hint">Firmware may ignore experimental requests or stop sending frames. Return to QVGA if needed. Exposure remains automatic.</p></div>
+        <button class="btn primary" id="apply-camera-input" type="button">Apply camera input</button>
+        <p class="hint" id="camera-input-status">Waiting for camera telemetry.</p>
+      </div>
+    </div>
     <div class="panel" id="video-quality-panel"><div class="panel-header"><div><h3>Video encoding quality</h3><p>Apply without reconnecting Cozmo. CRF and preset apply to libx264 only.</p></div></div>
       <div class="panel-content stack">
-        <div class="field"><label for="output-scale">Output resolution</label><select id="output-scale"><option value="1">320 × 240 (native)</option><option value="2">640 × 480</option><option value="3">960 × 720</option><option value="4">1280 × 960</option></select></div>
+        <div class="field"><label for="output-scale">Output resolution</label><select id="output-scale"><option value="1">320 × 240</option><option value="2">640 × 480</option><option value="3">960 × 720</option><option value="4">1280 × 960</option></select></div>
         <div class="field"><label for="scale-filter">Scaling algorithm</label><select id="scale-filter"><option value="nearest">Nearest neighbor</option><option value="bilinear">Bilinear</option><option value="bicubic">Bicubic</option><option value="lanczos">Lanczos</option></select></div>
         <div class="field"><label for="h264-crf">H.264 CRF (lower = higher quality)</label><input id="h264-crf" type="number" min="0" max="35" step="1"><p class="hint">17 is the original setting. 0 is lossless after pixel-format conversion and may not play in all browsers.</p></div>
         <div class="field"><label for="h264-preset">Encoder preset</label><select id="h264-preset"><option>ultrafast</option><option>superfast</option><option>veryfast</option><option>faster</option><option>fast</option><option>medium</option><option>slow</option></select></div>
@@ -174,7 +182,7 @@ details{border-top:1px solid var(--border);padding-top:13px;margin-top:17px}summ
         <p class="hint" id="video-quality-status">Active encoder: —</p>
       </div>
     </div>
-    <div class="panel"><div class="panel-header"><div><h3>Original camera preview</h3><p>Lossless decoded camera frames, before HUD, scaling and H.264.</p></div><button class="btn sm" id="toggle-preview" type="button">Start preview</button></div>
+    <div class="panel"><div class="panel-header"><div><h3>Original camera preview</h3><p>Lossless decoded camera pixels before horizontal stretching, HUD, scaling and H.264.</p></div><button class="btn sm" id="toggle-preview" type="button">Start preview</button></div>
       <div class="panel-content"><img id="raw-preview" alt="Original Cozmo camera" hidden style="width:100%;max-width:640px;aspect-ratio:4/3;object-fit:contain"><p class="hint" id="preview-status">Preview stopped.</p></div>
     </div>
     <div class="panel"><div class="panel-header"><div><h3>Audio</h3><p>Hardware speaker volume and digital speech gain</p></div></div>
