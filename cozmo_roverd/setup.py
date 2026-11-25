@@ -187,7 +187,7 @@ def public_config(path: str) -> dict:
         "hud": media.get("hud", True),
         "video": media.get("enabled", True),
         "camera_enabled": media.get("camera_enabled", True),
-        **{key: media.get(key, value) for key, value in CAMERA_DEFAULTS.items()},
+        **camera_options(media),
         "diagnostic_minimal": media.get("diagnostic_minimal", False),
         "fps": media.get("fps", 15),
         **{key: media.get(key, value) for key, value in VIDEO_DEFAULTS.items()},
@@ -522,6 +522,8 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/camera-input":
                 if set(data) != set(CAMERA_DEFAULTS):
                     raise ValueError("Expected native camera mode and resolution")
+                if data["camera_resolution"] != "QVGA":
+                    raise ValueError("Only QVGA is supported by Cozmo")
                 options = camera_options(data)
                 with SAVE_LOCK:
                     saved = read_config(self.config_path)

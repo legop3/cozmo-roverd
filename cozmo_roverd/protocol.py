@@ -26,6 +26,7 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
         "media": {"rtspPort": 8554, "video": {"enabled": video, "profile": "custom"}},
         "peripherals": [{"id": "cozmo", "name": "Cozmo", "controls": [
             {"id": "lift", "name": "Lift height (%)", "type": "slider", "min": 0, "max": 100},
+            {"id": "camera_mode", "name": "Camera mode (Color / Grayscale)", "type": "button", "mode": "momentary"},
             {"id": "reconnect", "name": "Reconnect Cozmo", "type": "button", "mode": "momentary"}
         ]}],
     }

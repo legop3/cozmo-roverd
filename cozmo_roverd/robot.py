@@ -229,23 +229,31 @@ class Robot:
         self.camera_received = None
         self.camera_frame_times.clear()
         self.camera_payload_samples.clear()
-        if options["camera_resolution"] == "QVGA":
-            cli.enable_camera(enable=enabled, color=options["camera_color"])
-        else:
-            from pycozmo import protocol_encoder as p
-            cli.conn.send(p.EnableCamera(
-                image_send_mode=p.ImageSendMode.Stream if enabled else p.ImageSendMode.Off,
-                image_resolution=getattr(p.ImageResolution, options["camera_resolution"])))
-            cli.conn.send(p.EnableColorImages(enable=options["camera_color"]))
+        cli.enable_camera(enable=enabled, color=options["camera_color"])
 
     def set_camera_input(self, **options):
         desired = camera_options(options)
         with self.lock:
             if desired == self.camera_input:
                 return
-            self.camera_input = desired
             if self.client is not None and self.ready and not self._inspection_mode and self.camera_enabled:
-                self._send_camera_mode(self.client, True)
+                from pycozmo import protocol_encoder as p
+                self.client.conn.send(p.EnableColorImages(enable=desired["camera_color"]))
+            self.camera_input = desired
+
+    def toggle_camera_color(self):
+        """Switch the camera itself, without restarting capture or RTSP."""
+        from pycozmo import protocol_encoder as p
+        with self.lock:
+            if self.client is None or not self.ready or self._inspection_mode:
+                raise RuntimeError("Cozmo disconnected")
+            if not self.camera_enabled:
+                raise RuntimeError("Cozmo camera is disabled")
+            color = not self.camera_input["camera_color"]
+            self.client.conn.send(p.EnableColorImages(enable=color))
+            self.camera_input = {"camera_color": color, "camera_resolution": "QVGA"}
+            LOG.info("Camera mode requested: %s", "color" if color else "grayscale")
+        self.on_state()
 
     def camera_input_diagnostics(self):
         now = time.monotonic()

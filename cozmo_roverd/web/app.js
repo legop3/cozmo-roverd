@@ -201,7 +201,6 @@ function applyConfig(config, options) {
   $("camera-enabled").checked = config.camera_enabled !== false;
   $("hud").checked = config.hud !== false;
   $("camera-color").value = String(config.camera_color !== false);
-  $("camera-resolution").value = config.camera_resolution || "QVGA";
   $("output-scale").value = String(config.output_scale ?? 1);
   $("scale-filter").value = config.scale_filter ?? "lanczos";
   $("h264-crf").value = config.h264_crf ?? 17;
@@ -589,7 +588,7 @@ function setupListeners() {
   });
   $("apply-camera-input").addEventListener("click", () =>
     busy($("apply-camera-input"), async () => {
-      const options = {camera_color: field("camera-color") === "true", camera_resolution: field("camera-resolution")};
+      const options = {camera_color: field("camera-color") === "true", camera_resolution: "QVGA"};
       const result = await api("/api/camera-input", options);
       Object.assign(state.config, options);
       show(result.message);

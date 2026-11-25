@@ -230,6 +230,9 @@ class Bridge:
             control, value = p.get("control"), p.get("value")
             if control == "lift" and type(value) is int and 0 <= value <= 100:
                 self.robot.lift(value)
+            elif control == "camera_mode" and type(value) is bool:
+                if value:
+                    self.robot.toggle_camera_color()
             elif control == "reconnect" and value is True:
                 # Request a clean teardown through _hardware. Do not close
                 # the client here: execute() runs on a different thread.
@@ -881,6 +884,7 @@ class Bridge:
 
     async def _video_config_worker(self):
         stamp = None
+        saved_camera = {key: getattr(self.cfg, key, default) for key, default in CAMERA_DEFAULTS.items()}
         while not self.stop_event.is_set():
             try:
                 current = Path(self.config_path).stat().st_mtime_ns
@@ -888,7 +892,10 @@ class Bridge:
                     config = await asyncio.to_thread(load, self.config_path)
                     if self.publisher:
                         self.publisher.configure(**{key: getattr(config, key) for key in VIDEO_DEFAULTS})
-                    await asyncio.to_thread(self.robot.set_camera_input, **{key: getattr(config, key) for key in CAMERA_DEFAULTS})
+                    camera = {key: getattr(config, key) for key in CAMERA_DEFAULTS}
+                    if camera != saved_camera:
+                        await asyncio.to_thread(self.robot.set_camera_input, **camera)
+                        saved_camera = camera
                     stamp = current
             except (OSError, ValueError, KeyError):
                 LOG.warning("Cannot reload video settings", exc_info=True)

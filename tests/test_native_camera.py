@@ -15,15 +15,21 @@ def test_camera_options():
     with pytest.raises(ValueError):
         camera_options({"camera_color": "false"})
 
-def test_native_resolution_command_and_grayscale():
+def test_experimental_resolution_migrates_to_qvga():
+    assert camera_options({"camera_resolution": "VGA"})["camera_resolution"] == "QVGA"
+
+def test_camera_mode_toggle_only_sends_color_command():
     robot = make_robot()
-    robot.camera_input = camera_options({"camera_resolution": "VGA", "camera_color": False})
-    cli = Mock()
-    robot._send_camera_mode(cli, True)
-    packets = [call.args[0] for call in cli.conn.send.call_args_list]
-    assert isinstance(packets[0], p.EnableCamera)
-    assert packets[0].image_resolution == p.ImageResolution.VGA
-    assert not packets[1].enable
+    robot.client = Mock()
+    robot.ready = True
+    robot.toggle_camera_color()
+    assert robot.camera_input["camera_color"] is False
+    robot.toggle_camera_color()
+    assert robot.camera_input["camera_color"] is True
+    packets = [call.args[0] for call in robot.client.conn.send.call_args_list]
+    assert all(isinstance(packet, p.EnableColorImages) for packet in packets)
+    assert [bool(packet.enable) for packet in packets] == [False, True]
+    robot.client.enable_camera.assert_not_called()
 
 def test_native_metadata():
     robot = make_robot()

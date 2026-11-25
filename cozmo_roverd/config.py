@@ -15,6 +15,8 @@ def camera_options(media):
         raise ValueError("Camera color must be a boolean")
     if options["camera_resolution"] not in CAMERA_RESOLUTIONS:
         raise ValueError("Invalid native camera resolution")
+    # Migrate previously saved experimental resolutions to the working mode.
+    options["camera_resolution"] = "QVGA"
     return options
 
 VIDEO_DEFAULTS = {"output_scale": 1, "scale_filter": "lanczos",

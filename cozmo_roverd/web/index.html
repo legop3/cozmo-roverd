@@ -166,8 +166,8 @@ details{border-top:1px solid var(--border);padding-top:13px;margin-top:17px}summ
     </div>
     <div class="panel" id="camera-input-panel"><div class="panel-header"><div><h3>Native camera input</h3><p>Requests sent to Cozmo itself, independent of H.264 output.</p></div></div>
       <div class="panel-content stack">
-        <div class="field"><label for="camera-color">Color mode</label><select id="camera-color"><option value="true">Color</option><option value="false">Grayscale</option></select></div>
-        <div class="field"><label for="camera-resolution">Requested native resolution</label><select id="camera-resolution"><option value="QQVGA">160 × 120 (experimental)</option><option value="QVGA">320 × 240 (standard)</option><option value="CVGA">400 × 296 (experimental)</option><option value="VGA">640 × 480 (experimental)</option></select><p class="hint">Firmware may ignore experimental requests or stop sending frames. Return to QVGA if needed. Exposure remains automatic.</p></div>
+        <div class="field"><label for="camera-color">Default camera mode</label><select id="camera-color"><option value="true">Color</option><option value="false">Grayscale</option></select></div>
+        <p class="hint">Native resolution: 320 × 240 (QVGA). The rover accessory switches the live camera mode; this setting is the startup default. Exposure remains automatic.</p>
         <button class="btn primary" id="apply-camera-input" type="button">Apply camera input</button>
         <p class="hint" id="camera-input-status">Waiting for camera telemetry.</p>
       </div>

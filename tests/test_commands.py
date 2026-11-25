@@ -13,6 +13,7 @@ class FakeRobot:
         self.undock_active = False
     def head(self, angle): self.calls.append(("head", angle))
     def lift(self, height): self.calls.append(("lift", height))
+    def toggle_camera_color(self): self.calls.append(("camera_mode",))
     def light(self, state):
         self.headlight = state
         self.calls.append(("light", state))
@@ -164,3 +165,15 @@ def test_rover_state_is_sent_only_if_changed():
         await task
 
     asyncio.run(run())
+
+def test_camera_mode_button_press_only(bridge):
+    def press(value):
+        bridge.execute({"type": "peripheral", "peripheral": {
+            "id": "cozmo", "control": "camera_mode", "value": value}})
+    press(True)
+    press(False)
+    press(True)
+    assert bridge.robot.calls == [("camera_mode",), ("camera_mode",)]
+    for invalid in (1, "true", None):
+        with pytest.raises(ValueError):
+            press(invalid)
