@@ -31,6 +31,7 @@ class Config:
     home_assistant_switch: str = ""
     speaker_volume: int = 65535
     tts_gain: int = 9000
+    horn_gain: int = 9000
 
 def load(path: str) -> Config:
     data = tomllib.loads(Path(path).read_text())
@@ -60,11 +61,14 @@ def load(path: str) -> Config:
         home_assistant_switch=str(reroll.get("switch_entity", "")).strip(),
         speaker_volume=audio.get("speaker_volume", 65535),
         tts_gain=audio.get("tts_gain", 9000),
+        horn_gain=audio.get("horn_gain", 9000),
     )
     if type(c.speaker_volume) is not int or not 0 <= c.speaker_volume <= 65535:
         raise ValueError("audio.speaker_volume must be an integer 0–65535")
     if type(c.tts_gain) is not int or not 0 <= c.tts_gain <= 32767:
         raise ValueError("audio.tts_gain must be an integer 0–32767")
+    if type(c.horn_gain) is not int or not 0 <= c.horn_gain <= 32767:
+        raise ValueError("audio.horn_gain must be an integer 0–32767")
     if type(c.diagnostic_minimal) is not bool:
         raise ValueError("media.diagnostic_minimal must be a boolean")
     if type(c.camera_enabled) is not bool:
