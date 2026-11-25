@@ -25,6 +25,7 @@ hud = true
 [audio]
 speaker_volume = 65535
 tts_gain = 9000
+horn_gain = 9000
 
 # Optional: keep docked Cozmo on a chosen Wi-Fi channel.
 # Requires a Home Assistant switch that physically controls dock power.
