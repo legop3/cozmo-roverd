@@ -29,11 +29,14 @@ class Config:
     home_assistant_url: str = ""
     home_assistant_token: str = ""
     home_assistant_switch: str = ""
+    speaker_volume: int = 65535
+    tts_gain: int = 9000
 
 def load(path: str) -> Config:
     data = tomllib.loads(Path(path).read_text())
     rover, wifi, media = data.get("rover", {}), data.get("wifi", {}), data.get("media", {})
     reroll = data.get("channel_reroll", {})
+    audio = data.get("audio", {})
     c = Config(
         name=str(rover["name"]), server_url=str(rover["server_url"]),
         interface=str(wifi["interface"]), ssid=str(wifi.get("ssid", "")),
@@ -55,7 +58,13 @@ def load(path: str) -> Config:
         home_assistant_url=str(reroll.get("home_assistant_url", "")).strip(),
         home_assistant_token=str(reroll.get("home_assistant_token", "")),
         home_assistant_switch=str(reroll.get("switch_entity", "")).strip(),
+        speaker_volume=audio.get("speaker_volume", 65535),
+        tts_gain=audio.get("tts_gain", 9000),
     )
+    if type(c.speaker_volume) is not int or not 0 <= c.speaker_volume <= 65535:
+        raise ValueError("audio.speaker_volume must be an integer 0–65535")
+    if type(c.tts_gain) is not int or not 0 <= c.tts_gain <= 32767:
+        raise ValueError("audio.tts_gain must be an integer 0–32767")
     if type(c.diagnostic_minimal) is not bool:
         raise ValueError("media.diagnostic_minimal must be a boolean")
     if type(c.camera_enabled) is not bool:
