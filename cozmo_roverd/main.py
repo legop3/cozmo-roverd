@@ -195,10 +195,28 @@ class Bridge:
             text = payload.get("text", "")
             if not isinstance(text, str):
                 raise ValueError("TTS text must be a string")
-            if payload.get("speak", True) is not False:
-                self.robot.speak(text)
+            if payload.get("speak", False) is True:
+                self.robot.speak(text, engine=payload.get("engine"), voice=payload.get("voice"),
+                                 pitch=payload.get("pitch"), speed=payload.get("speed"))
             else:
                 self.robot.note_tts(text)
+        elif cmd == "horn":
+            payload = msg.get("horn")
+            if not isinstance(payload, dict):
+                raise ValueError("horn payload required")
+            self.robot.horn(str(payload.get("action","")).lower(),
+                            str(payload.get("waveform","")).lower(),payload.get("freqs",[]))
+        elif cmd == "audioLevels":
+            payload = msg.get("audioLevels")
+            if not isinstance(payload,dict):
+                raise ValueError("audioLevels payload required")
+            from .protocol import finite
+            levels = {key:max(0,min(4,finite(payload[key]))) for key in ("ttsGain","hornGain") if key in payload}
+            with self.robot.lock:
+                if "ttsGain" in levels:
+                    self.robot.tts_multiplier = levels["ttsGain"]
+                if "hornGain" in levels:
+                    self.robot.horn_multiplier = levels["hornGain"]
         elif cmd == "headlight":
             payload = msg.get("headlight")
             action = payload.get("action") if isinstance(payload, dict) else None
