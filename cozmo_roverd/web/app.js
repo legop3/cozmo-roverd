@@ -154,6 +154,8 @@ function configFromUI() {
     ssid: field("ssid").trim(),
     password: field("password"),
     max_speed: Number(field("speed")),
+    speaker_volume: field("speaker-volume").trim() === "" ? null : Number(field("speaker-volume")),
+    tts_gain: field("tts-gain").trim() === "" ? null : Number(field("tts-gain")),
     camera_mode: "auto",
     hud: $("hud").checked,
     fps: Number(field("fps")),
@@ -190,6 +192,8 @@ function applyConfig(config, options) {
   $("ha-token-hint").textContent = config.home_assistant_has_token
     ? "Token saved. Leave blank to keep it when URL and switch remain unchanged."
     : "Enter a long-lived Home Assistant access token.";
+  $("speaker-volume").value = config.speaker_volume ?? 65535;
+  $("tts-gain").value = config.tts_gain ?? 9000;
   $("video").checked = config.video !== false;
   $("camera-enabled").checked = config.camera_enabled !== false;
   $("hud").checked = config.hud !== false;
