@@ -142,7 +142,7 @@ class Animation:
         if now >= deadline:
             self.horn = None
             return None
-        peak = min(32767,round(self.robot.tts_gain*self.robot.horn_multiplier))
+        peak = min(32767,round(self.robot.horn_gain*self.robot.horn_multiplier))
         samples = []
         for i in range(744):
             t = (self.horn_index+i)/22320
