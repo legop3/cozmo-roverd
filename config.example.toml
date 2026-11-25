@@ -22,6 +22,10 @@ hud = true
 # Optional override, otherwise rtsp://SERVER-HOST:8554/<rover.name>
 # rtsp_url = "rtsp://YOUR-MRR-SERVER:8554/cozmo"
 
+[audio]
+speaker_volume = 65535
+tts_gain = 9000
+
 # Optional: keep docked Cozmo on a chosen Wi-Fi channel.
 # Requires a Home Assistant switch that physically controls dock power.
 [channel_reroll]
