@@ -56,7 +56,7 @@ def prepare(root):
         "different_bytes":sum(a!=b for a,b in zip(standard,stock))}}),flush=True)
     return standard,stock
 
-def worker(root,config):
+def worker(root,config,volume):
     import pycozmo
     from pycozmo import protocol_encoder as p
     from pycozmo.frame import Frame
@@ -161,10 +161,10 @@ def worker(root,config):
         cli.enable_camera(enable=True,color=True)
         time.sleep(1)
         trial("muted-standard",standard,0,True)
-        print("Silent check complete. Three short speech samples follow at volume 500; Ctrl-C stops the test.",flush=True)
-        for name,data,continuous in [("standard-burst",standard,False),("standard-clocked",standard,True),("stock-clocked",stock,True)]:
+        print(f"Silent check complete. Two short speech samples follow at volume {volume}; Ctrl-C stops the test.",flush=True)
+        for name,data,continuous in [("standard-clocked",standard,True),("stock-clocked",stock,True)]:
             print("Playing "+name,flush=True)
-            trial(name,data,VOLUME,continuous)
+            trial(name,data,volume,continuous)
             time.sleep(1)
     finally:
         try:
@@ -178,9 +178,12 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config",default="/etc/cozmo-roverd.toml")
     ap.add_argument("--worker")
+    ap.add_argument("--volume",type=int,default=VOLUME,help="Fixed hardware volume for both samples; no automatic increase")
     args=ap.parse_args()
+    if not 0 <= args.volume <= 65535:
+        ap.error("volume must be 0..65535")
     if args.worker:
-        worker(Path(args.worker),args.config)
+        worker(Path(args.worker),args.config,args.volume)
         return
     root=Path("/var/log/cozmo-roverd/audio-diagnostic")/datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     root.mkdir(parents=True)
@@ -189,7 +192,7 @@ def main():
         if active: h._service_action("stop")
         if h._service_active(): raise RuntimeError("Bridge still active")
         time.sleep(10)
-        proc=subprocess.Popen([sys.executable,"-m","cozmo_roverd.audio_diagnostic","--worker",str(root),"--config",args.config])
+        proc=subprocess.Popen([sys.executable,"-m","cozmo_roverd.audio_diagnostic","--worker",str(root),"--config",args.config,"--volume",str(args.volume)])
         try:
             rc=proc.wait(timeout=160)
             if rc: raise RuntimeError("Diagnostic worker exit "+str(rc))
