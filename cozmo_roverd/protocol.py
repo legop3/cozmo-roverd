@@ -21,7 +21,8 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
         "headlight": {"enabled": True, "initialOn": False},
         "laser": {"enabled": False},
         "audio": {"ttsEnabled": True, "defaultEngine": "espeak", "defaultVoice": "en-us"},
-        "horn": {"enabled": False},
+        "horn": {"enabled": True, "volume": 0.25, "sineGain": 1.0, "sawGain": 1.0,
+                 "sampleRate": 22320, "channels": 1, "maxDuration": "2s"},
         "media": {"rtspPort": 8554, "video": {"enabled": video, "profile": "custom"}},
         "peripherals": [{"id": "cozmo", "name": "Cozmo", "controls": [
             {"id": "lift", "name": "Lift height (%)", "type": "slider", "min": 0, "max": 100},
