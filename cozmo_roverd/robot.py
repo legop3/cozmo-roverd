@@ -17,7 +17,7 @@ from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
-    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True, speaker_volume=65535, tts_gain=9000):
+    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True, speaker_volume=65535, tts_gain=9000, horn_gain=9000):
         self.max_speed = max_speed
         self.camera_mode = camera_mode
         self.camera_enabled = camera_enabled
@@ -80,6 +80,7 @@ class Robot:
         self.packet_status = {}
         self.speaker_volume = speaker_volume
         self.tts_gain = tts_gain
+        self.horn_gain = horn_gain
         self.tts_multiplier = 1.0
         self.horn_multiplier = 1.0
         self.last_tts = ""
@@ -991,6 +992,8 @@ class Robot:
             return {
                 "speaker_volume": self.speaker_volume,
                 "tts_gain": self.tts_gain,
+                "horn_gain": self.horn_gain,
+                "horn_multiplier": self.horn_multiplier,
                 "audio_codec": 0,
                 "tts_multiplier": self.tts_multiplier,
                 "last_synthesis": anim.last_synthesis if anim else None,
