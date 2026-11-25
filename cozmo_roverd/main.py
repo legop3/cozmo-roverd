@@ -63,7 +63,8 @@ class Bridge:
         self.publisher = Publisher(rtsp_target(config), config.fps, hud=config.hud) if config.video else None
         self.robot = Robot(max_speed=config.max_speed, on_state=self.publish_state,
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
-                           camera_mode=config.camera_mode, camera_enabled=config.camera_enabled)
+                           camera_mode=config.camera_mode, camera_enabled=config.camera_enabled,
+                           speaker_volume=config.speaker_volume, tts_gain=config.tts_gain)
         # Reuse recent SOC/sag learning across service restarts. Do not write
         # persistent files from the PyCozmo receive callback.
         self._gauge_file = Path("/var/log/cozmo-roverd/battery-gauge.json")
@@ -228,15 +229,6 @@ class Bridge:
             control, value = p.get("control"), p.get("value")
             if control == "lift" and type(value) is int and 0 <= value <= 100:
                 self.robot.lift(value)
-            elif control == "speakerVolume":
-                self.robot.set_speaker_volume(value)
-            elif control == "audioCodec":
-                if type(value) is not int or value not in (0,1):
-                    raise ValueError("Audio codec must be 0 or 1")
-                with self.robot.lock:
-                    self.robot.audio_codec = value
-            elif control == "ttsGain":
-                self.robot.set_tts_gain(value)
             elif control == "reconnect" and value is True:
                 # Request a clean teardown through _hardware. Do not close
                 # the client here: execute() runs on a different thread.
