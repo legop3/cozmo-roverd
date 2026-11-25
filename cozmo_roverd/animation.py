@@ -101,7 +101,7 @@ class Animation:
     def speak(self,text,speed,engine,voice,pitch):
         with self.lock:
             self.generation += 1
-            self.request = (self.generation,text,speed,min(32767,round(self.robot.tts_gain*self.robot.tts_multiplier)),engine,voice,pitch)
+            self.request = (self.generation,text,speed,self.robot.tts_gain,engine,voice,pitch)
             self.audio.clear()
         self.wake.set()
 
@@ -142,7 +142,7 @@ class Animation:
         if now >= deadline:
             self.horn = None
             return None
-        peak = min(32767,round(self.robot.horn_gain*self.robot.horn_multiplier))
+        peak = self.robot.horn_gain
         samples = []
         for i in range(744):
             t = (self.horn_index+i)/22320
