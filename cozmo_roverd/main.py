@@ -231,6 +231,11 @@ class Bridge:
                 self.robot.lift(value)
             elif control == "speakerVolume":
                 self.robot.set_speaker_volume(value)
+            elif control == "audioCodec":
+                if type(value) is not int or value not in (0,1):
+                    raise ValueError("Audio codec must be 0 or 1")
+                with self.robot.lock:
+                    self.robot.audio_codec = value
             elif control == "ttsGain":
                 self.robot.set_tts_gain(value)
             elif control == "reconnect" and value is True:
