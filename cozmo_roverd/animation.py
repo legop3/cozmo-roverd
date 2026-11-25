@@ -2,6 +2,11 @@
 import logging
 import hashlib
 import math
+import json
+import os
+import re
+import select
+import signal
 import struct
 import sys
 import tempfile
@@ -73,6 +78,35 @@ def synthesize(text, speed=1.0, gain_peak=9000, engine="espeak", voice="", pitch
     encoded = bytes(ulaw(round(x*scale)) for x in samples)
     return deque(encoded[i:i+744] for i in range(0,len(encoded),744))
 
+def speech_chunks(text, limit=120):
+    # Prefer sentence/clause boundaries, then whitespace, never truncate.
+    remaining = text.strip()
+    while remaining:
+        if len(remaining) <= limit:
+            yield remaining
+            break
+        prefix = remaining[:limit+1]
+        boundaries = [m.end() for m in re.finditer(r"[.!?;,:](?=\s)", prefix)]
+        cut = max(boundaries, default=0)
+        if cut < 25:
+            cut = prefix.rfind(" ")
+        if cut <= 0:
+            cut = limit
+        yield remaining[:cut].strip()
+        remaining = remaining[cut:].lstrip()
+
+
+def synthesis_worker():
+    # Dedicated process: neither synthesis nor Python encoding holds the
+    # bridge's GIL. Child engines and FFmpeg inherit the reduced priority.
+    os.nice(10)
+    text,speed,gain,engine,voice,pitch = json.loads(sys.stdin.read())
+    for chunk in speech_chunks(text):
+        for frame in synthesize(chunk,speed,gain,engine,voice,pitch):
+            sys.stdout.buffer.write(frame)
+        sys.stdout.buffer.flush()
+
+
 class Animation:
     def __init__(self, robot, cli):
         self.robot, self.cli = robot, cli
@@ -100,6 +134,8 @@ class Animation:
             self.generation += 1
             self.request = (self.generation,text,speed,self.robot.tts_gain,engine,voice,pitch)
             self.audio.clear()
+            self.last_synthesis = None
+            self.robot.last_tts_frames = 0
         self.wake.set()
 
     def synth_loop(self):
@@ -111,21 +147,70 @@ class Animation:
             if req is None:
                 continue
             generation,text,speed,gain_peak,engine,voice,pitch = req
+            proc = None
+            digest = hashlib.sha256()
+            count = 0
             try:
-                frames = synthesize(text,speed,gain_peak,engine,voice,pitch)
-                with self.lock:
-                    if generation == self.generation and not self.stop.is_set():
-                        self.last_synthesis = {"engine":engine,"voice":voice,"codec":"pycozmo","peak":gain_peak,
-                                               "encoded_sha256":hashlib.sha256(b"".join(frames)).hexdigest(),
-                                               "frames":len(frames)}
-                        LOG.info("TTS encoded: %s",self.last_synthesis)
-                        self.audio = frames
-                        self.robot.last_tts_frames = len(frames)
-                        self.robot.last_tts_error = None
+                with tempfile.TemporaryFile() as errors:
+                    proc = subprocess.Popen(
+                        [sys.executable,"-m","cozmo_roverd.animation","--synth-worker"],
+                        stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=errors,
+                        start_new_session=True)
+                    proc.stdin.write(json.dumps([text,speed,gain_peak,engine,voice,pitch]).encode())
+                    proc.stdin.close()
+                    pending = bytearray()
+                    eof = False
+                    while not self.stop.is_set():
+                        with self.lock:
+                            if generation != self.generation:
+                                break
+                            room = 60-len(self.audio)
+                            if room and len(pending)>=744:
+                                frame = bytes(pending[:744])
+                                del pending[:744]
+                                self.audio.append(frame)
+                                digest.update(frame)
+                                count += 1
+                                self.robot.last_tts_frames = count
+                                self.last_synthesis = {"engine":engine,"voice":voice,
+                                    "codec":"pycozmo","peak":gain_peak,
+                                    "encoded_sha256":digest.hexdigest(),"frames":count,
+                                    "streaming":True,"complete":False}
+                                self.robot.last_tts_error = None
+                                continue
+                        if eof:
+                            if pending:
+                                raise RuntimeError("Incomplete audio frame")
+                            if proc.wait(timeout=2):
+                                errors.seek(0)
+                                raise RuntimeError(errors.read().decode(errors="replace")[-180:])
+                            with self.lock:
+                                if generation == self.generation and self.last_synthesis:
+                                    self.last_synthesis["complete"] = True
+                            break
+                        if room <= 0:
+                            self.stop.wait(.02)
+                            continue
+                        if select.select([proc.stdout],[],[],.1)[0]:
+                            data = os.read(proc.stdout.fileno(),744*min(room,8))
+                            if data:
+                                pending.extend(data)
+                            else:
+                                eof = True
             except Exception as exc:
                 if generation == self.generation and not self.stop.is_set():
-                    self.robot.last_tts_error = (exc.stderr.decode(errors="replace").strip() if isinstance(exc,subprocess.CalledProcessError) and exc.stderr else str(exc))[:180]
+                    self.robot.last_tts_error = str(exc)[:180]
                 LOG.warning("Speech synthesis failed: %s",exc)
+            finally:
+                if proc is not None:
+                    if proc.poll() is None:
+                        try:
+                            os.killpg(proc.pid,signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    proc.wait()
+                    if proc.stdout:
+                        proc.stdout.close()
 
     def set_horn(self, waveform, freqs):
         with self.lock:
@@ -194,3 +279,8 @@ class Animation:
         self.stop.set()
         self.wake.set()
         self.play_thread.join(timeout=1)
+        self.synth_thread.join(timeout=1)
+
+
+if __name__ == "__main__" and "--synth-worker" in sys.argv:
+    synthesis_worker()
