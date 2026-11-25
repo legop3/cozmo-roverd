@@ -11,6 +11,7 @@ import threading
 import time
 import types
 from collections import deque
+from pycozmo.audio import u_law_encoding
 
 LOG = logging.getLogger(__name__)
 
@@ -40,10 +41,9 @@ def install_recovery(cli):
     sender._send_packets = types.MethodType(separate, sender)
 
 def ulaw(sample):
-    sign = 128 if sample < 0 else 0
-    mag = min(abs(sample),32635)+132
-    exponent = max(0,mag.bit_length()-8)
-    return (~(sign | (exponent<<4) | ((mag>>(exponent+3))&15)))&255
+    # Cozmo expects PyCozmo's wire representation, not standard G.711.
+    # Verified by the controlled hardware encoder A/B test.
+    return u_law_encoding(sample) & 255
 
 def synthesize(text, speed=1.0, gain_peak=9000, engine="espeak", voice="", pitch=0):
     with tempfile.TemporaryDirectory(prefix="cozmo-tts-") as tmp:
@@ -70,10 +70,7 @@ def synthesize(text, speed=1.0, gain_peak=9000, engine="espeak", voice="", pitch
     samples = struct.unpack("<%dh"%(len(pcm)//2),pcm)
     peak = max(map(abs,samples),default=0)
     scale = gain_peak/peak if peak else 0
-    scaled = struct.pack("<%dh"%len(samples),*(round(x*scale) for x in samples))
-    encoded = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
-        "-f","s16le","-ar","22320","-ac","1","-i","pipe:0",
-        "-f","mulaw","pipe:1"],input=scaled,capture_output=True,check=True,timeout=20).stdout
+    encoded = bytes(ulaw(round(x*scale)) for x in samples)
     return deque(encoded[i:i+744] for i in range(0,len(encoded),744))
 
 class Animation:
@@ -118,7 +115,7 @@ class Animation:
                 frames = synthesize(text,speed,gain_peak,engine,voice,pitch)
                 with self.lock:
                     if generation == self.generation and not self.stop.is_set():
-                        self.last_synthesis = {"engine":engine,"voice":voice,"codec":0,"peak":gain_peak,
+                        self.last_synthesis = {"engine":engine,"voice":voice,"codec":"pycozmo","peak":gain_peak,
                                                "encoded_sha256":hashlib.sha256(b"".join(frames)).hexdigest(),
                                                "frames":len(frames)}
                         LOG.info("TTS encoded: %s",self.last_synthesis)
