@@ -6,6 +6,23 @@ from urllib.parse import urlsplit
 import re
 import tomllib
 
+VIDEO_DEFAULTS = {"output_scale": 1, "scale_filter": "lanczos",
+                  "h264_crf": 17, "h264_preset": "veryfast"}
+SCALE_FILTERS = ("nearest", "bilinear", "bicubic", "lanczos")
+H264_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow")
+
+def video_options(media):
+    options = {key: media.get(key, value) for key, value in VIDEO_DEFAULTS.items()}
+    if type(options["output_scale"]) is not int or options["output_scale"] not in (1, 2, 3, 4):
+        raise ValueError("Output scale must be 1, 2, 3 or 4")
+    if options["scale_filter"] not in SCALE_FILTERS:
+        raise ValueError("Invalid scaling filter")
+    if type(options["h264_crf"]) is not int or not 0 <= options["h264_crf"] <= 35:
+        raise ValueError("H.264 CRF must be an integer from 0 to 35")
+    if options["h264_preset"] not in H264_PRESETS:
+        raise ValueError("Invalid H.264 preset")
+    return options
+
 @dataclass(frozen=True)
 class Config:
     name: str
@@ -24,6 +41,10 @@ class Config:
     rtsp_url: str = ""
     fps: int = 15
     hud: bool = True
+    output_scale: int = 1
+    scale_filter: str = "lanczos"
+    h264_crf: int = 17
+    h264_preset: str = "veryfast"
     channel_reroll_enabled: bool = False
     channel_target: int = 1
     home_assistant_url: str = ""
@@ -54,6 +75,7 @@ def load(path: str) -> Config:
         rtsp_url=str(media.get("rtsp_url", "")),
         fps=int(media.get("fps", 15)),
         hud=media.get("hud", True),
+        **video_options(media),
         channel_reroll_enabled=reroll.get("enabled", False),
         channel_target=reroll.get("target_channel", 1),
         home_assistant_url=str(reroll.get("home_assistant_url", "")).strip(),

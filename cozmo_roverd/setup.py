@@ -23,7 +23,8 @@ from importlib.resources import files
 from threading import Lock
 from urllib.parse import urlsplit
 
-from .config import load, rtsp_target
+from .config import load, rtsp_target, VIDEO_DEFAULTS, video_options
+from .preview import request_preview
 from .home_assistant import DockPower, DockPowerError
 
 LOG = logging.getLogger(__name__)
@@ -188,6 +189,7 @@ def public_config(path: str) -> dict:
         "camera_enabled": media.get("camera_enabled", True),
         "diagnostic_minimal": media.get("diagnostic_minimal", False),
         "fps": media.get("fps", 15),
+        **{key: media.get(key, value) for key, value in VIDEO_DEFAULTS.items()},
         "rtsp_url": media.get("rtsp_url", ""),
         "channel_reroll_enabled": reroll.get("enabled", False),
         "channel_target": reroll.get("target_channel", 1),
@@ -308,7 +310,8 @@ def validate_payload(payload: dict, current: dict) -> dict:
                       "server_url": url, "max_speed": max_speed,
                       },
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
-            "media": {"enabled": video, "camera_enabled": camera_enabled, "diagnostic_minimal": diagnostic_minimal, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud},
+            "media": {"enabled": video, "camera_enabled": camera_enabled, "diagnostic_minimal": diagnostic_minimal, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud,
+                       **video_options(current.get("media", {}))},
             "audio": {"speaker_volume": speaker_volume, "tts_gain": tts_gain, "horn_gain": horn_gain},
             "channel_reroll": reroll}
 
@@ -385,7 +388,8 @@ class Handler(BaseHTTPRequestHandler):
     config_path = CONFIG
 
     def log_message(self, fmt, *args):
-        LOG.info("%s %s", self.address_string(), fmt % args)
+        if urlsplit(self.path).path != "/api/camera-preview":
+            LOG.info("%s %s", self.address_string(), fmt % args)
 
     def send_json(self, status: int, payload: dict):
         body = json.dumps(payload).encode()
@@ -430,6 +434,19 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/config":
                 self.send_json(200, {"config": public_config(self.config_path),
                                      "options": {"speeds": SPEEDS, "fps": FPS, "colors": COLORS}})
+            elif urlsplit(self.path).path == "/api/camera-preview":
+                body = request_preview()
+                if body is None:
+                    self.send_json(503, {"error": "Waiting for fresh camera frame"})
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
             elif self.path == "/api/interfaces":
                 self.send_json(200, {"interfaces": interfaces(), "radio": radio_status()})
             elif self.path == "/api/telemetry":
@@ -500,6 +517,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"reachable": True, "switch_state": status,
                                      "message": "Home Assistant switch is " + status +
                                                 ". No power command was sent."})
+            elif self.path == "/api/video-settings":
+                if set(data) != set(VIDEO_DEFAULTS):
+                    raise ValueError("Expected all four video settings")
+                options = video_options(data)
+                with SAVE_LOCK:
+                    saved = read_config(self.config_path)
+                    saved.setdefault("media", {}).update(options)
+                    write_config(self.config_path, saved)
+                self.send_json(200, {"saved": True, "message": "Video settings saved. Encoder will reload independently."})
             elif self.path == "/api/save":
                 with SAVE_LOCK:
                     saved = validate_payload(data, read_config(self.config_path))

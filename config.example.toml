@@ -16,6 +16,10 @@ password = "PASSWORD_SHOWN_ON_COZMO"
 [media]
 enabled = true
 fps = 15
+output_scale = 1
+scale_filter = "lanczos"
+h264_crf = 17
+h264_preset = "veryfast"
 camera_mode = "auto"
 # Overlay additional Cozmo hardware telemetry onto RTSP frames.
 hud = true

@@ -278,3 +278,31 @@ def test_long_camera_gaps_are_recorded_without_counting_short_jitter(monkeypatch
     assert publisher.camera_gap_count == 1
     assert publisher.diagnostics()["camera_longest_gap_seconds"] == 1.2
     assert publisher.diagnostics()["camera_gap_grace_seconds"] == 3.0
+
+
+def test_upscale_and_quality_options():
+    publisher = Publisher("rtsp://localhost:8554/cozmo", output_scale=4,
+                          scale_filter="nearest", h264_crf=8, h264_preset="fast")
+    publisher.encoder = "libx264"
+    frame = Image.new("RGB", (320, 240), (10, 20, 30))
+    result = publisher.render_frame(frame)
+    assert result.size == (1280, 960)
+    assert result.getpixel((640, 480)) == (10, 20, 30)
+    assert result.getpixel((640, 68)) != (10, 20, 30)
+    assert publisher._offline_frame().size == result.size
+    args = publisher._encoder_quality_args()
+    assert args[args.index("-crf") + 1] == "8"
+    assert args[args.index("-preset") + 1] == "fast"
+
+
+def test_preview_preserves_decoded_pixels(tmp_path):
+    from io import BytesIO
+    from cozmo_roverd.preview import request_preview, publish_preview
+    frame = Image.new("RGB", (320, 240), (10, 20, 30))
+    publish_preview(frame, tmp_path)
+    assert not (tmp_path / "preview.png").exists()
+    assert request_preview(tmp_path) is None
+    publish_preview(frame, tmp_path)
+    assert Image.open(BytesIO(request_preview(tmp_path))).tobytes() == frame.tobytes()
+    publish_preview(None, tmp_path)
+    assert request_preview(tmp_path) is None

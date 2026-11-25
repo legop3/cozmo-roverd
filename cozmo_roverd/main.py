@@ -11,7 +11,8 @@ import threading
 import time
 from pathlib import Path
 import websockets
-from .config import load, rtsp_target
+from .config import load, rtsp_target, VIDEO_DEFAULTS
+from .preview import publish_preview, requested
 from .media import Publisher
 from .protocol import ack, bounded_speed, finite, hello, sensor, state
 from .robot import Robot
@@ -30,8 +31,10 @@ def _env_enabled(name, default=False):
 
 
 class Bridge:
-    def __init__(self, config):
+    def __init__(self, config, config_path=None):
         self.cfg = config
+        self.config_path = config_path
+        self._preview_frame = None
         self.stop_event = asyncio.Event()
         self.hardware_ready = asyncio.Event()
         # MRR commands run in worker threads. Only the hardware supervisor
@@ -60,7 +63,8 @@ class Bridge:
         self.channel_next_attempt_at = 0.0
         self.channel_last_error = None
         self._reroll_active = False
-        self.publisher = Publisher(rtsp_target(config), config.fps, hud=config.hud) if config.video else None
+        self.publisher = Publisher(rtsp_target(config), config.fps, hud=config.hud,
+                                   **{key: getattr(config, key, default) for key, default in VIDEO_DEFAULTS.items()}) if config.video else None
         self.robot = Robot(max_speed=config.max_speed, on_state=self.publish_state,
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
                            camera_mode=config.camera_mode, camera_enabled=config.camera_enabled,
@@ -136,6 +140,7 @@ class Bridge:
         # until the hardware supervisor has promoted the verified connection.
         if not self.hardware_ready.is_set():
             return
+        self._preview_frame = (time.monotonic(), image)
         if self.publisher:
             self.publisher.submit(image)
         self.robot.queue_camera_analysis(image)
@@ -855,10 +860,43 @@ class Bridge:
             except asyncio.TimeoutError:
                 pass
 
+    async def _preview_worker(self):
+        previous = None
+        while not self.stop_event.is_set():
+            try:
+                frame = self._preview_frame
+                if (not self.hardware_ready.is_set() or frame is None
+                        or time.monotonic() - frame[0] > 1 or not requested()):
+                    if previous is not None:
+                        await asyncio.to_thread(publish_preview, None)
+                    previous = None
+                elif frame is not previous:
+                    await asyncio.to_thread(publish_preview, frame[1])
+                    previous = frame
+            except (OSError, ValueError):
+                LOG.exception("Camera preview failed")
+            await asyncio.sleep(0.07)
+
+    async def _video_config_worker(self):
+        stamp = None
+        while not self.stop_event.is_set():
+            try:
+                current = Path(self.config_path).stat().st_mtime_ns
+                if stamp != current:
+                    config = await asyncio.to_thread(load, self.config_path)
+                    self.publisher.configure(**{key: getattr(config, key) for key in VIDEO_DEFAULTS})
+                    stamp = current
+            except (OSError, ValueError, KeyError):
+                LOG.warning("Cannot reload video settings", exc_info=True)
+            await asyncio.sleep(0.5)
+
     async def run(self):
         if self.publisher: self.publisher.start()
         tasks = [asyncio.create_task(self._hardware()), asyncio.create_task(self._mrr()),
-                 asyncio.create_task(self._telemetry_file())]
+                 asyncio.create_task(self._telemetry_file()),
+                 asyncio.create_task(self._preview_worker())]
+        if self.publisher and self.config_path:
+            tasks.append(asyncio.create_task(self._video_config_worker()))
         # Maintain independent cadences rather than one serial 50ms loop.
         if not self.cfg.diagnostic_minimal:
             tasks += [
@@ -897,7 +935,7 @@ def main():
     diagnostics.initialize()
     try:
         async def start():
-            bridge = Bridge(cfg)
+            bridge = Bridge(cfg, args.config)
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(sig, bridge.stop_event.set)

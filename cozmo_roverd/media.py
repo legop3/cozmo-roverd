@@ -10,7 +10,30 @@ import time
 import subprocess
 import threading
 from PIL import Image, ImageDraw, ImageFont
+from .config import video_options
 LOG = logging.getLogger(__name__)
+
+class ScaledDraw:
+    def __init__(self, image, scale):
+        self.draw = ImageDraw.Draw(image)
+        self.scale = scale
+
+    def _coords(self, coords):
+        return tuple(round(v * self.scale) for v in coords)
+
+    def ellipse(self, coords, **kw):
+        if "width" in kw:
+            kw["width"] *= self.scale
+        self.draw.ellipse(self._coords(coords), **kw)
+
+    def line(self, coords, **kw):
+        if "width" in kw:
+            kw["width"] *= self.scale
+        self.draw.line(self._coords(coords), **kw)
+
+    def point(self, coords, **kw):
+        self.draw.point(self._coords(coords), **kw)
+
 
 class Publisher:
     # One missed second is not a disconnected camera: Cozmo's JPEG images
@@ -18,9 +41,11 @@ class Publisher:
     # Keep last image for short gaps, but show the slate on sustained loss.
     CAMERA_GAP_GRACE_SECONDS = 3.0
 
-    def __init__(self, url: str, fps: int = 15, hud: bool = True):
+    def __init__(self, url: str, fps: int = 15, hud: bool = True, **options):
         self.url, self.fps = url, fps
         self.hud = hud
+        self.options = video_options(options)
+        self.active_options = self.options
         self.state_provider = None
         self.frames: queue.Queue[Image.Image] = queue.Queue(maxsize=1)
         self.running = threading.Event()
@@ -42,6 +67,22 @@ class Publisher:
         self.last_error = None
         self.device = None
         self._ffmpeg_log_file = None
+
+    def configure(self, **options):
+        desired = video_options(options)
+        if desired != self.options:
+            self.options = desired
+            process = self.process
+            if process is not None and process.poll() is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+
+    @property
+    def output_size(self):
+        scale = self.active_options["output_scale"]
+        return (320 * scale, 240 * scale)
 
     def _test_encoder(self, encoder, *, device=None):
         # A listed FFmpeg encoder is not necessarily usable. Test a single
@@ -143,6 +184,8 @@ class Publisher:
             "publisher_running": self.process is not None and self.process.poll() is None,
             "last_error": self.last_error,
             "hud_enabled": self.hud,
+            **self.active_options,
+            "output_resolution": f"{self.output_size[0]}x{self.output_size[1]}",
         }
     @staticmethod
     def _format(value, precision=0, suffix=""):
@@ -233,12 +276,13 @@ class Publisher:
     def render_frame(self, image, data=None):
         """Small top-center IMU ball and adjacent lift-position icon."""
         output = image.convert("RGB")
-        if output.size != (320, 240):
-            output = output.resize((320, 240))
+        if output.size != self.output_size:
+            resample = getattr(Image.Resampling, self.active_options["scale_filter"].upper())
+            output = output.resize(self.output_size, resample=resample)
         if not self.hud:
             return output
         st = data or {}
-        draw = ImageDraw.Draw(output)
+        draw = ScaledDraw(output, self.active_options["output_scale"])
         cx, cy, radius = 160, 17, 13
         # Thin, compact round horizon indicator, approx. 28x28 pixels.
         # Draw directly on the current frame without another buffer.
@@ -319,7 +363,13 @@ class Publisher:
     def _offline_frame(self, data=None):
         """Show what reconnect is actually doing, keeping RTSP alive."""
         st = data or {}
-        image = Image.new("RGB", (320, 240), (12, 17, 23))
+        scale = self.active_options["output_scale"]
+        width_px, height_px = self.output_size
+        image = Image.new("RGB", (width_px, height_px), (12, 17, 23))
+        try:
+            font = ImageFont.load_default() if scale == 1 else ImageFont.truetype("DejaVuSans.ttf", 10 * scale)
+        except OSError:
+            font = ImageFont.load_default()
         draw = ImageDraw.Draw(image)
         title, step = self._recovery_status(st, had_video=self.frame_count > 0)
         dots = "." * (1 + int(time.monotonic() * 1.5) % 3)
@@ -330,24 +380,24 @@ class Publisher:
             (title + dots, 90, (235, 243, 245)),
             (step, 113, (160, 185, 196)),
         ):
-            bbox = draw.textbbox((0, 0), message)
+            bbox = draw.textbbox((0, 0), message, font=font)
             width = bbox[2] - bbox[0]
-            draw.text(((320 - width) // 2, y - bbox[1]),
-                      message, fill=color)
+            draw.text(((width_px - width) // 2, y * scale - bbox[1]),
+                      message, fill=color, font=font)
         channel_label = self._channel_label(st)
         if channel_label:
-            bounds = draw.textbbox((0, 0), channel_label)
-            draw.text(((320 - (bounds[2] - bounds[0])) // 2, 136 - bounds[1]),
-                      channel_label, fill=(117, 216, 188))
+            bounds = draw.textbbox((0, 0), channel_label, font=font)
+            draw.text(((width_px - (bounds[2] - bounds[0])) // 2, 136 * scale - bounds[1]),
+                      channel_label, fill=(117, 216, 188), font=font)
         remaining = st.get("mrr_offline_remaining_seconds")
         if isinstance(remaining, (int, float)) and not isinstance(remaining, bool):
             remaining = max(0, int(remaining))
             minutes, seconds = divmod(remaining, 60)
             label = (f"MRR OFFLINE IN {minutes:02d}:{seconds:02d}"
                      if remaining else "MRR OFFLINE - WAITING FOR COZMO")
-            bounds = draw.textbbox((0, 0), label)
-            draw.text(((320 - (bounds[2] - bounds[0])) // 2, 154 - bounds[1]),
-                      label, fill=(255, 199, 112))
+            bounds = draw.textbbox((0, 0), label, font=font)
+            draw.text(((width_px - (bounds[2] - bounds[0])) // 2, 154 * scale - bounds[1]),
+                      label, fill=(255, 199, 112), font=font)
         return image
 
     def _encoder_quality_args(self):
@@ -357,8 +407,8 @@ class Publisher:
         explicit rates rather than relying on their unknown defaults.
         """
         if self.encoder == "libx264":
-            return ["-preset", "veryfast", "-tune", "zerolatency",
-                    "-threads", "2", "-crf", "17"]
+            return ["-preset", self.active_options["h264_preset"], "-tune", "zerolatency",
+                    "-threads", "2", "-crf", str(self.active_options["h264_crf"])]
         if self.encoder == "libopenh264":
             return ["-b:v", "2500k", "-maxrate", "3500k",
                     "-bufsize", "3500k"]
@@ -369,11 +419,12 @@ class Publisher:
 
     def _run(self):
         while self.running.is_set():
+            self.active_options = self.options
             command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
             if self.device:
                 command += ["-vaapi_device", self.device]
             command += ["-fflags", "nobuffer", "-use_wallclock_as_timestamps", "1", "-f", "rawvideo", "-pixel_format", "rgb24",
-                        "-video_size", "320x240", "-framerate", str(self.fps), "-i", "pipe:0",
+                        "-video_size", f"{self.output_size[0]}x{self.output_size[1]}", "-framerate", str(self.fps), "-i", "pipe:0",
                         "-an"]
             if self.device:
                 command += ["-vf", "format=nv12,hwupload"]
@@ -409,7 +460,8 @@ class Publisher:
                 interval = 1.0 / self.fps
                 next_frame_at = time.monotonic()
                 latest_image = None
-                while self.running.is_set() and process.poll() is None:
+                while (self.running.is_set() and process.poll() is None
+                       and self.active_options == self.options):
                     now = time.monotonic()
                     delay = next_frame_at - now
                     if delay > 0:
@@ -458,7 +510,7 @@ class Publisher:
                 self._ffmpeg_log_file = None
             # Retry the publisher, but remain responsive to shutdown.
             for _ in range(30):
-                if not self.running.is_set(): break
+                if not self.running.is_set() or self.active_options != self.options: break
                 time.sleep(0.1)
 
     def _terminate(self):

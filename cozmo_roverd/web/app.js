@@ -49,6 +49,7 @@ function busy(button, action, label) {
 function navigate(page, writeHash = true) {
   if (!Object.hasOwn(pages, page)) page = "monitor";
   state.page = page;
+  if (page !== "options") stopPreview();
   for (const section of document.querySelectorAll("[data-page]")) {
     section.hidden = section.id !== page;
   }
@@ -199,6 +200,10 @@ function applyConfig(config, options) {
   $("video").checked = config.video !== false;
   $("camera-enabled").checked = config.camera_enabled !== false;
   $("hud").checked = config.hud !== false;
+  $("output-scale").value = String(config.output_scale ?? 1);
+  $("scale-filter").value = config.scale_filter ?? "lanczos";
+  $("h264-crf").value = config.h264_crf ?? 17;
+  $("h264-preset").value = config.h264_preset ?? "veryfast";
   $("diagnostic-minimal").checked = config.diagnostic_minimal === true;
   $("rtsp-url").value = config.rtsp_url || "";
   selectOptions($("speed"), options.speeds.map(n => ({value: n, label: n + " mm/s"})), config.max_speed);
@@ -331,6 +336,7 @@ function renderServiceStatus() {
   setText("bridge-connection", "Service: " + (!service ? "unknown" : active ? "running" : service.state));
   setText("mrr-connection", "MRR: " + (fresh ? data.mrr_connected ? "connected" : "disconnected" : "unknown"));
   const stream = fresh ? data.video || {} : {};
+  setText("video-quality-status", "Active encoder: " + (stream.encoder || "—") + (stream.output_resolution ? " · " + stream.output_resolution : "") + (stream.encoder === "libx264" ? " · CRF " + stream.h264_crf + " · " + stream.h264_preset : ""));
   setText("video-connection", "RTSP: " + (stream.enabled ? stream.publisher_running ? "publishing" : "unavailable" : "disabled"));
   setText("service-label", active ? "Bridge service is running" : "Bridge service is " + (service?.state || "unknown"));
   setText("setup-pill", config.configured ? "Configured" : "Setup incomplete");
@@ -534,8 +540,56 @@ async function serviceAction(action, button, label) {
     await refreshStatus();
   }, label);
 }
+let previewRunning = false;
+let previewTimer;
+function stopPreview() {
+  previewRunning = false;
+  clearTimeout(previewTimer);
+  const image = $("raw-preview");
+  image.onload = image.onerror = null;
+  image.removeAttribute("src");
+  image.hidden = true;
+  $("toggle-preview").textContent = "Start preview";
+  $("preview-status").textContent = "Preview stopped.";
+}
+function nextPreview() {
+  if (!previewRunning || document.hidden || state.page !== "options") return;
+  const image = $("raw-preview");
+  image.onload = () => {
+    if (!previewRunning) return;
+    image.hidden = false;
+    $("preview-status").textContent = "Live · " + image.naturalWidth + " × " + image.naturalHeight;
+    previewTimer = setTimeout(nextPreview, 70);
+  };
+  image.onerror = () => {
+    if (!previewRunning) return;
+    image.hidden = true;
+    $("preview-status").textContent = "Waiting for camera frames…";
+    previewTimer = setTimeout(nextPreview, 250);
+  };
+  image.src = "/api/camera-preview?" + Date.now();
+}
 function setupListeners() {
+  $("toggle-preview").addEventListener("click", () => {
+    if (previewRunning) return stopPreview();
+    previewRunning = true;
+    $("toggle-preview").textContent = "Stop preview";
+    nextPreview();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopPreview();
+  });
+  $("apply-video-quality").addEventListener("click", () =>
+    busy($("apply-video-quality"), async () => {
+      if (!$("h264-crf").reportValidity() || field("h264-crf") === "") throw new Error("Enter a CRF from 0 to 35");
+      const options = {output_scale: Number(field("output-scale")), scale_filter: field("scale-filter"),
+        h264_crf: Number(field("h264-crf")), h264_preset: field("h264-preset")};
+      const result = await api("/api/video-settings", options);
+      Object.assign(state.config, options);
+      show(result.message);
+    }, "Applying…"));
   for (const control of document.querySelectorAll("[data-page] input,[data-page] select")) {
+    if (control.closest("#video-quality-panel")) continue;
     control.addEventListener("change", markDirty);
     if (control.matches('input:not([type=checkbox])')) {
       control.addEventListener("input", markDirty);
