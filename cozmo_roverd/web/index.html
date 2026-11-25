@@ -167,7 +167,8 @@ details{border-top:1px solid var(--border);padding-top:13px;margin-top:17px}summ
     <div class="panel"><div class="panel-header"><div><h3>Audio</h3><p>Hardware speaker volume and digital speech gain</p></div></div>
       <div class="panel-content">
         <div class="field"><label for="speaker-volume">Speaker volume</label><input id="speaker-volume" type="number" min="0" max="65535" step="1" required><p class="hint">0–65535. Recommended: 65535.</p></div>
-        <div class="field"><label for="tts-gain">TTS gain (PCM peak)</label><input id="tts-gain" type="number" min="0" max="32767" step="1" required><p class="hint">0–32767. Recommended: 9000. Also sets the base horn amplitude.</p></div>
+        <div class="field"><label for="tts-gain">TTS gain (PCM peak)</label><input id="tts-gain" type="number" min="0" max="32767" step="1" required><p class="hint">0–32767. Recommended: 9000. Speech only.</p></div>
+        <div class="field"><label for="horn-gain">Horn gain (PCM peak)</label><input id="horn-gain" type="number" min="0" max="32767" step="1" required><p class="hint">0–32767. Adjust independently of speech.</p></div>
       </div>
     </div>
     <div class="panel"><div class="panel-header"><div><h3>Troubleshooting mode</h3><p>Only change this when diagnosing robot transport behavior</p></div></div>
