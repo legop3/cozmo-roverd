@@ -17,7 +17,7 @@ from .robot_packet import BatteryTracker, snapshot_packet
 LOG = logging.getLogger(__name__)
 
 class Robot:
-    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True):
+    def __init__(self, *, max_speed, on_state, on_sensor, on_frame, camera_mode="auto", camera_enabled=True, speaker_volume=65535, tts_gain=9000):
         self.max_speed = max_speed
         self.camera_mode = camera_mode
         self.camera_enabled = camera_enabled
@@ -78,9 +78,8 @@ class Robot:
         self.camera_last_image_at = None
         self.last_packet_error = None
         self.packet_status = {}
-        self.speaker_volume = 500
-        self.audio_codec = 0
-        self.tts_gain = 100
+        self.speaker_volume = speaker_volume
+        self.tts_gain = tts_gain
         self.tts_multiplier = 1.0
         self.horn_multiplier = 1.0
         self.last_tts = ""
@@ -992,7 +991,7 @@ class Robot:
             return {
                 "speaker_volume": self.speaker_volume,
                 "tts_gain": self.tts_gain,
-                "audio_codec": self.audio_codec,
+                "audio_codec": 0,
                 "tts_multiplier": self.tts_multiplier,
                 "last_synthesis": anim.last_synthesis if anim else None,
                 "last_message": self.last_tts,
@@ -1055,20 +1054,6 @@ class Robot:
                 anim.generation += 1
                 anim.audio.clear()
                 anim.request = None
-
-    def set_speaker_volume(self, value):
-        if type(value) is not int or not 0 <= value <= 65535:
-            raise ValueError("Speaker volume must be an integer 0..65535")
-        with self.lock:
-            self.speaker_volume = value
-            if self.client is not None and self.ready and not self._inspection_mode:
-                self.client.set_volume(value)
-
-    def set_tts_gain(self, value):
-        if type(value) is not int or not 0 <= value <= 32767:
-            raise ValueError("TTS gain must be an integer 0..32767")
-        with self.lock:
-            self.tts_gain = value
 
     def speak(self, text, *, speed=1.0, engine="", voice="", pitch=0):
         aliases = {"e":"espeak","f":"flite","gtts":"google","googletts":"google","chromegtts":"google"}
