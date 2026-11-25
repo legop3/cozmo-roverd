@@ -45,7 +45,7 @@ def ulaw(sample):
     exponent = max(0,mag.bit_length()-8)
     return (~(sign | (exponent<<4) | ((mag>>(exponent+3))&15)))&255
 
-def synthesize(text, speed=1.0, gain_peak=100, engine="espeak", voice="", pitch=0, codec=0):
+def synthesize(text, speed=1.0, gain_peak=9000, engine="espeak", voice="", pitch=0):
     with tempfile.TemporaryDirectory(prefix="cozmo-tts-") as tmp:
         path = str(Path(tmp)/"speech.wav")
         if engine == "espeak":
@@ -71,10 +71,6 @@ def synthesize(text, speed=1.0, gain_peak=100, engine="espeak", voice="", pitch=
     peak = max(map(abs,samples),default=0)
     scale = gain_peak/peak if peak else 0
     scaled = struct.pack("<%dh"%len(samples),*(round(x*scale) for x in samples))
-    if codec == 1:
-        from pycozmo.audio import u_law_encoding
-        encoded = bytes(u_law_encoding(round(x*scale)) & 255 for x in samples)
-        return deque(encoded[i:i+744] for i in range(0,len(encoded),744))
     encoded = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error",
         "-f","s16le","-ar","22320","-ac","1","-i","pipe:0",
         "-f","mulaw","pipe:1"],input=scaled,capture_output=True,check=True,timeout=20).stdout
@@ -105,7 +101,7 @@ class Animation:
     def speak(self,text,speed,engine,voice,pitch):
         with self.lock:
             self.generation += 1
-            self.request = (self.generation,text,speed,min(32767,round(self.robot.tts_gain*self.robot.tts_multiplier)),engine,voice,pitch,self.robot.audio_codec)
+            self.request = (self.generation,text,speed,min(32767,round(self.robot.tts_gain*self.robot.tts_multiplier)),engine,voice,pitch)
             self.audio.clear()
         self.wake.set()
 
@@ -117,12 +113,12 @@ class Animation:
                 req,self.request = self.request,None
             if req is None:
                 continue
-            generation,text,speed,gain_peak,engine,voice,pitch,codec = req
+            generation,text,speed,gain_peak,engine,voice,pitch = req
             try:
-                frames = synthesize(text,speed,gain_peak,engine,voice,pitch,codec)
+                frames = synthesize(text,speed,gain_peak,engine,voice,pitch)
                 with self.lock:
                     if generation == self.generation and not self.stop.is_set():
-                        self.last_synthesis = {"engine":engine,"voice":voice,"codec":codec,"peak":gain_peak,
+                        self.last_synthesis = {"engine":engine,"voice":voice,"codec":0,"peak":gain_peak,
                                                "encoded_sha256":hashlib.sha256(b"".join(frames)).hexdigest(),
                                                "frames":len(frames)}
                         LOG.info("TTS encoded: %s",self.last_synthesis)
