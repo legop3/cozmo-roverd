@@ -64,7 +64,8 @@ class Bridge:
         self.robot = Robot(max_speed=config.max_speed, on_state=self.publish_state,
                            on_sensor=self.publish_sensor, on_frame=self.handle_frame,
                            camera_mode=config.camera_mode, camera_enabled=config.camera_enabled,
-                           speaker_volume=config.speaker_volume, tts_gain=config.tts_gain)
+                           speaker_volume=config.speaker_volume, tts_gain=config.tts_gain,
+                           horn_gain=config.horn_gain)
         # Reuse recent SOC/sag learning across service restarts. Do not write
         # persistent files from the PyCozmo receive callback.
         self._gauge_file = Path("/var/log/cozmo-roverd/battery-gauge.json")
