@@ -27,6 +27,7 @@ def hello(name: str, description: str, color: str, max_speed: int, video: bool =
         "peripherals": [{"id": "cozmo", "name": "Cozmo", "controls": [
             {"id": "lift", "name": "Lift height (%)", "type": "slider", "min": 0, "max": 100},
             {"id": "speakerVolume", "name": "Speaker volume", "type": "number", "min": 0, "max": 65535},
+            {"id": "audioCodec", "name": "TTS encoding (0=standard, 1=PyCozmo)", "type": "number", "min": 0, "max": 1},
             {"id": "ttsGain", "name": "TTS gain (PCM peak)", "type": "number", "min": 0, "max": 32767},
             {"id": "reconnect", "name": "Reconnect Cozmo", "type": "button", "mode": "momentary"}
         ]}],
