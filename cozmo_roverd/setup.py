@@ -181,6 +181,7 @@ def public_config(path: str) -> dict:
         "max_speed": rover.get("max_speed", 250),
         "speaker_volume": audio.get("speaker_volume", 65535),
         "tts_gain": audio.get("tts_gain", 9000),
+        "horn_gain": audio.get("horn_gain", 9000),
         "camera_mode": "auto",
         "hud": media.get("hud", True),
         "video": media.get("enabled", True),
@@ -202,7 +203,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Invalid configuration")
     allowed = {"name", "description", "color", "private", "server_url", "interface", "ssid", "password",
-               "max_speed", "speaker_volume", "tts_gain", "video", "camera_enabled", "diagnostic_minimal", "fps", "rtsp_url", "camera_mode", "hud", "watchdog_seconds",
+               "max_speed", "speaker_volume", "tts_gain", "horn_gain", "video", "camera_enabled", "diagnostic_minimal", "fps", "rtsp_url", "camera_mode", "hud", "watchdog_seconds",
                 "channel_reroll_enabled", "channel_target",
                 "home_assistant_url", "home_assistant_switch", "home_assistant_token"}
     if set(payload) - allowed:
@@ -270,6 +271,9 @@ def validate_payload(payload: dict, current: dict) -> dict:
     old_audio = current.get("audio", {})
     speaker_volume = payload.get("speaker_volume", old_audio.get("speaker_volume", 65535))
     tts_gain = payload.get("tts_gain", old_audio.get("tts_gain", 9000))
+    horn_gain = payload.get("horn_gain", old_audio.get("horn_gain", 9000))
+    if type(horn_gain) is not int or not 0 <= horn_gain <= 32767:
+        raise ValueError("Horn gain must be an integer 0–32767")
     if type(speaker_volume) is not int or not 0 <= speaker_volume <= 65535:
         raise ValueError("Speaker volume must be an integer 0–65535")
     if type(tts_gain) is not int or not 0 <= tts_gain <= 32767:
@@ -305,7 +309,7 @@ def validate_payload(payload: dict, current: dict) -> dict:
                       },
             "wifi": {"interface": interface, "ssid": ssid, "password": password},
             "media": {"enabled": video, "camera_enabled": camera_enabled, "diagnostic_minimal": diagnostic_minimal, "fps": fps, "rtsp_url": rtsp, "camera_mode": camera_mode, "hud": hud},
-            "audio": {"speaker_volume": speaker_volume, "tts_gain": tts_gain},
+            "audio": {"speaker_volume": speaker_volume, "tts_gain": tts_gain, "horn_gain": horn_gain},
             "channel_reroll": reroll}
 
 
