@@ -991,7 +991,7 @@ class Robot:
                 "speaker_volume": self.speaker_volume,
                 "tts_gain": self.tts_gain,
                 "horn_gain": self.horn_gain,
-                "audio_codec": 0,
+                "audio_codec": "pycozmo",
                 "mrr_audio_levels_ignored": True,
                 "last_synthesis": anim.last_synthesis if anim else None,
                 "last_message": self.last_tts,
