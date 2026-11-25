@@ -209,15 +209,9 @@ class Bridge:
             self.robot.horn(str(payload.get("action","")).lower(),
                             str(payload.get("waveform","")).lower(),payload.get("freqs",[]))
         elif cmd == "audioLevels":
-            payload = msg.get("audioLevels")
-            if not isinstance(payload,dict):
-                raise ValueError("audioLevels payload required")
-            levels = {key:max(0,min(4,finite(payload[key]))) for key in ("ttsGain","hornGain") if key in payload}
-            with self.robot.lock:
-                if "ttsGain" in levels:
-                    self.robot.tts_multiplier = levels["ttsGain"]
-                if "hornGain" in levels:
-                    self.robot.horn_multiplier = levels["hornGain"]
+            # Cozmo audio calibration is local; acknowledge MRR gain updates
+            # without allowing them to alter either output level.
+            return
         elif cmd == "headlight":
             payload = msg.get("headlight")
             action = payload.get("action") if isinstance(payload, dict) else None
