@@ -93,6 +93,7 @@ class Robot:
         self._face_transport_enabled = True
         self._animation = None
         self._animation_control_at = 0.0
+        self.last_head_command = None
         self._camera_gap_max = 0.0
         self._sensor_gap_max = 0.0
         self._face_blocked_since = None
@@ -825,7 +826,10 @@ class Robot:
         with self.lock:
             self.note_driver_activity()
             if self.client is None: raise RuntimeError("Cozmo disconnected")
-            self.client.set_head_angle(math.radians(max(-25, min(44, degrees))))
+            target = max(-25, min(44, degrees))
+            self.client.set_head_angle(math.radians(target))
+            self.last_head_command = {"degrees":target,"at":time.monotonic()}
+            LOG.info("Cozmo head target %.1f degrees",target)
 
     def lift(self, percent):
         with self.lock:
@@ -970,6 +974,7 @@ class Robot:
             "camera_max_gap_seconds": self._camera_gap_max,
             "telemetry_max_gap_seconds": self._sensor_gap_max,
             "animation_backoffs": self._animation.backoffs if self._animation else 0,
+            "last_head_command": self.last_head_command,
         }
 
     def _start_animation(self, cli):
@@ -988,6 +993,8 @@ class Robot:
                 "speaker_volume": self.speaker_volume,
                 "tts_gain": self.tts_gain,
                 "audio_codec": self.audio_codec,
+                "tts_multiplier": self.tts_multiplier,
+                "last_synthesis": anim.last_synthesis if anim else None,
                 "last_message": self.last_tts,
                 "last_error": self.last_tts_error,
                 "last_queued_frames": self.last_tts_frames,
