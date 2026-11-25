@@ -81,8 +81,6 @@ class Robot:
         self.speaker_volume = speaker_volume
         self.tts_gain = tts_gain
         self.horn_gain = horn_gain
-        self.tts_multiplier = 1.0
-        self.horn_multiplier = 1.0
         self.last_tts = ""
         self.last_tts_error = None
         self._tts_transport_faulted = False
@@ -993,9 +991,8 @@ class Robot:
                 "speaker_volume": self.speaker_volume,
                 "tts_gain": self.tts_gain,
                 "horn_gain": self.horn_gain,
-                "horn_multiplier": self.horn_multiplier,
                 "audio_codec": 0,
-                "tts_multiplier": self.tts_multiplier,
+                "mrr_audio_levels_ignored": True,
                 "last_synthesis": anim.last_synthesis if anim else None,
                 "last_message": self.last_tts,
                 "last_error": self.last_tts_error,
