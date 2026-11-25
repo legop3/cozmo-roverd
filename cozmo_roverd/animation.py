@@ -1,5 +1,6 @@
 """Bounded, connection-local animation playback and reliable recovery."""
 import logging
+import hashlib
 import math
 import struct
 import sys
@@ -91,6 +92,7 @@ class Animation:
         self.horn_index = 0
         self.face = None
         self.frames = 0
+        self.last_synthesis = None
         self.backoffs = 0
         self.synth_thread = threading.Thread(target=self.synth_loop,daemon=True,name="cozmo-synthesis")
         self.play_thread = threading.Thread(target=self.play_loop,daemon=True,name="cozmo-animation")
@@ -120,6 +122,10 @@ class Animation:
                 frames = synthesize(text,speed,gain_peak,engine,voice,pitch,codec)
                 with self.lock:
                     if generation == self.generation and not self.stop.is_set():
+                        self.last_synthesis = {"engine":engine,"voice":voice,"codec":codec,"peak":gain_peak,
+                                               "encoded_sha256":hashlib.sha256(b"".join(frames)).hexdigest(),
+                                               "frames":len(frames)}
+                        LOG.info("TTS encoded: %s",self.last_synthesis)
                         self.audio = frames
                         self.robot.last_tts_frames = len(frames)
                         self.robot.last_tts_error = None
@@ -176,11 +182,14 @@ class Animation:
                             self.cli.conn.send(OutputAudio(samples=sample))
                             if not is_horn:
                                 self.robot.last_tts_played_at = time.monotonic()
-                        else:
+                        elif face is not None:
                             self.cli.conn.send(OutputSilence())
-                        self.frames += 1
+                        if sample is not None or face is not None:
+                            self.frames += 1
                         if face is not None:
                             self.cli.conn.send(DisplayImage(image=face))
+                            if sample is None:
+                                self.cli.conn.send(OutputSilence())
                             self.robot.face_frames_sent += 1
                 self.stop.wait(max(0,1/30-(time.monotonic()-start)))
         except Exception as exc:
