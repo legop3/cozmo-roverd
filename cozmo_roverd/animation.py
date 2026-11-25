@@ -2,6 +2,9 @@
 import logging
 import math
 import struct
+import sys
+import tempfile
+from pathlib import Path
 import subprocess
 import threading
 import time
@@ -41,9 +44,24 @@ def ulaw(sample):
     exponent = max(0,mag.bit_length()-8)
     return (~(sign | (exponent<<4) | ((mag>>(exponent+3))&15)))&255
 
-def synthesize(text, speed=1.0, gain_peak=100):
-    wav = subprocess.run(["espeak-ng","--stdout","-s",str(round(145*speed)),"--",text],
-                         capture_output=True,check=True,timeout=20).stdout
+def synthesize(text, speed=1.0, gain_peak=100, engine="espeak", voice="", pitch=0):
+    with tempfile.TemporaryDirectory(prefix="cozmo-tts-") as tmp:
+        path = str(Path(tmp)/"speech.wav")
+        if engine == "espeak":
+            args = ["espeak-ng","--stdout","-s",str(round(145*speed)),
+                    "-p",str(int(pitch) if pitch else 50),"-v",voice or "en-us","--",text]
+            wav = subprocess.run(args,capture_output=True,check=True,timeout=40).stdout
+        elif engine == "flite":
+            args = ["flite","-voice",voice or "slt","-t",text,"-o",path]
+            subprocess.run(args,capture_output=True,check=True,timeout=40)
+            wav = Path(path).read_bytes()
+        elif engine == "google":
+            subprocess.run([sys.executable,"-m","cozmo_roverd.chromegtts",
+                "--text="+text,"--voice="+(voice or "tpf"),"--pitch="+str(pitch or 1),
+                "--speed="+str(speed),"--output="+path],capture_output=True,check=True,timeout=40)
+            wav = Path(path).read_bytes()
+        else:
+            raise ValueError("Unsupported TTS engine")
     pcm = subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-i","pipe:0",
                           "-f","s16le","-ac","1","-ar","22320","pipe:1"],
                          input=wav,capture_output=True,check=True,timeout=20).stdout
@@ -65,6 +83,8 @@ class Animation:
         self.audio = deque()
         self.request = None
         self.generation = 0
+        self.horn = None
+        self.horn_index = 0
         self.face = None
         self.frames = 0
         self.backoffs = 0
@@ -76,10 +96,10 @@ class Animation:
         self.synth_thread.start()
         self.play_thread.start()
 
-    def speak(self,text,speed):
+    def speak(self,text,speed,engine,voice,pitch):
         with self.lock:
             self.generation += 1
-            self.request = (self.generation,text,speed,self.robot.tts_gain)
+            self.request = (self.generation,text,speed,min(32767,round(self.robot.tts_gain*self.robot.tts_multiplier)),engine,voice,pitch)
             self.audio.clear()
         self.wake.set()
 
@@ -91,9 +111,9 @@ class Animation:
                 req,self.request = self.request,None
             if req is None:
                 continue
-            generation,text,speed,gain_peak = req
+            generation,text,speed,gain_peak,engine,voice,pitch = req
             try:
-                frames = synthesize(text,speed,gain_peak)
+                frames = synthesize(text,speed,gain_peak,engine,voice,pitch)
                 with self.lock:
                     if generation == self.generation and not self.stop.is_set():
                         self.audio = frames
@@ -101,8 +121,31 @@ class Animation:
                         self.robot.last_tts_error = None
             except Exception as exc:
                 if generation == self.generation and not self.stop.is_set():
-                    self.robot.last_tts_error = str(exc)[:180]
+                    self.robot.last_tts_error = (exc.stderr.decode(errors="replace").strip() if isinstance(exc,subprocess.CalledProcessError) and exc.stderr else str(exc))[:180]
                 LOG.warning("Speech synthesis failed: %s",exc)
+
+    def set_horn(self, waveform, freqs):
+        with self.lock:
+            self.horn = (waveform, tuple(freqs), time.monotonic()+2.0) if freqs else None
+            self.horn_index = 0
+
+    def horn_frame(self, now):
+        if self.horn is None:
+            return None
+        waveform,freqs,deadline = self.horn
+        if now >= deadline:
+            self.horn = None
+            return None
+        peak = min(32767,round(self.robot.tts_gain*self.robot.horn_multiplier))
+        samples = []
+        for i in range(744):
+            t = (self.horn_index+i)/22320
+            env = min(1.0,t/.02,max(0,deadline-now)/.06)
+            v = sum(math.sin(2*math.pi*f*t) if waveform=="sine"
+                    else 2*((f*t)%1)-1 for f in freqs)/len(freqs)
+            samples.append(ulaw(round(peak*env*v)))
+        self.horn_index += 744
+        return bytes(samples)
 
     def play_loop(self):
         from pycozmo.protocol_encoder import OutputAudio, OutputSilence, DisplayImage
@@ -120,11 +163,15 @@ class Animation:
                         self.backoffs += 1
                     else:
                         with self.lock:
-                            sample = self.audio.popleft() if self.audio else None
+                            sample = self.horn_frame(start)
+                            is_horn = sample is not None
+                            if sample is None:
+                                sample = self.audio.popleft() if self.audio else None
                             face,self.face = self.face,None
                         if sample is not None:
                             self.cli.conn.send(OutputAudio(samples=sample))
-                            self.robot.last_tts_played_at = time.monotonic()
+                            if not is_horn:
+                                self.robot.last_tts_played_at = time.monotonic()
                         else:
                             self.cli.conn.send(OutputSilence())
                         self.frames += 1
