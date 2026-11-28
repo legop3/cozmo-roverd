@@ -23,30 +23,30 @@ log "Step 1: Updating packages and installing dependencies..."
 sudo apt update -y
 
 # Install Python, pip, NetworkManager and other required packages
-sudo apt install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    git \
-    network-manager \
-    ffmpeg \
-    libva-intel-driver \
-    libva-utils \
-    espeak-ng \
-    flite \
-    curl \
-    unzip \
-    xz \
-    imagemagick
+# Note: Ubuntu requires Intel Media SDK repo for libmfx-dev on newer versions
+sudo apt install -y software-properties-common gnupg2 curl \
+
+# Add Intel's repository (needed for libmfx-dev on Ubuntu)
+echo "Adding Intel Media SDK repository..."
+curl -fsSL https://download-1.intel.com/gv/releases/mx/9.0/intel-gpg-key.gpg | gpg --dearmor -o /usr/share/keyrings/intel-media-repo-key.gpg 2>/dev/null || log "Warning: Could not add Intel repository"
+
+echo 'deb [signed-by=/usr/share/keyrings/intel-media-repo-key.gpg] https://download-1.intel.com/gv/releases/mx/9.0/ubuntu 22.04 main' > /etc/apt/sources.list.d/intel-mediasdk-src.list
+sudo apt update -y >/dev/null
+
+# Install Intel Media SDK and other dependencies
+sudo apt install -y libmfx-dev intel-media-va-appkit \
+
+# Install Python, pip, NetworkManager and core packages
+sudo apt install -y python3 python3-pip python3-venv git network-manager ffmpeg espeak-ng flite curl unzip xz-utils imagemagick
 
 # Step 2: Verify FFmpeg installation and encoders
 log "Step 2: Verifying FFmpeg installation..."
 if ! command -v ffmpeg >/dev/null 2>&1; then
     log "FFmpeg not found; attempting to install..."
-    sudo apt install -y ffmpeg libavcodec-extra libavformat-extra ffmpeg-ffmpegextra
+    sudo apt install -y ffmpeg libavcodec-extra
 fi
 
-# Check for H.264 encoder support
+# Check for H.264 encoder support (Ubuntu's ffmpeg has it by default)
 encoder_list="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
 if ! echo "$encoder_list" | grep -qE 'libx264|libopenh264|h264_vaapi'; then
     log "WARNING: No H.264 encoder found; video streaming may fail" >&2
